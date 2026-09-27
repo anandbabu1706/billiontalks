@@ -169,29 +169,117 @@ function normalizeMeetingAccessMode(value: string | undefined, label: string): M
   throw new Error(`${label} must be one of: OPEN, HOST_APPROVAL, LOCKED.`);
 }
 
-export class InMemoryMeetingRepository {
+export interface MeetingRepository {
+  saveMeeting(meeting: Meeting): Promise<void> | void;
+  getMeeting(meetingId: string): Promise<Meeting | undefined> | Meeting | undefined;
+  setMediaConnection(connection: MeetingMediaConnection): Promise<void> | void;
+  getMediaConnection(meetingId: string, participantId: string): Promise<MeetingMediaConnection | undefined> | MeetingMediaConnection | undefined;
+  deleteMediaConnection(meetingId: string, participantId: string): Promise<void> | void;
+}
+
+type DurableObjectStorageLike = {
+  get: (key: string) => Promise<unknown> | unknown;
+  put: (key: string, value: unknown) => Promise<void> | void;
+  delete: (key: string) => Promise<void> | void;
+  has?: (key: string) => Promise<boolean> | boolean;
+  list?: () => Promise<Array<{ name: string; value: unknown }>> | Array<{ name: string; value: unknown }>;
+};
+
+type DurableObjectStubLike = {
+  saveMeeting: (meeting: Meeting) => Promise<void>;
+  getMeeting: () => Promise<Meeting | undefined>;
+};
+
+type DurableObjectNamespaceLike = {
+  get: (id: any) => DurableObjectStubLike;
+  idFromName: (name: string) => any;
+};
+
+export class InMemoryMeetingRepository implements MeetingRepository {
   private readonly meetings = new Map<string, Meeting>();
   private readonly participantMediaConnections = new Map<string, MeetingMediaConnection>();
 
-  saveMeeting(meeting: Meeting): void {
+  async saveMeeting(meeting: Meeting): Promise<void> {
     this.meetings.set(meeting.id, meeting);
   }
 
-  getMeeting(meetingId: string): Meeting | undefined {
+  async getMeeting(meetingId: string): Promise<Meeting | undefined> {
     return this.meetings.get(meetingId);
   }
 
-  setMediaConnection(connection: MeetingMediaConnection): void {
+  async setMediaConnection(connection: MeetingMediaConnection): Promise<void> {
     const key = `${connection.meetingId}:${connection.participantId}`;
     this.participantMediaConnections.set(key, connection);
   }
 
-  getMediaConnection(meetingId: string, participantId: string): MeetingMediaConnection | undefined {
+  async getMediaConnection(meetingId: string, participantId: string): Promise<MeetingMediaConnection | undefined> {
     const key = `${meetingId}:${participantId}`;
     return this.participantMediaConnections.get(key);
   }
 
-  deleteMediaConnection(meetingId: string, participantId: string): void {
+  async deleteMediaConnection(meetingId: string, participantId: string): Promise<void> {
+    const key = `${meetingId}:${participantId}`;
+    this.participantMediaConnections.delete(key);
+  }
+}
+
+export class DurableMeetingRepository implements MeetingRepository {
+  private readonly meetings = new Map<string, Meeting>();
+  private readonly participantMediaConnections = new Map<string, MeetingMediaConnection>();
+  private readonly storage?: DurableObjectStorageLike;
+  private readonly namespace?: DurableObjectNamespaceLike;
+
+  constructor(storageOrNamespace?: DurableObjectStorageLike | DurableObjectNamespaceLike) {
+    if (storageOrNamespace && "get" in storageOrNamespace && "put" in storageOrNamespace) {
+      this.storage = storageOrNamespace as DurableObjectStorageLike;
+      return;
+    }
+
+    if (storageOrNamespace) {
+      this.namespace = storageOrNamespace as DurableObjectNamespaceLike;
+    }
+  }
+
+  async saveMeeting(meeting: Meeting): Promise<void> {
+    if (this.namespace) {
+      const stub = this.namespace.get(this.namespace.idFromName(meeting.id));
+      await stub.saveMeeting(meeting);
+      return;
+    }
+
+    if (this.storage) {
+      await this.storage.put(`meeting:${meeting.id}`, meeting);
+      return;
+    }
+
+    this.meetings.set(meeting.id, meeting);
+  }
+
+  async getMeeting(meetingId: string): Promise<Meeting | undefined> {
+    if (this.namespace) {
+      const stub = this.namespace.get(this.namespace.idFromName(meetingId));
+      return stub.getMeeting();
+    }
+
+    if (this.storage) {
+      const value = await this.storage.get(`meeting:${meetingId}`);
+      return value as Meeting | undefined;
+    }
+
+    return this.meetings.get(meetingId);
+  }
+
+  async setMediaConnection(connection: MeetingMediaConnection): Promise<void> {
+    const key = `${connection.meetingId}:${connection.participantId}`;
+    this.participantMediaConnections.set(key, connection);
+  }
+
+  async getMediaConnection(meetingId: string, participantId: string): Promise<MeetingMediaConnection | undefined> {
+    const key = `${meetingId}:${participantId}`;
+    return this.participantMediaConnections.get(key);
+  }
+
+  async deleteMediaConnection(meetingId: string, participantId: string): Promise<void> {
     const key = `${meetingId}:${participantId}`;
     this.participantMediaConnections.delete(key);
   }
@@ -237,7 +325,7 @@ export type JoinMeetingInput = {
 
 export class MeetingService {
   constructor(
-    private readonly repository: InMemoryMeetingRepository,
+    private readonly repository: MeetingRepository,
     private readonly mediaProvider: MediaProvider,
   ) {}
 
@@ -277,8 +365,8 @@ export class MeetingService {
       hostParticipant.id,
     );
 
-    this.repository.saveMeeting(meeting);
-    this.repository.setMediaConnection({
+    await this.repository.saveMeeting(meeting);
+    await this.repository.setMediaConnection({
       id: `${meeting.id}:${hostParticipant.id}`,
       meetingId: meeting.id,
       participantId: hostParticipant.id,
@@ -290,7 +378,7 @@ export class MeetingService {
     return meeting;
   }
 
-  getMeeting(meetingId: string): Meeting | undefined {
+  async getMeeting(meetingId: string): Promise<Meeting | undefined> {
     return this.repository.getMeeting(meetingId);
   }
 
@@ -298,7 +386,7 @@ export class MeetingService {
     meetingId: string,
     input: JoinMeetingInput,
   ): Promise<MeetingAdmissionRequest> {
-    const meeting = this.getRequiredMeeting(meetingId);
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (meeting.status !== MeetingStatus.ACTIVE) {
       throw new Error("Meeting is not active.");
@@ -364,12 +452,12 @@ export class MeetingService {
     };
 
     meeting.accessRequests.push(request);
-    this.repository.saveMeeting(meeting);
+    await this.repository.saveMeeting(meeting);
     return request;
   }
 
-  listPendingAdmissions(meetingId: string, actorUserId: string): MeetingAdmissionRequest[] {
-    const meeting = this.getRequiredMeeting(meetingId);
+  async listPendingAdmissions(meetingId: string, actorUserId: string): Promise<MeetingAdmissionRequest[]> {
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (!MeetingPermissions.canManageAdmission(meeting, actorUserId)) {
       throw new Error("Only the host may view pending admissions.");
@@ -383,7 +471,7 @@ export class MeetingService {
     actorUserId: string,
     requestId: string,
   ): Promise<MeetingAdmissionRequest> {
-    const meeting = this.getRequiredMeeting(meetingId);
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (!MeetingPermissions.canManageAdmission(meeting, actorUserId)) {
       throw new Error("Only the host may approve an admission request.");
@@ -425,7 +513,7 @@ export class MeetingService {
     request.resolvedAt = new Date().toISOString();
     request.reviewedByUserId = actorUserId;
 
-    this.repository.saveMeeting(meeting);
+    await this.repository.saveMeeting(meeting);
     return request;
   }
 
@@ -434,7 +522,7 @@ export class MeetingService {
     actorUserId: string,
     requestId: string,
   ): Promise<MeetingAdmissionRequest> {
-    const meeting = this.getRequiredMeeting(meetingId);
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (!MeetingPermissions.canManageAdmission(meeting, actorUserId)) {
       throw new Error("Only the host may reject an admission request.");
@@ -461,7 +549,7 @@ export class MeetingService {
       (participant) => !(participant.userId === request.userId && participant.role === ParticipantRole.PARTICIPANT),
     );
 
-    this.repository.saveMeeting(meeting);
+    await this.repository.saveMeeting(meeting);
     return request;
   }
 
@@ -470,7 +558,7 @@ export class MeetingService {
     actorUserId: string,
     nextModeInput: MeetingAccessMode | string,
   ): Promise<MeetingAccessMode> {
-    const meeting = this.getRequiredMeeting(meetingId);
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (!MeetingPermissions.canManageAdmission(meeting, actorUserId)) {
       throw new Error("Only the host may change meeting access mode.");
@@ -482,12 +570,12 @@ export class MeetingService {
     );
 
     meeting.accessMode = nextMode;
-    this.repository.saveMeeting(meeting);
+    await this.repository.saveMeeting(meeting);
     return meeting.accessMode;
   }
 
   async joinMeeting(meetingId: string, input: JoinMeetingInput): Promise<MeetingParticipant> {
-    const meeting = this.getRequiredMeeting(meetingId);
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (meeting.status !== MeetingStatus.ACTIVE) {
       throw new Error("Meeting is not active.");
@@ -508,7 +596,7 @@ export class MeetingService {
           existingParticipant.leftAt = undefined;
         }
         existingParticipant.displayName = displayName;
-        this.repository.saveMeeting(meeting);
+        await this.repository.saveMeeting(meeting);
         return existingParticipant;
       }
 
@@ -528,8 +616,8 @@ export class MeetingService {
       );
 
       meeting.participants.push(participant);
-      this.repository.saveMeeting(meeting);
-      this.repository.setMediaConnection({
+      await this.repository.saveMeeting(meeting);
+      await this.repository.setMediaConnection({
         id: `${meeting.id}:${participant.id}`,
         meetingId: meeting.id,
         participantId: participant.id,
@@ -561,7 +649,7 @@ export class MeetingService {
       }
 
       existingParticipant.displayName = displayName;
-      this.repository.saveMeeting(meeting);
+      await this.repository.saveMeeting(meeting);
       return existingParticipant;
     }
 
@@ -581,8 +669,8 @@ export class MeetingService {
     );
 
     meeting.participants.push(participant);
-    this.repository.saveMeeting(meeting);
-    this.repository.setMediaConnection({
+    await this.repository.saveMeeting(meeting);
+    await this.repository.setMediaConnection({
       id: `${meeting.id}:${participant.id}`,
       meetingId: meeting.id,
       participantId: participant.id,
@@ -595,7 +683,7 @@ export class MeetingService {
   }
 
   async leaveMeeting(meetingId: string, userId: string): Promise<MeetingParticipant | undefined> {
-    const meeting = this.getRequiredMeeting(meetingId);
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (meeting.status !== MeetingStatus.ACTIVE) {
       throw new Error("Meeting is not active.");
@@ -616,14 +704,14 @@ export class MeetingService {
 
     participant.state = ParticipantState.LEFT;
     participant.leftAt = new Date().toISOString();
-    this.repository.saveMeeting(meeting);
-    this.repository.deleteMediaConnection(meeting.id, participant.id);
+    await this.repository.saveMeeting(meeting);
+    await this.repository.deleteMediaConnection(meeting.id, participant.id);
 
     return participant;
   }
 
-  endMeeting(meetingId: string, actorUserId: string): Meeting {
-    const meeting = this.getRequiredMeeting(meetingId);
+  async endMeeting(meetingId: string, actorUserId: string): Promise<Meeting> {
+    const meeting = await this.getRequiredMeeting(meetingId);
 
     if (meeting.status !== MeetingStatus.ACTIVE) {
       throw new Error("Meeting is not active.");
@@ -641,21 +729,21 @@ export class MeetingService {
       }
     });
 
-    this.repository.saveMeeting(meeting);
+    await this.repository.saveMeeting(meeting);
     return meeting;
   }
 
-  getParticipantMediaConnection(meetingId: string, participantId: string): MeetingMediaConnection | undefined {
+  async getParticipantMediaConnection(meetingId: string, participantId: string): Promise<MeetingMediaConnection | undefined> {
     return this.repository.getMediaConnection(meetingId, participantId);
   }
 
-  listParticipants(meetingId: string): MeetingParticipant[] {
-    const meeting = this.getRequiredMeeting(meetingId);
+  async listParticipants(meetingId: string): Promise<MeetingParticipant[]> {
+    const meeting = await this.getRequiredMeeting(meetingId);
     return [...meeting.participants];
   }
 
-  private getRequiredMeeting(meetingId: string): Meeting {
-    const meeting = this.repository.getMeeting(meetingId);
+  private async getRequiredMeeting(meetingId: string): Promise<Meeting> {
+    const meeting = await this.repository.getMeeting(meetingId);
 
     if (!meeting) {
       throw new Error(`Meeting not found: ${meetingId}`);

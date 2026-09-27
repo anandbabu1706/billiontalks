@@ -1,18 +1,68 @@
 import { validateRealtimeEnv, type RealtimeEnv } from "./config";
 import {
   CloudflareMediaProvider,
+  DurableMeetingRepository,
   InMemoryMeetingRepository,
   MeetingAccessMode,
   MeetingService,
   NullMediaProvider,
+  type Meeting,
+  type MeetingRepository,
 } from "./meeting";
 import { CloudflareRealtimeConnectionClient } from "./realtime";
+
+type DurableObjectStateLike = {
+  storage: {
+    get: <T>(key: string) => Promise<T | undefined>;
+    put: (key: string, value: unknown) => Promise<void>;
+  };
+};
+
+const DurableObjectBase: new (...args: any[]) => object =
+  (globalThis as typeof globalThis & { DurableObject?: new (...args: any[]) => object }).DurableObject ??
+  class {
+    constructor() {}
+  };
+
+export class MeetingStateDurableObject extends DurableObjectBase {
+  constructor(ctx: DurableObjectStateLike, env: unknown) {
+    super(ctx, env);
+  }
+
+  async saveMeeting(meeting: Meeting): Promise<void> {
+    const ctx = (this as any).ctx as { storage?: { put: (key: string, value: unknown) => Promise<void> } } | undefined;
+
+    if (!ctx?.storage) {
+      return;
+    }
+
+    await ctx.storage.put("meeting", meeting);
+  }
+
+  async getMeeting(): Promise<Meeting | undefined> {
+    const ctx = (this as any).ctx as { storage?: { get: <T>(key: string) => Promise<T | undefined> } } | undefined;
+
+    if (!ctx?.storage) {
+      return undefined;
+    }
+
+    return (await ctx.storage.get<Meeting>("meeting")) ?? undefined;
+  }
+}
 
 function jsonResponse(data: unknown, status = 200): Response {
   return Response.json(data, { status });
 }
 
-const meetingRepository = new InMemoryMeetingRepository();
+export function resolveMeetingRepository(env: Partial<RealtimeEnv> = {}): MeetingRepository {
+  if (!env.MEETING_STORE) {
+    throw new Error(
+      "MEETING_STORE Durable Object binding is required. Configure wrangler.jsonc and deploy with the MeetingStateDurableObject binding before using persisted meetings.",
+    );
+  }
+
+  return new DurableMeetingRepository(env.MEETING_STORE as any);
+}
 
 function getMeetingService(env: Partial<RealtimeEnv> = {}): MeetingService {
   const mediaProvider =
@@ -20,7 +70,7 @@ function getMeetingService(env: Partial<RealtimeEnv> = {}): MeetingService {
       ? new CloudflareMediaProvider(env.REALTIME_SFU_APP_ID, env.REALTIME_SFU_BEARER_TOKEN)
       : new NullMediaProvider();
 
-  return new MeetingService(meetingRepository, mediaProvider);
+  return new MeetingService(resolveMeetingRepository(env), mediaProvider);
 }
 
 function parseJsonBody<T>(request: Request): Promise<T | null> {
@@ -1944,7 +1994,7 @@ export default {
       }
 
       try {
-        const pending = getMeetingService(env).listPendingAdmissions(meetingPendingAdmissionsMatch[1], actorUserId);
+        const pending = await getMeetingService(env).listPendingAdmissions(meetingPendingAdmissionsMatch[1], actorUserId);
         return jsonResponse({ ok: true, data: pending });
       } catch (error) {
         return jsonResponse(
@@ -2032,7 +2082,7 @@ export default {
     );
 
     if (meetingMatch && request.method === "GET" && !meetingMatch[2]) {
-      const meeting = getMeetingService(env).getMeeting(meetingMatch[1]);
+      const meeting = await getMeetingService(env).getMeeting(meetingMatch[1]);
 
       if (!meeting) {
         return jsonResponse({ ok: false, error: "Meeting not found." }, 404);
@@ -2056,7 +2106,7 @@ export default {
 
       try {
         const service = getMeetingService(env);
-        const meeting = service.getMeeting(meetingMatch[1]);
+        const meeting = await service.getMeeting(meetingMatch[1]);
 
         if (meeting && meeting.hostId === body.userId) {
           const participant = await service.joinMeeting(meetingMatch[1], {
@@ -2135,7 +2185,7 @@ export default {
       }
 
       try {
-        const meeting = getMeetingService(env).endMeeting(meetingMatch[1], body.userId);
+        const meeting = await getMeetingService(env).endMeeting(meetingMatch[1], body.userId);
         return jsonResponse({ ok: true, data: meeting });
       } catch (error) {
         return jsonResponse(
@@ -2149,7 +2199,7 @@ export default {
     }
 
     if (meetingMatch && request.method === "GET" && meetingMatch[2] === "participants") {
-      const participants = getMeetingService(env).listParticipants(meetingMatch[1]);
+      const participants = await getMeetingService(env).listParticipants(meetingMatch[1]);
       return jsonResponse({ ok: true, data: participants });
     }
 

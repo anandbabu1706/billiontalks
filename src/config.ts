@@ -1,6 +1,7 @@
 export type RealtimeEnv = {
   REALTIME_SFU_APP_ID?: string;
   REALTIME_SFU_BEARER_TOKEN?: string;
+  MEETING_STORE?: unknown;
 };
 
 export function validateRealtimeEnv(env: Partial<RealtimeEnv> = {}): {

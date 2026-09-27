@@ -2,5 +2,21 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "billiontalks-realtime-backend",
   "main": "src/index.ts",
-  "compatibility_date": "2025-07-18"
+  "compatibility_date": "2025-07-18",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MEETING_STORE",
+        "class_name": "MeetingStateDurableObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "MeetingStateDurableObject"
+      ]
+    }
+  ]
 }

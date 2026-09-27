@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   type MediaProvider,
+  DurableMeetingRepository,
   MeetingPermissions,
   MeetingService,
   MeetingStatus,
@@ -9,6 +10,7 @@ import {
   ParticipantRole,
   ParticipantState,
 } from "../src/meeting";
+import { resolveMeetingRepository } from "../src/index";
 
 class StubMediaProvider implements MediaProvider {
   public created: Array<{ meetingId: string; participantId: string }> = [];
@@ -55,12 +57,12 @@ describe("MeetingService lifecycle", () => {
     expect(participant.role).toBe(ParticipantRole.PARTICIPANT);
 
     await service.leaveMeeting(meeting.id, "guest-1");
-    expect(service.getMeeting(meeting.id)?.participants.find((p) => p.userId === "guest-1")?.state).toBe(
-      ParticipantState.LEFT,
-    );
+    const refreshed = await service.getMeeting(meeting.id);
+    expect(refreshed?.participants.find((p) => p.userId === "guest-1")?.state).toBe(ParticipantState.LEFT);
 
-    service.endMeeting(meeting.id, "host");
-    expect(service.getMeeting(meeting.id)?.status).toBe(MeetingStatus.ENDED);
+    await service.endMeeting(meeting.id, "host");
+    const ended = await service.getMeeting(meeting.id);
+    expect(ended?.status).toBe(MeetingStatus.ENDED);
   });
 
   it("enforces basic host and participant permissions", async () => {
@@ -82,7 +84,7 @@ describe("MeetingService lifecycle", () => {
     const meeting = await service.createMeeting({ title: "Demo", hostUserId: "host", accessMode: "OPEN" });
     const participant = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest" });
 
-    const connection = service.getParticipantMediaConnection(meeting.id, participant.id);
+    const connection = await service.getParticipantMediaConnection(meeting.id, participant.id);
 
     expect(connection).toBeTruthy();
     expect(connection?.meetingId).toBe(meeting.id);
@@ -99,18 +101,18 @@ describe("MeetingService lifecycle", () => {
     const leftParticipant = await service.leaveMeeting(meeting.id, "guest");
 
     expect(leftParticipant?.state).toBe(ParticipantState.LEFT);
-    expect(service.getMeeting(meeting.id)?.status).toBe(MeetingStatus.ACTIVE);
+    expect((await service.getMeeting(meeting.id))?.status).toBe(MeetingStatus.ACTIVE);
 
     const rejoin = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest Again" });
     expect(rejoin.id).toBe(participant.id);
-    expect(service.listParticipants(meeting.id).filter((entry) => entry.userId === "guest")).toHaveLength(1);
+    expect((await service.listParticipants(meeting.id)).filter((entry) => entry.userId === "guest")).toHaveLength(1);
 
     const hostLeave = await service.leaveMeeting(meeting.id, "host");
     expect(hostLeave?.state).toBe(ParticipantState.LEFT);
-    expect(service.getMeeting(meeting.id)?.status).toBe(MeetingStatus.ACTIVE);
+    expect((await service.getMeeting(meeting.id))?.status).toBe(MeetingStatus.ACTIVE);
 
-    service.endMeeting(meeting.id, "host");
-    expect(service.getMeeting(meeting.id)?.status).toBe(MeetingStatus.ENDED);
+    await service.endMeeting(meeting.id, "host");
+    expect((await service.getMeeting(meeting.id))?.status).toBe(MeetingStatus.ENDED);
 
     await expect(
       service.joinMeeting(meeting.id, { userId: "guest-2", displayName: "Late guest" }),
@@ -125,9 +127,9 @@ describe("MeetingService lifecycle", () => {
     const secondJoin = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest Updated" });
 
     expect(firstJoin.id).toBe(secondJoin.id);
-    expect(service.listParticipants(meeting.id)).toHaveLength(2);
+    expect(await service.listParticipants(meeting.id)).toHaveLength(2);
 
-    service.endMeeting(meeting.id, "host");
+    await service.endMeeting(meeting.id, "host");
 
     await expect(
       service.joinMeeting(meeting.id, { userId: "guest-2", displayName: "New guest" }),
@@ -146,8 +148,8 @@ describe("MeetingService lifecycle", () => {
     });
 
     expect(waiting.status).toBe("WAITING");
-    expect(service.listParticipants(meeting.id).some((participant) => participant.userId === "guest-1")).toBe(false);
-    expect(service.listPendingAdmissions(meeting.id, "host")).toHaveLength(1);
+    expect((await service.listParticipants(meeting.id)).some((participant) => participant.userId === "guest-1")).toBe(false);
+    expect(await service.listPendingAdmissions(meeting.id, "host")).toHaveLength(1);
   });
 
   it("lets the meeting creator join as host immediately and keeps guests waiting for approval", async () => {
@@ -175,26 +177,26 @@ describe("MeetingService lifecycle", () => {
       service.joinMeeting(meeting.id, { userId: "guest-1", displayName: "Guest One" }),
     ).rejects.toThrow("Admission request submitted and waiting for host approval.");
 
-    expect(service.getMeeting(meeting.id)?.participants.some((participant) => participant.userId === "guest-1")).toBe(false);
-    expect(service.getMeeting(meeting.id)?.accessRequests.some((request) => request.userId === "guest-1")).toBe(true);
-    expect(service.getMeeting(meeting.id)?.accessRequests.find((request) => request.userId === "guest-1")?.status).toBe(
-      "WAITING",
-    );
-    expect(service.listPendingAdmissions(meeting.id, "host-creator")).toHaveLength(1);
+    const reloaded = await service.getMeeting(meeting.id);
+    expect(reloaded?.participants.some((participant) => participant.userId === "guest-1")).toBe(false);
+    expect(reloaded?.accessRequests.some((request) => request.userId === "guest-1")).toBe(true);
+    expect(reloaded?.accessRequests.find((request) => request.userId === "guest-1")?.status).toBe("WAITING");
+    expect(await service.listPendingAdmissions(meeting.id, "host-creator")).toHaveLength(1);
 
-    const waiting = service.listPendingAdmissions(meeting.id, "host-creator")[0];
+    const waiting = (await service.listPendingAdmissions(meeting.id, "host-creator"))[0];
     const approved = await service.approveAdmission(meeting.id, "host-creator", waiting.id);
     expect(approved.status).toBe("APPROVED");
-    expect(service.listParticipants(meeting.id).find((participant) => participant.userId === "guest-1")).toMatchObject({
+    expect((await service.listParticipants(meeting.id)).find((participant) => participant.userId === "guest-1")).toMatchObject({
       role: ParticipantRole.PARTICIPANT,
       state: ParticipantState.JOINED,
     });
-    expect(service.listPendingAdmissions(meeting.id, "host-creator")).toHaveLength(0);
+    expect(await service.listPendingAdmissions(meeting.id, "host-creator")).toHaveLength(0);
 
     await expect(
       service.requestAdmission(meeting.id, { userId: "host-creator", displayName: "Host Creator" }),
     ).resolves.toMatchObject({ status: "APPROVED", userId: "host-creator" });
-    expect(service.getMeeting(meeting.id)?.accessRequests.some((request) => request.userId === "host-creator")).toBe(false);
+    const again = await service.getMeeting(meeting.id);
+    expect(again?.accessRequests.some((request) => request.userId === "host-creator")).toBe(false);
   });
 
   it("allows the host to reject a waiting participant and keeps them out of the active room", async () => {
@@ -209,8 +211,8 @@ describe("MeetingService lifecycle", () => {
     const rejected = await service.rejectAdmission(meeting.id, "host", waiting.id);
 
     expect(rejected.status).toBe("REJECTED");
-    expect(service.listParticipants(meeting.id).some((participant) => participant.userId === "guest-1")).toBe(false);
-    expect(service.listPendingAdmissions(meeting.id, "host")).toHaveLength(0);
+    expect((await service.listParticipants(meeting.id)).some((participant) => participant.userId === "guest-1")).toBe(false);
+    expect(await service.listPendingAdmissions(meeting.id, "host")).toHaveLength(0);
   });
 
   it("enforces host-only actions and blocks spoofed host identity", async () => {
@@ -237,11 +239,62 @@ describe("MeetingService lifecycle", () => {
       service.requestAdmission(meeting.id, { userId: "guest-1", displayName: "Guest One" }),
     ).rejects.toThrow("locked");
 
-    const ended = service.endMeeting(meeting.id, "host");
+    const ended = await service.endMeeting(meeting.id, "host");
     expect(ended.status).toBe(MeetingStatus.ENDED);
 
     await expect(
       service.requestAdmission(meeting.id, { userId: "guest-2", displayName: "Guest Two" }),
     ).rejects.toThrow("not active");
+  });
+
+  it("requires the durable meeting binding from the worker env instead of silently using memory", () => {
+    expect(() => resolveMeetingRepository({})).toThrow("MEETING_STORE Durable Object binding is required");
+  });
+
+  it("persists meeting state across service restarts without changing host approval behavior", async () => {
+    const durableState = new Map<string, unknown>();
+    const storage = {
+      get: async (key: string) => durableState.get(key),
+      put: async (key: string, value: unknown) => {
+        durableState.set(key, value);
+      },
+      delete: async (key: string) => {
+        durableState.delete(key);
+      },
+      list: async () => Array.from(durableState.entries()).map(([k, v]) => ({ name: k, value: v })),
+      has: async (key: string) => durableState.has(key),
+    };
+
+    const firstService = new MeetingService(new DurableMeetingRepository(storage as any), new StubMediaProvider());
+    const meeting = await firstService.createMeeting({ title: "Persistent state", hostUserId: "host", accessMode: "HOST_APPROVAL" });
+
+    await firstService.requestAdmission(meeting.id, {
+      userId: "guest-1",
+      displayName: "Guest One",
+    });
+
+    const secondService = new MeetingService(new DurableMeetingRepository(storage as any), new StubMediaProvider());
+    const reloaded = await secondService.getMeeting(meeting.id);
+
+    expect(reloaded).toBeTruthy();
+    expect(reloaded?.hostId).toBe("host");
+    expect(reloaded?.accessMode).toBe("HOST_APPROVAL");
+    expect(reloaded?.accessRequests).toHaveLength(1);
+    expect(reloaded?.accessRequests[0].status).toBe("WAITING");
+
+    const pending = await secondService.listPendingAdmissions(meeting.id, "host");
+    expect(pending).toHaveLength(1);
+
+    const approved = await secondService.approveAdmission(meeting.id, "host", pending[0].id);
+    expect(approved.status).toBe("APPROVED");
+    expect((await secondService.listParticipants(meeting.id)).find((participant) => participant.userId === "guest-1")?.state).toBe(
+      ParticipantState.JOINED,
+    );
+
+    const ended = await secondService.endMeeting(meeting.id, "host");
+    expect(ended.status).toBe(MeetingStatus.ENDED);
+
+    const restartedAgain = new MeetingService(new DurableMeetingRepository(storage as any), new StubMediaProvider());
+    expect((await restartedAgain.getMeeting(meeting.id))?.status).toBe(MeetingStatus.ENDED);
   });
 });
