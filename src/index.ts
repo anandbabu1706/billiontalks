@@ -650,9 +650,11 @@ function meetingUiHtml(): string {
       function setError(message) {
         state.error = message;
         if (message) {
-          errorBanner.textContent = message;
-          errorBanner.className = 'error';
-        } else {
+          if (errorBanner) {
+            errorBanner.textContent = message;
+            errorBanner.className = 'error';
+          }
+        } else if (errorBanner) {
           errorBanner.textContent = '';
           errorBanner.className = '';
         }
@@ -661,17 +663,21 @@ function meetingUiHtml(): string {
       function showScreen(name) {
         state.route = name;
         Object.entries(screens).forEach(([key, node]) => {
-          node.classList.toggle('visible', key === name);
+          if (node) {
+            node.classList.toggle('visible', key === name);
+          }
         });
 
-        if (name === 'meeting') {
-          statusPill.textContent = 'In meeting';
-        } else if (name === 'prejoin') {
-          statusPill.textContent = 'Pre-join';
-        } else if (name === 'home' || name === 'create' || name === 'join') {
-          statusPill.textContent = 'V0 Meeting UI';
-        } else if (name === 'ended') {
-          statusPill.textContent = 'Ended';
+        if (statusPill) {
+          if (name === 'meeting') {
+            statusPill.textContent = 'In meeting';
+          } else if (name === 'prejoin') {
+            statusPill.textContent = 'Pre-join';
+          } else if (name === 'home' || name === 'create' || name === 'join') {
+            statusPill.textContent = 'V0 Meeting UI';
+          } else if (name === 'ended') {
+            statusPill.textContent = 'Ended';
+          }
         }
       }
 
@@ -759,24 +765,32 @@ function meetingUiHtml(): string {
         const micControl = document.getElementById('micControlBtn');
         const cameraControl = document.getElementById('cameraControlBtn');
         const shareControl = document.getElementById('shareScreenBtn');
+        const localStatusLabel = document.getElementById('localStatusLabel');
 
         const micIsOn = state.localDevice.micEnabled && state.localDevice.micAvailable;
         const cameraIsOn = state.localDevice.cameraEnabled && state.localDevice.cameraAvailable;
 
-        micControl.classList.toggle('active', micIsOn);
-        micControl.classList.toggle('off', !micIsOn);
-        cameraControl.classList.toggle('active', cameraIsOn);
-        cameraControl.classList.toggle('off', !cameraIsOn);
+        if (micControl) {
+          micControl.classList.toggle('active', micIsOn);
+          micControl.classList.toggle('off', !micIsOn);
+          micControl.innerHTML = '<span class="device-icon">🎙️</span>';
+        }
+
+        if (cameraControl) {
+          cameraControl.classList.toggle('active', cameraIsOn);
+          cameraControl.classList.toggle('off', !cameraIsOn);
+          cameraControl.innerHTML = '<span class="device-icon">📷</span>';
+        }
+
         if (shareControl) {
           shareControl.classList.toggle('active', state.localDevice.screenShareEnabled);
         }
 
-        micControl.innerHTML = '<span class="device-icon">🎙️</span>';
-        cameraControl.innerHTML = '<span class="device-icon">📷</span>';
-
         const micStatus = state.localDevice.micAvailable ? (micIsOn ? 'Mic on' : 'Mic off') : 'Microphone unavailable';
         const cameraStatus = state.localDevice.cameraAvailable ? (cameraIsOn ? 'Camera on' : 'Camera off') : 'Camera unavailable';
-        document.getElementById('localStatusLabel').textContent = micStatus + ' • ' + cameraStatus;
+        if (localStatusLabel) {
+          localStatusLabel.textContent = micStatus + ' • ' + cameraStatus;
+        }
 
         if (micBtn) {
           micBtn.textContent = state.localDevice.micAvailable ? 'Mic: ' + (micIsOn ? 'On' : 'Off') : 'Mic: Unavailable';
@@ -1076,6 +1090,7 @@ function meetingUiHtml(): string {
           { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED' },
           { id: 'demo-guest-1', displayName: 'Ava', role: 'PARTICIPANT', state: 'JOINED' },
           { id: 'demo-guest-2', displayName: 'Sam', role: 'PARTICIPANT', state: 'PENDING' },
+          { id: 'demo-guest-3', displayName: 'Priya', role: 'PARTICIPANT', state: 'JOINED' },
         ];
       }
 
@@ -1128,8 +1143,14 @@ function meetingUiHtml(): string {
           return;
         }
 
-        document.getElementById('meetingTitleText').textContent = state.meeting.title;
-        document.getElementById('meetingIdBadge').textContent = state.meeting.id;
+        const meetingTitleText = document.getElementById('meetingTitleText');
+        const meetingIdBadge = document.getElementById('meetingIdBadge');
+        if (meetingTitleText) {
+          meetingTitleText.textContent = state.meeting.title;
+        }
+        if (meetingIdBadge) {
+          meetingIdBadge.textContent = state.meeting.id;
+        }
         syncDevParticipantSelection();
 
         const participantList = document.getElementById('participantList');
@@ -1193,10 +1214,11 @@ function meetingUiHtml(): string {
 
           const tileLabel = participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me' ? 'You' : participant.displayName;
           const tileStatus = participant.state === 'JOINED' ? 'Joined' : 'Waiting';
+          const isLocalTile = participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me';
 
           tile.innerHTML =
             '<div class="placeholder">' + tileLabel + '</div>' +
-            '<div class="meta"><span class="dot"></span><span>' + tileStatus + '</span></div>';
+            '<div class="meta"><span class="dot"></span><span' + (isLocalTile ? ' id="localStatusLabel"' : '') + '>' + tileStatus + '</span></div>';
           stage.appendChild(tile);
         });
 
@@ -1387,6 +1409,11 @@ function meetingUiHtml(): string {
         panel.classList.toggle('visible');
       }
 
+      const devMediaState = {
+        micEnabled: true,
+        cameraEnabled: true,
+      };
+
       function handleDevAction(action) {
         if (action === 'addParticipant') {
           const baseMeeting = state.meeting && state.meeting.id ? state.meeting : {
@@ -1449,6 +1476,7 @@ function meetingUiHtml(): string {
               { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'host-dev', joinedAt: new Date().toISOString() },
               { id: 'demo-guest-1', displayName: 'Ava', role: 'PARTICIPANT', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'user-ava', joinedAt: new Date().toISOString() },
               { id: 'demo-guest-2', displayName: 'Sam', role: 'PARTICIPANT', state: 'PENDING', meetingId: 'btm_dev_1234567890', userId: 'user-sam', joinedAt: new Date().toISOString() },
+              { id: 'demo-guest-3', displayName: 'Priya', role: 'PARTICIPANT', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'user-priya', joinedAt: new Date().toISOString() },
             ],
           });
           syncMeetingRoleUi();
@@ -1500,14 +1528,12 @@ function meetingUiHtml(): string {
         }
 
         if (action === 'micOff') {
-          state.localDevice.micEnabled = false;
-          renderLocalState();
+          devMediaState.micEnabled = false;
           return;
         }
 
         if (action === 'cameraOff') {
-          state.localDevice.cameraEnabled = false;
-          renderLocalState();
+          devMediaState.cameraEnabled = false;
           return;
         }
 

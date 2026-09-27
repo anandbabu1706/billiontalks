@@ -20,26 +20,43 @@ function createResponse(payload: unknown, ok = true, status = 200) {
 async function loadRenderedPage() {
   const response = await app.fetch(new Request("http://localhost/"));
   const html = await response.text();
+  const createdMicStreams: Array<{ getTracks: () => any[]; getAudioTracks: () => any[]; getVideoTracks: () => any[] }> = [];
+  const createdCameraStreams: Array<{ getTracks: () => any[]; getAudioTracks: () => any[]; getVideoTracks: () => any[] }> = [];
   const dom = new JSDOM(html, {
     runScripts: "dangerously",
     pretendToBeVisual: true,
     url: "http://localhost/",
     beforeParse(window) {
+      let micCallIndex = 0;
+      let cameraCallIndex = 0;
+
       Object.defineProperty(window.navigator, "mediaDevices", {
         value: {
           getUserMedia: vi.fn(async (constraints) => {
             const kind = constraints.audio ? "audio" : "video";
+            const callIndex = kind === "audio" ? ++micCallIndex : ++cameraCallIndex;
             const track = {
+              id: `${kind}-track-${callIndex}`,
               kind,
               readyState: "live",
-              stop: vi.fn(),
+              stop: vi.fn(() => {
+                track.readyState = "ended";
+              }),
             };
 
-            return {
+            const stream = {
               getTracks: () => [track],
               getAudioTracks: () => (constraints.audio ? [track] : []),
               getVideoTracks: () => (constraints.video ? [track] : []),
             };
+
+            if (kind === "audio") {
+              createdMicStreams.push(stream);
+            } else {
+              createdCameraStreams.push(stream);
+            }
+
+            return stream;
           }),
         },
         configurable: true,
@@ -113,7 +130,7 @@ async function loadRenderedPage() {
 
   const getUserMediaMock = window.navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>;
 
-  return { window, document: window.document, fetchMock, getUserMediaMock };
+  return { window, document: window.document, fetchMock, getUserMediaMock, micStreams: createdMicStreams, cameraStreams: createdCameraStreams };
 }
 
 function getVisibleScreen(document: Document, id: string): boolean {
@@ -153,22 +170,72 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("meetingTitleText")?.textContent).toContain("Sprint review");
   });
 
-  it("allows microphone cycles ON → OFF → ON repeatedly with live tracks", async () => {
-    const { document, getUserMediaMock } = await loadRenderedPage();
+  it("uses the real bottom mic/camera controls without null DOM writes and reacquires fresh live tracks", async () => {
+    const { document, getUserMediaMock, micStreams } = await loadRenderedPage();
 
-    document.getElementById("toggleMicBtn")?.click();
+    document.getElementById("startMeetingBtn")?.click();
+    const meetingTitleInput = document.getElementById("meetingTitle") as HTMLInputElement;
+    const hostNameInput = document.getElementById("hostName") as HTMLInputElement;
+    meetingTitleInput.value = "Sprint review";
+    hostNameInput.value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+
+    const displayNameInput = document.getElementById("displayNameInput") as HTMLInputElement;
+    displayNameInput.value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
+    const cameraControl = document.getElementById("cameraControlBtn") as HTMLButtonElement;
+    expect(micControl).not.toBeNull();
+    expect(cameraControl).not.toBeNull();
+
+    const localStatusLabel = document.getElementById("localStatusLabel");
+    expect(localStatusLabel).not.toBeNull();
+    localStatusLabel?.remove();
+
+    expect(() => micControl.click()).not.toThrow();
+    await flush();
+    expect(getUserMediaMock).toHaveBeenCalledTimes(0);
+    expect(document.getElementById("errorBanner")?.textContent).toBe("");
+
+    micControl.click();
     await flush();
     expect(getUserMediaMock).toHaveBeenCalledTimes(1);
-    expect((document.getElementById("toggleMicBtn") as HTMLButtonElement).textContent).toContain("On");
+    const firstTrack = micStreams[0]?.getAudioTracks?.()[0];
+    expect(firstTrack?.readyState).toBe("live");
+    expect(micControl.classList.contains("active") || micControl.textContent?.toLowerCase().includes("on")).toBe(true);
+    expect(document.getElementById("errorBanner")?.textContent).toBe("");
 
-    document.getElementById("toggleMicBtn")?.click();
+    micControl.click();
     await flush();
-    expect((document.getElementById("toggleMicBtn") as HTMLButtonElement).textContent).toContain("Off");
+    expect(firstTrack?.stop).toHaveBeenCalledTimes(1);
 
-    document.getElementById("toggleMicBtn")?.click();
+    micControl.click();
     await flush();
+    const secondTrack = micStreams[1]?.getAudioTracks?.()[0];
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
-    expect((document.getElementById("toggleMicBtn") as HTMLButtonElement).textContent).toContain("On");
+    expect(secondTrack).toBeTruthy();
+    expect(secondTrack).not.toBe(firstTrack);
+    expect(secondTrack?.readyState).toBe("live");
+    expect(document.getElementById("errorBanner")?.textContent).toBe("");
+
+    cameraControl.click();
+    await flush();
+    expect(document.getElementById("errorBanner")?.textContent).toBe("");
+
+    cameraControl.click();
+    await flush();
+    expect(getUserMediaMock).toHaveBeenCalledTimes(3);
+    expect(document.querySelector("video.local-preview")).not.toBeNull();
+    expect(document.getElementById("errorBanner")?.textContent).toBe("");
+
+    cameraControl.click();
+    await flush();
+    cameraControl.click();
+    await flush();
+    expect(getUserMediaMock).toHaveBeenCalledTimes(4);
   });
 
   it("allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state", async () => {
@@ -212,6 +279,58 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(names.some((name) => name.includes("Ava"))).toBe(false);
     expect(names.some((name) => name.includes("Host"))).toBe(true);
     expect(names.some((name) => name.includes("Sam"))).toBe(true);
+  });
+
+  it("removes only the selected simulated participant from the rendered dev tools flow", async () => {
+    const { document } = await loadRenderedPage();
+
+    document.getElementById("toggleDevPanelBtn")?.click();
+    (document.querySelector('[data-dev-action="hostView"]') as HTMLButtonElement)?.click();
+    await flush();
+
+    const select = document.getElementById("devParticipantSelect") as HTMLSelectElement;
+    const labels = Array.from(select.options).map((option) => option.textContent?.trim());
+
+    expect(labels).toEqual(expect.arrayContaining(["Ava", "Sam", "Priya"]));
+    expect(labels).not.toContain("Host");
+
+    const samOption = Array.from(select.options).find((option) => option.textContent?.trim() === "Sam");
+    expect(samOption).toBeTruthy();
+
+    select.value = samOption?.value ?? "";
+    (document.querySelector('[data-dev-action="removeParticipant"]') as HTMLButtonElement)?.click();
+    await flush();
+
+    let names = getParticipantNames(document);
+    expect(names.some((name) => name.includes("Sam"))).toBe(false);
+    expect(names.some((name) => name.includes("Host"))).toBe(true);
+    expect(names.some((name) => name.includes("Ava"))).toBe(true);
+    expect(names.some((name) => name.includes("Priya"))).toBe(true);
+
+    const dropdownAfterSamRemove = Array.from(select.options).map((option) => option.textContent?.trim());
+    expect(dropdownAfterSamRemove).toEqual(expect.arrayContaining(["Ava", "Priya"]));
+    expect(dropdownAfterSamRemove).not.toContain("Sam");
+
+    select.value = "";
+    (document.querySelector('[data-dev-action="removeParticipant"]') as HTMLButtonElement)?.click();
+    await flush();
+
+    names = getParticipantNames(document);
+    expect(names.some((name) => name.includes("Sam"))).toBe(false);
+    expect(names.some((name) => name.includes("Ava"))).toBe(true);
+    expect(names.some((name) => name.includes("Priya"))).toBe(true);
+
+    const avaOption = Array.from(select.options).find((option) => option.textContent?.trim() === "Ava");
+    expect(avaOption).toBeTruthy();
+
+    select.value = avaOption?.value ?? "";
+    (document.querySelector('[data-dev-action="removeParticipant"]') as HTMLButtonElement)?.click();
+    await flush();
+
+    names = getParticipantNames(document);
+    expect(names.some((name) => name.includes("Ava"))).toBe(false);
+    expect(names.some((name) => name.includes("Host"))).toBe(true);
+    expect(names.some((name) => name.includes("Priya"))).toBe(true);
   });
 
   it("keeps participant role simulations from removing users", async () => {
