@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   type MediaProvider,
@@ -78,7 +78,11 @@ function createDurableObjectNamespace(backingStorage = new Map<string, Map<strin
 }
 
 function createChatApiFixture(namespace = createDurableObjectNamespace()) {
-  const env = { MEETING_STORE: namespace as any };
+  const env = {
+    MEETING_STORE: namespace as any,
+    REALTIME_SFU_APP_ID: "test-sfu-app-id",
+    REALTIME_SFU_BEARER_TOKEN: "test-sfu-app-secret",
+  };
   const request = (path: string, method = "GET", cookie?: string, body?: unknown) => {
     const headers = new Headers();
     if (cookie) headers.set("Cookie", cookie);
@@ -125,6 +129,39 @@ async function createJoinedChatRoom() {
   });
   if (!joinResponse.ok) throw new Error("Unable to join the chat test meeting.");
   return { api, host, meeting, participant };
+}
+
+function createSfuFetchMock() {
+  const calls: Array<{ url: string; method: string; headers: Headers; body: any }> = [];
+  let sessionNumber = 0;
+  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = (init?.method ?? "GET").toUpperCase();
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ url, method, headers: new Headers(init?.headers), body });
+
+    if (url.endsWith("/sessions/new")) {
+      sessionNumber += 1;
+      return Response.json({ sessionId: `sfu-session-${sessionNumber}-secretish` }, { status: 201 });
+    }
+    if (url.endsWith("/tracks/new") && body?.tracks?.[0]?.location === "remote") {
+      return Response.json({
+        sessionDescription: { type: "offer", sdp: "sfu-subscribe-offer" },
+        tracks: body.tracks.map((_track: unknown, index: number) => ({ mid: `remote-${index}`, status: "active" })),
+        requiresImmediateRenegotiation: true,
+      });
+    }
+    if (url.endsWith("/tracks/new")) {
+      return Response.json({
+        sessionDescription: { type: "answer", sdp: "sfu-publish-answer" },
+        tracks: body.tracks.map((track: { mid: string; trackName: string }) => ({ mid: track.mid, trackName: track.trackName, status: "active" })),
+      });
+    }
+    if (url.endsWith("/tracks/close")) return Response.json({ tracks: body.tracks.map((track: { mid: string }) => ({ mid: track.mid, status: "closed" })) });
+    if (url.endsWith("/renegotiate")) return Response.json({ ok: true });
+    return Response.json({ ok: true });
+  });
+  return { fetcher, calls };
 }
 
 function makeRequestWithSession(url: string, init: RequestInit = {}, sessionCookie: string | null): Promise<Response> {
@@ -246,6 +283,84 @@ describe("MeetingService lifecycle", () => {
     expect(joinPayload.data.userId).toBe(guestUser);
     expect(joinPayload.data.displayName).toBe("Host impersonator");
     expect(joinPayload.data.userId).not.toBe(hostSession.data.userId);
+  });
+
+  it("keeps a second session waiting in HOST_APPROVAL, exposes the request to the host, and admits it as a participant only after approval", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const guest = await api.createSession();
+    const meeting = await api.createMeeting(host.cookie, "Approval role regression", "HOST_APPROVAL");
+
+    const guestJoin = await api.request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, {
+      userId: host.userId,
+      displayName: "Parti2",
+    });
+    const waitingPayload = await guestJoin.json();
+
+    expect(guestJoin.status).toBe(200);
+    expect(waitingPayload.data.status).toBe("WAITING");
+    expect(waitingPayload.data.userId).toBe(guest.userId);
+    expect(waitingPayload.data.userId).not.toBe(host.userId);
+
+    const beforeApproval = await api.request(`/api/meetings/${meeting.id}`);
+    const beforePayload = await beforeApproval.json();
+    expect(beforePayload.data.participants.map((entry: { userId: string }) => entry.userId)).toEqual([host.userId]);
+
+    const guestEnd = await api.request(`/api/meetings/${meeting.id}/end`, "POST", guest.cookie);
+    const guestAccessChange = await api.request(`/api/meetings/${meeting.id}/access-mode`, "POST", guest.cookie, {
+      actorUserId: host.userId,
+      accessMode: "OPEN",
+    });
+    const guestPendingList = await api.request(`/api/meetings/${meeting.id}/admission/pending`, "GET", guest.cookie);
+    const guestApproval = await api.request(`/api/meetings/${meeting.id}/admission/${waitingPayload.data.id}/approve`, "POST", guest.cookie);
+    const guestRemoval = await api.request(`/api/meetings/${meeting.id}/remove`, "POST", guest.cookie, {
+      actorUserId: host.userId,
+      targetUserId: host.userId,
+    });
+    expect(guestEnd.status).toBe(403);
+    expect(guestAccessChange.status).toBe(403);
+    expect(guestPendingList.status).toBe(403);
+    expect(guestApproval.status).toBe(403);
+    expect(guestRemoval.status).toBe(403);
+
+    const pendingResponse = await api.request(`/api/meetings/${meeting.id}/admission/pending`, "GET", host.cookie);
+    const pendingPayload = await pendingResponse.json();
+    expect(pendingPayload.data).toHaveLength(1);
+    expect(pendingPayload.data[0].userId).toBe(guest.userId);
+
+    const approved = await api.request(`/api/meetings/${meeting.id}/admission/${waitingPayload.data.id}/approve`, "POST", host.cookie);
+    expect(approved.status).toBe(200);
+    const guestRejoin = await api.request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, {
+      userId: host.userId,
+      displayName: "Parti2",
+    });
+    const joinedPayload = await guestRejoin.json();
+    expect(guestRejoin.status).toBe(200);
+    expect(joinedPayload.data).toMatchObject({
+      userId: guest.userId,
+      role: ParticipantRole.PARTICIPANT,
+      state: ParticipantState.JOINED,
+    });
+    expect(joinedPayload.data.userId).not.toBe(host.userId);
+  });
+
+  it("keeps direct OPEN-mode joins as participants even when the body claims host identity", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const guest = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Open role regression");
+    const response = await api.request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, {
+      userId: host.userId,
+      displayName: "Open Guest",
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.data).toMatchObject({
+      userId: guest.userId,
+      role: ParticipantRole.PARTICIPANT,
+      state: ParticipantState.JOINED,
+    });
   });
 
   it("allows the host to post chat messages", async () => {
@@ -579,6 +694,169 @@ describe("MeetingService lifecycle", () => {
     expect((await hostHistory.json()).data.map((entry: { meetingId: string }) => entry.meetingId)).toContain(meeting.id);
     expect((await participantHistory.json()).data.map((entry: { meetingId: string }) => entry.meetingId)).toContain(meeting.id);
     expect((await unrelatedHistory.json()).data).toEqual([]);
+  });
+
+  it("creates the SFU session and publishes local tracks through server-side requests only", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "SFU publish room");
+    const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+    const sfuFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = (init?.method ?? "GET").toUpperCase();
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, headers: new Headers(init?.headers), body });
+
+      if (url.endsWith("/sessions/new")) return Response.json({ sessionId: "private-sfu-session-id" }, { status: 201 });
+      return Response.json({
+        sessionDescription: { type: "answer", sdp: "sfu-answer-sdp" },
+        tracks: [{ mid: "0", trackName: "microphone" }, { mid: "1", trackName: "camera" }],
+      });
+    });
+    vi.stubGlobal("fetch", sfuFetch);
+
+    try {
+      const response = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "connection-test-123",
+        sessionDescription: { type: "offer", sdp: "browser-offer-sdp" },
+        tracks: [
+          { trackName: "microphone", mid: "0" },
+          { trackName: "camera", mid: "1" },
+        ],
+        userId: "spoofed-user",
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.data.sessionDescription).toEqual({ type: "answer", sdp: "sfu-answer-sdp" });
+      expect(payload.data.tracks).toHaveLength(2);
+      expect(JSON.stringify(payload)).not.toContain("private-sfu-session-id");
+      expect(JSON.stringify(payload)).not.toContain("test-sfu-app-secret");
+      expect(calls.map((call) => [call.method, call.url])).toEqual([
+        ["POST", "https://rtc.live.cloudflare.com/v1/apps/test-sfu-app-id/sessions/new"],
+        ["POST", "https://rtc.live.cloudflare.com/v1/apps/test-sfu-app-id/sessions/private-sfu-session-id/tracks/new"],
+      ]);
+      expect(calls.every((call) => call.headers.get("Authorization") === "Bearer test-sfu-app-secret")).toBe(true);
+      expect(calls[1].body).toMatchObject({
+        sessionDescription: { type: "offer", sdp: "browser-offer-sdp" },
+        tracks: [
+          { location: "local", mid: "0", trackName: "microphone" },
+          { location: "local", mid: "1", trackName: "camera" },
+        ],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("subscribes joined participants to remote publications and completes the returned SDP offer", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "publisher-connection-1",
+        sessionDescription: { type: "offer", sdp: "publisher-offer" },
+        tracks: [{ trackName: "camera", mid: "0" }, { trackName: "microphone", mid: "1" }],
+      });
+      expect(publish.status).toBe(200);
+
+      const subscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", participant.cookie, { connectionId: "subscriber-connection-1" });
+      const subscribePayload = await subscribe.json();
+      expect(subscribe.status).toBe(200);
+      expect(subscribePayload.data.sessionDescription).toEqual({ type: "offer", sdp: "sfu-subscribe-offer" });
+      expect(subscribePayload.data.tracks).toEqual([
+        expect.objectContaining({ publisherUserId: host.userId, trackName: "camera", mid: "remote-0" }),
+        expect.objectContaining({ publisherUserId: host.userId, trackName: "microphone", mid: "remote-1" }),
+      ]);
+      expect(JSON.stringify(subscribePayload)).not.toContain("sfu-session-");
+
+      const answer = await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", participant.cookie, {
+        connectionId: "subscriber-connection-1",
+        operationId: subscribePayload.data.operationId,
+        sessionDescription: { type: "answer", sdp: "subscriber-answer" },
+      });
+      expect(answer.status).toBe(200);
+      expect(sfu.calls.some((call) => call.url.endsWith("/renegotiate") && call.body.sessionDescription.sdp === "subscriber-answer")).toBe(true);
+      const remoteCreate = sfu.calls.find((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote");
+      expect(remoteCreate?.body.tracks).toEqual([
+        { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "camera" },
+        { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "microphone" },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("replaces prior publisher transport on rejoin without duplicating meeting membership", async () => {
+    const { api, host, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = (connectionId: string) => api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId,
+        sessionDescription: { type: "offer", sdp: `offer-${connectionId}` },
+        tracks: [{ trackName: "camera", mid: "0" }],
+      });
+      expect((await publish("publisher-tab-a-connection")).status).toBe(200);
+      expect((await publish("publisher-tab-b-connection")).status).toBe(200);
+
+      const close = sfu.calls.find((call) => call.url.endsWith("/tracks/close"));
+      expect(close?.url).toContain("/sessions/sfu-session-1-secretish/tracks/close");
+      expect(close?.body).toMatchObject({ force: true, tracks: [{ mid: "0" }] });
+      const savedMeeting = await api.request(`/api/meetings/${meeting.id}`);
+      const savedPayload = await savedMeeting.json();
+      expect(savedPayload.data.participants.filter((entry: { userId: string }) => entry.userId === host.userId)).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("closes the removed participant's published SFU track", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", participant.cookie, {
+        connectionId: "removed-participant-connection",
+        sessionDescription: { type: "offer", sdp: "guest-offer" },
+        tracks: [{ trackName: "microphone", mid: "4" }],
+      });
+      expect(publish.status).toBe(200);
+      const removed = await api.request(`/api/meetings/${meeting.id}/remove`, "POST", host.cookie, {
+        actorUserId: host.userId,
+        targetUserId: participant.userId,
+      });
+      expect(removed.status).toBe(200);
+      expect(sfu.calls.some((call) => call.url.endsWith("/sessions/sfu-session-1-secretish/tracks/close") && call.body.tracks[0].mid === "4")).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not discover publications across separate BillionTalks meetings", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const visitor = await api.createSession();
+    const roomA = await api.createOpenMeeting(host.cookie, "SFU room A");
+    const roomB = await api.createOpenMeeting(host.cookie, "SFU room B");
+    await api.request(`/api/meetings/${roomB.id}/join`, "POST", visitor.cookie, { displayName: "Visitor" });
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      await api.request(`/api/meetings/${roomA.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "room-a-publisher",
+        sessionDescription: { type: "offer", sdp: "room-a-offer" },
+        tracks: [{ trackName: "camera", mid: "0" }],
+      });
+      const response = await api.request(`/api/meetings/${roomB.id}/media/subscribe`, "POST", visitor.cookie, { connectionId: "room-b-subscriber" });
+      const payload = await response.json();
+      expect(response.status).toBe(200);
+      expect(payload.data.tracks).toEqual([]);
+      expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote")).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("creates a meeting with a generated BT meeting ID and host participant", async () => {

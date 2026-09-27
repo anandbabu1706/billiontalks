@@ -56,6 +56,55 @@ describe("CloudflareRealtimeConnectionClient", () => {
     });
   });
 
+  it("publishes, subscribes, renegotiates, and closes tracks through authenticated server calls", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sessionDescription: { type: "answer", sdp: "sfu-answer" },
+        tracks: [{ location: "remote", mid: "2", sessionId: "publisher-transport", trackName: "camera" }],
+      }),
+    });
+    const client = new CloudflareRealtimeConnectionClient("app-123", "bearer-secret-abc", fetchMock as typeof fetch);
+
+    await client.publishTracks("transport-local", { type: "offer", sdp: "local-offer" }, [
+      { location: "local", mid: "0", trackName: "microphone" },
+      { location: "local", mid: "1", trackName: "camera" },
+    ]);
+    await client.subscribeTracks("transport-local", [
+      { location: "remote", sessionId: "transport-remote", trackName: "camera" },
+    ]);
+    await client.renegotiate("transport-local", { type: "answer", sdp: "local-answer" });
+    await client.closeTracks("transport-local", ["0", "1"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ["https://rtc.live.cloudflare.com/v1/apps/app-123/sessions/transport-local/tracks/new", "POST"],
+      ["https://rtc.live.cloudflare.com/v1/apps/app-123/sessions/transport-local/tracks/new", "POST"],
+      ["https://rtc.live.cloudflare.com/v1/apps/app-123/sessions/transport-local/renegotiate", "PUT"],
+      ["https://rtc.live.cloudflare.com/v1/apps/app-123/sessions/transport-local/tracks/close", "PUT"],
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      sessionDescription: { type: "offer", sdp: "local-offer" },
+      tracks: [
+        { location: "local", mid: "0", trackName: "microphone" },
+        { location: "local", mid: "1", trackName: "camera" },
+      ],
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
+      tracks: [{ location: "remote", sessionId: "transport-remote", trackName: "camera" }],
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({
+      sessionDescription: { type: "answer", sdp: "local-answer" },
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[3][1]?.body))).toEqual({
+      tracks: [{ mid: "0" }, { mid: "1" }],
+      force: true,
+    });
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init?.headers).toMatchObject({ Authorization: "Bearer bearer-secret-abc" });
+    }
+  });
+
   it("sanitizes Cloudflare error responses and does not leak raw body content", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

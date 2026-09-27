@@ -18,6 +18,55 @@ function createResponse(payload: unknown, ok = true, status = 200) {
   };
 }
 
+class FakePeerConnection {
+  public connectionState = "new";
+  public iceGatheringState = "complete";
+  public signalingState = "stable";
+  public localDescription: any = null;
+  public remoteDescription: any = null;
+  public onconnectionstatechange: (() => void) | null = null;
+  public ontrack: ((event: any) => void) | null = null;
+  private transceivers: any[] = [];
+
+  addTransceiver(track: any, init: { direction: string }) {
+    const transceiver = {
+      mid: String(this.transceivers.length),
+      direction: init.direction,
+      sender: { track, replaceTrack: vi.fn(async () => undefined) },
+      stop: vi.fn(),
+    };
+    this.transceivers.push(transceiver);
+    return transceiver;
+  }
+
+  getTransceivers() { return this.transceivers; }
+  async createOffer() { return { type: "offer", sdp: "browser-offer-sdp" }; }
+  async createAnswer() { return { type: "answer", sdp: "browser-answer-sdp" }; }
+  async setLocalDescription(description: any) { this.localDescription = description; this.signalingState = description.type === "offer" ? "have-local-offer" : "stable"; }
+  async setRemoteDescription(description: any) {
+    this.remoteDescription = description;
+    this.signalingState = "stable";
+    if (description.type === "offer" && this.ontrack) {
+      this.ontrack({
+        transceiver: { mid: "remote-0" },
+        track: { id: "remote-camera-track", kind: "video", readyState: "live", addEventListener() {} },
+      });
+    }
+  }
+  addEventListener() {}
+  removeEventListener() {}
+  close() { this.connectionState = "closed"; }
+}
+
+class FakeMediaStream {
+  private tracks: any[] = [];
+  addTrack(track: any) { this.tracks.push(track); }
+  removeTrack(track: any) { this.tracks = this.tracks.filter((entry) => entry !== track); }
+  getTracks() { return this.tracks; }
+  getVideoTracks() { return this.tracks.filter((track) => track.kind === "video"); }
+  getAudioTracks() { return this.tracks.filter((track) => track.kind === "audio"); }
+}
+
 const openWindows: JSDOM["window"][] = [];
 const browserSessions = new Map<string, { sessionId: string; userId: string; displayName: string; createdAt: string; lastSeenAt: string }>();
 
@@ -37,6 +86,9 @@ function createSessionNamespace() {
 }
 
 async function loadRenderedPage() {
+  let nextSubscribePayload: unknown = null;
+  let subscribePayloadUsed = false;
+  let includeRemoteParticipant = false;
   const response = await app.fetch(new Request("http://localhost/"), {
     SESSION_STORE: createSessionNamespace(),
   });
@@ -95,6 +147,34 @@ async function loadRenderedPage() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
+
+    if (url.endsWith("/media/publish") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      return createResponse({
+        ok: true,
+        data: {
+          sessionDescription: { type: "answer", sdp: "sfu-publish-answer" },
+          tracks: body.tracks,
+        },
+      });
+    }
+
+    if (url.endsWith("/media/subscribe") && method === "POST") {
+      if (nextSubscribePayload && !subscribePayloadUsed) {
+        subscribePayloadUsed = true;
+        return createResponse(nextSubscribePayload);
+      }
+      return createResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } });
+    }
+
+    if (url.endsWith("/media/tracks/close") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      return createResponse({ ok: true, data: { closed: body.trackNames ?? [] } });
+    }
+
+    if (url.endsWith("/media/close") && method === "POST") {
+      return createResponse({ ok: true, data: { closed: true } });
+    }
 
     if (url === "/api/meetings/history" && method === "GET") {
       return createResponse({
@@ -172,7 +252,16 @@ async function loadRenderedPage() {
           title: body.title || "Sprint review",
           status: "active",
           hostId: "host-123",
-          participants: [],
+          participants: [
+            { id: "host-123", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED" },
+            ...(includeRemoteParticipant ? [{
+              id: "remote-participant",
+              userId: "remote-user",
+              displayName: "Remote Guest",
+              role: "PARTICIPANT",
+              state: "JOINED",
+            }] : []),
+          ],
         },
       });
     }
@@ -185,7 +274,7 @@ async function loadRenderedPage() {
           id: "participant-" + body.userId,
           userId: body.userId,
           displayName: body.displayName,
-          role: "PARTICIPANT",
+          role: body.userId === "host-123" ? "HOST" : "PARTICIPANT",
           state: "JOINED",
           meetingId: "btm_test_123",
         },
@@ -219,7 +308,16 @@ async function loadRenderedPage() {
 
   const getUserMediaMock = window.navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>;
 
-  return { window, document: window.document, fetchMock, getUserMediaMock, micStreams: createdMicStreams, cameraStreams: createdCameraStreams };
+  return {
+    window,
+    document: window.document,
+    fetchMock,
+    getUserMediaMock,
+    micStreams: createdMicStreams,
+    cameraStreams: createdCameraStreams,
+    setNextSubscribePayload(payload: unknown) { nextSubscribePayload = payload; },
+    setIncludeRemoteParticipant() { includeRemoteParticipant = true; },
+  };
 }
 
 function createApprovalMeetingState() {
@@ -373,6 +471,113 @@ describe("BillionTalks browser UI regression tests", () => {
     await flush();
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/stop", expect.objectContaining({ method: "POST" }));
     expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording stopped");
+  });
+
+  it("publishes existing microphone and camera captures through SFU signaling and closes them when toggled off", async () => {
+    const { window, document, fetchMock, getUserMediaMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "SFU media check";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
+    const cameraControl = document.getElementById("cameraControlBtn") as HTMLButtonElement;
+    micControl.click();
+    micControl.click();
+    await flush();
+    cameraControl.click();
+    cameraControl.click();
+    await flush();
+
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    const publishBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(publishBodies.flatMap((body) => body.tracks.map((track: { trackName: string }) => track.trackName))).toEqual(expect.arrayContaining(["microphone", "camera"]));
+    expect(publishBodies.every((body) => body.connectionId && body.sessionDescription && !("userId" in body))).toBe(true);
+
+    micControl.click();
+    await flush();
+    const closeBody = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/tracks/close") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body))).at(-1);
+    expect(closeBody.trackNames).toContain("microphone");
+  });
+
+  it("publishes and stops screen share using the existing share control", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const screenTrack = {
+      id: "screen-share-track",
+      kind: "video",
+      readyState: "live",
+      stop: vi.fn(() => { screenTrack.readyState = "ended"; }),
+      addEventListener: vi.fn(),
+    };
+    Object.defineProperty(window.navigator.mediaDevices, "getDisplayMedia", {
+      value: vi.fn(async () => ({ getTracks: () => [screenTrack], getVideoTracks: () => [screenTrack], getAudioTracks: () => [] })),
+      configurable: true,
+    });
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Screen share check";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    document.getElementById("shareScreenBtn")?.click();
+    await flush();
+    const publishBody = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body))).find((body) => body.tracks.some((track: { trackName: string }) => track.trackName === "screen-video"));
+    expect(publishBody).toBeTruthy();
+
+    document.getElementById("shareScreenBtn")?.click();
+    await flush();
+    const closeBody = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/tracks/close") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body))).at(-1);
+    expect(closeBody.trackNames).toContain("screen-video");
+    expect(screenTrack.stop).toHaveBeenCalled();
+  });
+
+  it("subscribes to a remote SFU video track and renders it in the matching participant tile", async () => {
+    const { window, document, fetchMock, setNextSubscribePayload, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    setNextSubscribePayload({
+      ok: true,
+      data: {
+        operationId: "remote-subscription-operation",
+        sessionDescription: { type: "offer", sdp: "sfu-remote-offer" },
+        tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera" }],
+      },
+    });
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Remote track check";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    const remoteTile = document.querySelector('#videoStage .tile[data-user-id="remote-user"]');
+    const remoteVideo = remoteTile?.querySelector("video.remote-media") as HTMLVideoElement | null;
+    expect(remoteVideo).not.toBeNull();
+    expect((remoteVideo?.srcObject as unknown as FakeMediaStream).getVideoTracks()).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/media/renegotiate", expect.objectContaining({ method: "POST" }));
   });
 
   it("uses the real bottom mic/camera controls without null DOM writes and reacquires fresh live tracks", async () => {
@@ -574,6 +779,13 @@ describe("BillionTalks browser UI regression tests", () => {
     const hostMeetingId = "btm_dev_1234567890";
     meeting.id = hostMeetingId;
     meeting.hostId = "host-dev";
+    meeting.participants[0] = {
+      id: "host-dev-participant",
+      userId: "host-dev",
+      displayName: "Host",
+      role: "HOST",
+      state: "JOINED",
+    };
     meeting.accessRequests = [{
       id: "req-guest-1",
       meetingId: hostMeetingId,
@@ -927,6 +1139,7 @@ describe("BT-V0-009 rendered host controls", () => {
     document.getElementById("refreshAdmissionsBtn")?.click(); await flush();
     expect(document.getElementById("admissionPanel")?.style.display).toBe("none");
     expect(document.getElementById("endMeetingBtn")?.style.display).toBe("none");
+    expect((document.getElementById("recordingControls") as HTMLElement).style.display).toBe("none");
     expect(document.querySelector("[data-remove-user-id]")).toBeNull();
   });
 });

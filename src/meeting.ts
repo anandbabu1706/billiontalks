@@ -586,7 +586,8 @@ export class DurableMeetingRepository implements MeetingRepository {
 
 export class MeetingPermissions {
   static isHost(meeting: Meeting, actorUserId: string): boolean {
-    return meeting.status === MeetingStatus.ACTIVE && meeting.hostId === actorUserId;
+    return meeting.status === MeetingStatus.ACTIVE && meeting.hostId === actorUserId &&
+      meeting.participants.some((participant) => participant.userId === actorUserId && participant.role === ParticipantRole.HOST);
   }
 
   static canEndMeeting(meeting: Meeting, actorUserId: string): boolean {
@@ -808,6 +809,7 @@ export class MeetingService {
     if (existingParticipant) {
       existingParticipant.state = ParticipantState.JOINED;
       existingParticipant.displayName = request.displayName;
+      existingParticipant.role = ParticipantRole.PARTICIPANT;
       existingParticipant.leftAt = undefined;
     } else {
       const participant: MeetingParticipant = {
@@ -1012,6 +1014,7 @@ export class MeetingService {
       }
 
       existingParticipant.displayName = displayName;
+      existingParticipant.role = ParticipantRole.PARTICIPANT;
       await this.repository.saveMeeting(meeting);
       return existingParticipant;
     }

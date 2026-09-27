@@ -106,17 +106,34 @@ describe("BT-V0-009 host management", () => {
 
   it("exposes the removal API with validation and host-role checks", async () => {
     const fixture = durableFixture();
-    const service = fixture.service();
-    const meeting = await service.createMeeting({ title: "API", hostUserId: "host", accessMode: "OPEN" });
-    await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest" });
-    const remove = (body: unknown) => app.fetch(new Request(`http://localhost/api/meetings/${meeting.id}/remove`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    }), { MEETING_STORE: fixture.namespace } as any);
-    expect((await remove({})).status).toBe(400);
-    expect((await remove({ actorUserId: "guest", targetUserId: "host" })).status).toBe(403);
-    const result = await remove({ actorUserId: "host", targetUserId: "guest" });
+    const env = { MEETING_STORE: fixture.namespace } as any;
+    const request = (path: string, method = "GET", cookie?: string, body?: unknown) => app.fetch(new Request(`http://localhost${path}`, {
+      method,
+      headers: {
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }), env);
+    const createSession = async () => {
+      const response = await request("/api/session", "POST");
+      const payload = await response.json();
+      const cookieValue = response.headers.get("Set-Cookie")?.match(/bt_session_v0=([^;]+)/)?.[1];
+      if (!cookieValue) throw new Error("Expected secure session cookie.");
+      return { userId: payload.data.userId as string, cookie: `bt_session_v0=${cookieValue}` };
+    };
+    const host = await createSession();
+    const guest = await createSession();
+    const createdResponse = await request("/api/meetings", "POST", host.cookie, { title: "API", accessMode: "OPEN" });
+    const meeting = (await createdResponse.json()).data;
+    const joined = await request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, { userId: host.userId, displayName: "Guest" });
+    expect(joined.status).toBe(200);
+
+    expect((await request(`/api/meetings/${meeting.id}/remove`, "POST", guest.cookie, {})).status).toBe(400);
+    expect((await request(`/api/meetings/${meeting.id}/remove`, "POST", guest.cookie, { actorUserId: host.userId, targetUserId: guest.userId })).status).toBe(403);
+    const result = await request(`/api/meetings/${meeting.id}/remove`, "POST", host.cookie, { actorUserId: guest.userId, targetUserId: guest.userId });
     expect(result.status).toBe(200);
     const payload = await result.json() as { data: Meeting };
-    expect(payload.data.participants.find(p => p.userId === "guest")?.state).toBe("REMOVED");
+    expect(payload.data.participants.find(p => p.userId === guest.userId)?.state).toBe("REMOVED");
   });
 });
