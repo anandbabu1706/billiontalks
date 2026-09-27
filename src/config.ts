@@ -3,7 +3,7 @@ export type RealtimeEnv = {
   REALTIME_SFU_BEARER_TOKEN?: string;
 };
 
-export function validateRealtimeEnv(env: RealtimeEnv): {
+export function validateRealtimeEnv(env: Partial<RealtimeEnv> = {}): {
   ok: boolean;
   missing: string[];
 } {

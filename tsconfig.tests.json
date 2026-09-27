@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["vitest/globals", "node", "jsdom"],
+    "noEmit": true
+  },
+  "include": ["tests/**/*.ts", "src/**/*.ts"]
+}

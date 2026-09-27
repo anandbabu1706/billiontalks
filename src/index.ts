@@ -13,7 +13,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 
 const meetingRepository = new InMemoryMeetingRepository();
 
-function getMeetingService(env: RealtimeEnv): MeetingService {
+function getMeetingService(env: Partial<RealtimeEnv> = {}): MeetingService {
   const mediaProvider =
     env.REALTIME_SFU_APP_ID && env.REALTIME_SFU_BEARER_TOKEN
       ? new CloudflareMediaProvider(env.REALTIME_SFU_APP_ID, env.REALTIME_SFU_BEARER_TOKEN)
@@ -458,6 +458,12 @@ function meetingUiHtml(): string {
             <button type="button" data-dev-action="cameraOff">Camera off</button>
             <button type="button" data-dev-action="showGrid">Participant grid</button>
           </div>
+          <div style="margin-top:12px; display:flex; flex-direction:column; gap:6px;">
+            <label for="devParticipantSelect" style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted);">Remove selected participant</label>
+            <select id="devParticipantSelect" style="width:100%; border-radius:10px; background:rgba(15,23,42,0.7); color:var(--text); border:1px solid var(--border); padding:10px 12px;">
+              <option value="">Select a participant</option>
+            </select>
+          </div>
           <div class="dev-note">This panel is for local development simulation only. It does not create real audio/video connections.</div>
         </div>
       </div>
@@ -623,6 +629,8 @@ function meetingUiHtml(): string {
           micEnabled: true,
           cameraEnabled: true,
           screenShareEnabled: false,
+          micAvailable: true,
+          cameraAvailable: true,
         },
         error: null,
       };
@@ -667,6 +675,84 @@ function meetingUiHtml(): string {
         }
       }
 
+      function createLocalMediaState() {
+        return {
+          micStream: null,
+          cameraStream: null,
+          micRequestInFlight: false,
+          cameraRequestInFlight: false,
+        };
+      }
+
+      function startLocalMediaStream(mediaState, device, stream) {
+        const nextState = stopLocalMediaStream(mediaState, device);
+
+        if (device === 'mic') {
+          return {
+            ...nextState,
+            micStream: stream,
+            micRequestInFlight: false,
+          };
+        }
+
+        return {
+          ...nextState,
+          cameraStream: stream,
+          cameraRequestInFlight: false,
+        };
+      }
+
+      function stopLocalMediaStream(mediaState, device) {
+        const stream = device === 'mic' ? mediaState.micStream : mediaState.cameraStream;
+
+        if (stream) {
+          stream.getTracks().forEach((track) => {
+            if (track.readyState !== 'ended') {
+              try {
+                track.stop();
+              } catch {
+                // Ignore stop failures; the stale ref is still cleared.
+              }
+            }
+          });
+        }
+
+        if (device === 'mic') {
+          return {
+            ...mediaState,
+            micStream: null,
+            micRequestInFlight: false,
+          };
+        }
+
+        return {
+          ...mediaState,
+          cameraStream: null,
+          cameraRequestInFlight: false,
+        };
+      }
+
+      function removeSelectedDevParticipant(currentState, participantId) {
+        if (!currentState.meeting || !participantId) {
+          return currentState;
+        }
+
+        const nextParticipants = currentState.meeting.participants.filter((participant) => participant.id !== participantId);
+        if (nextParticipants.length === currentState.meeting.participants.length) {
+          return currentState;
+        }
+
+        return {
+          ...currentState,
+          meeting: {
+            ...currentState.meeting,
+            participants: nextParticipants,
+          },
+        };
+      }
+
+      const localMediaState = createLocalMediaState();
+
       function renderLocalState() {
         const micBtn = document.getElementById('toggleMicBtn');
         const cameraBtn = document.getElementById('toggleCameraBtn');
@@ -674,8 +760,8 @@ function meetingUiHtml(): string {
         const cameraControl = document.getElementById('cameraControlBtn');
         const shareControl = document.getElementById('shareScreenBtn');
 
-        const micIsOn = state.localDevice.micEnabled;
-        const cameraIsOn = state.localDevice.cameraEnabled;
+        const micIsOn = state.localDevice.micEnabled && state.localDevice.micAvailable;
+        const cameraIsOn = state.localDevice.cameraEnabled && state.localDevice.cameraAvailable;
 
         micControl.classList.toggle('active', micIsOn);
         micControl.classList.toggle('off', !micIsOn);
@@ -688,12 +774,173 @@ function meetingUiHtml(): string {
         micControl.innerHTML = '<span class="device-icon">🎙️</span>';
         cameraControl.innerHTML = '<span class="device-icon">📷</span>';
 
-        document.getElementById('localStatusLabel').textContent = micIsOn ? 'Mic on' : 'Mic off';
+        const micStatus = state.localDevice.micAvailable ? (micIsOn ? 'Mic on' : 'Mic off') : 'Microphone unavailable';
+        const cameraStatus = state.localDevice.cameraAvailable ? (cameraIsOn ? 'Camera on' : 'Camera off') : 'Camera unavailable';
+        document.getElementById('localStatusLabel').textContent = micStatus + ' • ' + cameraStatus;
+
         if (micBtn) {
-          micBtn.textContent = 'Mic: ' + (micIsOn ? 'On' : 'Off');
+          micBtn.textContent = state.localDevice.micAvailable ? 'Mic: ' + (micIsOn ? 'On' : 'Off') : 'Mic: Unavailable';
         }
         if (cameraBtn) {
-          cameraBtn.textContent = 'Camera: ' + (cameraIsOn ? 'On' : 'Off');
+          cameraBtn.textContent = state.localDevice.cameraAvailable ? 'Camera: ' + (cameraIsOn ? 'On' : 'Off') : 'Camera: Unavailable';
+        }
+
+        syncLocalCameraPreview();
+      }
+
+      function syncLocalCameraPreview() {
+        const selfTile = document.querySelector('.tile.self');
+        if (!selfTile) {
+          return;
+        }
+
+        const existingPreview = selfTile.querySelector('video.local-preview');
+        if (existingPreview) {
+          existingPreview.remove();
+        }
+
+        const placeholder = selfTile.querySelector('.placeholder');
+        if (placeholder) {
+          placeholder.style.display = 'block';
+          placeholder.textContent = 'You';
+        }
+
+        if (!state.localDevice.cameraAvailable || !state.localDevice.cameraEnabled || !localMediaState.cameraStream) {
+          if (placeholder) {
+            placeholder.textContent = state.localDevice.cameraAvailable ? 'You' : 'Camera unavailable';
+          }
+          return;
+        }
+
+        const video = document.createElement('video');
+        video.className = 'local-preview';
+        video.srcObject = localMediaState.cameraStream;
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'cover';
+        video.style.background = 'rgba(15, 23, 42, 0.7)';
+
+        if (placeholder) {
+          placeholder.style.display = 'none';
+        }
+
+        selfTile.appendChild(video);
+        void video.play().catch(() => undefined);
+      }
+
+      function stopLocalMicrophone() {
+        Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'mic'));
+        state.localDevice.micEnabled = false;
+        renderLocalState();
+      }
+
+      function stopLocalCamera() {
+        Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'camera'));
+        state.localDevice.cameraEnabled = false;
+        renderLocalState();
+      }
+
+      function stopAllLocalMedia() {
+        stopLocalMicrophone();
+        stopLocalCamera();
+      }
+
+      async function toggleMicrophone() {
+        if (state.localDevice.micEnabled && localMediaState.micStream) {
+          stopLocalMicrophone();
+          return;
+        }
+
+        if (state.localDevice.micAvailable === false || localMediaState.micRequestInFlight) {
+          return;
+        }
+
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+          state.localDevice.micAvailable = false;
+          state.localDevice.micEnabled = false;
+          renderLocalState();
+          setError('This browser does not support microphone capture.');
+          return;
+        }
+
+        try {
+          localMediaState.micRequestInFlight = true;
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+          if (!stream.getAudioTracks().length) {
+            throw new DOMException('No microphone device is available.', 'NotFoundError');
+          }
+
+          Object.assign(localMediaState, startLocalMediaStream(localMediaState, 'mic', stream));
+          state.localDevice.micAvailable = true;
+          state.localDevice.micEnabled = true;
+          renderLocalState();
+          setError(null);
+        } catch (error) {
+          state.localDevice.micEnabled = false;
+          const name = error instanceof DOMException ? error.name : '';
+          if (name === 'NotAllowedError' || name === 'AbortError' || name === 'NotFoundError') {
+            state.localDevice.micAvailable = false;
+            setError('Microphone unavailable or permission was denied.');
+          } else if (error instanceof Error) {
+            setError(error.message);
+          } else {
+            setError('Unable to start the microphone.');
+          }
+          renderLocalState();
+        } finally {
+          localMediaState.micRequestInFlight = false;
+        }
+      }
+
+      async function toggleCamera() {
+        if (state.localDevice.cameraEnabled && localMediaState.cameraStream) {
+          stopLocalCamera();
+          return;
+        }
+
+        if (state.localDevice.cameraAvailable === false || localMediaState.cameraRequestInFlight) {
+          return;
+        }
+
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+          state.localDevice.cameraAvailable = false;
+          state.localDevice.cameraEnabled = false;
+          renderLocalState();
+          setError('This browser does not support camera capture.');
+          return;
+        }
+
+        try {
+          localMediaState.cameraRequestInFlight = true;
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+
+          if (!stream.getVideoTracks().length) {
+            throw new DOMException('No camera device is available.', 'NotFoundError');
+          }
+
+          Object.assign(localMediaState, startLocalMediaStream(localMediaState, 'camera', stream));
+          state.localDevice.cameraAvailable = true;
+          state.localDevice.cameraEnabled = true;
+          renderLocalState();
+          setError(null);
+        } catch (error) {
+          state.localDevice.cameraEnabled = false;
+          const name = error instanceof DOMException ? error.name : '';
+          if (name === 'NotAllowedError' || name === 'AbortError' || name === 'NotFoundError') {
+            state.localDevice.cameraAvailable = false;
+            setError('Camera unavailable or permission was denied.');
+          } else if (error instanceof Error) {
+            setError(error.message);
+          } else {
+            setError('Unable to start the camera.');
+          }
+          renderLocalState();
+        } finally {
+          localMediaState.cameraRequestInFlight = false;
         }
       }
 
@@ -847,6 +1094,35 @@ function meetingUiHtml(): string {
         showScreen('meeting');
       }
 
+      let selectedDevParticipantId = '';
+
+      function syncDevParticipantSelection() {
+        const select = document.getElementById('devParticipantSelect');
+        if (!select || !state.meeting) {
+          return;
+        }
+
+        const options = state.meeting.participants
+          .filter((participant) => participant.role === 'PARTICIPANT' && participant.state !== 'LEFT')
+          .map((participant) => ({
+            id: participant.id,
+            label: participant.displayName || participant.userId || participant.id,
+          }));
+
+        const currentSelection = selectedDevParticipantId;
+        select.innerHTML = options.length
+          ? '<option value="">Select a participant</option>' + options.map((option) => '<option value="' + option.id + '">' + option.label + '</option>').join('')
+          : '<option value="">No participants</option>';
+
+        if (currentSelection && options.some((option) => option.id === currentSelection)) {
+          select.value = currentSelection;
+          selectedDevParticipantId = currentSelection;
+        } else {
+          select.value = '';
+          selectedDevParticipantId = '';
+        }
+      }
+
       function renderMeetingRoom() {
         if (!state.meeting) {
           return;
@@ -854,6 +1130,7 @@ function meetingUiHtml(): string {
 
         document.getElementById('meetingTitleText').textContent = state.meeting.title;
         document.getElementById('meetingIdBadge').textContent = state.meeting.id;
+        syncDevParticipantSelection();
 
         const participantList = document.getElementById('participantList');
         const stage = document.getElementById('videoStage');
@@ -1054,6 +1331,7 @@ function meetingUiHtml(): string {
         }
 
         stopScreenShareCapture();
+        stopAllLocalMedia();
         state.currentUserId = '';
         state.isHost = false;
         state.meeting = null;
@@ -1083,6 +1361,8 @@ function meetingUiHtml(): string {
             throw new Error(payload.error || 'Unable to end the meeting.');
           }
 
+          stopScreenShareCapture();
+          stopAllLocalMedia();
           state.meeting = payload.data;
           state.isHost = false;
           syncMeetingRoleUi();
@@ -1137,17 +1417,26 @@ function meetingUiHtml(): string {
         }
 
         if (action === 'removeParticipant') {
-          if (!state.meeting || state.meeting.participants.length <= 1) {
-            setError('No removable participant available in the local dev state.');
+          const select = document.getElementById('devParticipantSelect');
+          const selectedId = (select && select instanceof HTMLSelectElement ? select.value : '') || selectedDevParticipantId;
+
+          if (!selectedId) {
+            setError('Select a simulated participant to remove from the dev tools panel.');
             return;
           }
 
-          state.meeting.participants = state.meeting.participants.filter((participant) => participant.role !== 'PARTICIPANT');
-          state.meeting.participants = state.meeting.participants.length ? state.meeting.participants : [
-            { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED', meetingId: state.meeting.id, userId: 'host-dev', joinedAt: new Date().toISOString() },
-          ];
+          const participantToRemove = state.meeting?.participants.find((participant) => participant.id === selectedId);
+          if (!participantToRemove) {
+            setError('The selected simulated participant is no longer in the room.');
+            return;
+          }
+
+          const nextMeeting = removeSelectedDevParticipant(state, selectedId);
+          state.meeting = nextMeeting.meeting;
+          selectedDevParticipantId = '';
           renderMeetingRoom();
           showScreen('meeting');
+          setError(null);
           return;
         }
 
@@ -1237,6 +1526,12 @@ function meetingUiHtml(): string {
       }
 
       document.getElementById('toggleDevPanelBtn').addEventListener('click', toggleDevPanel);
+      const devParticipantSelect = document.getElementById('devParticipantSelect');
+      if (devParticipantSelect) {
+        devParticipantSelect.addEventListener('change', (event) => {
+          selectedDevParticipantId = event.target.value;
+        });
+      }
       document.querySelectorAll('[data-dev-action]').forEach((button) => {
         button.addEventListener('click', () => handleDevAction(button.dataset.devAction));
       });
@@ -1258,23 +1553,27 @@ function meetingUiHtml(): string {
       document.getElementById('joinNowButton').addEventListener('click', joinMeetingNow);
       document.getElementById('backToHomeFromPrejoin').addEventListener('click', () => showScreen('home'));
       document.getElementById('toggleMicBtn').addEventListener('click', () => {
-        state.localDevice.micEnabled = !state.localDevice.micEnabled;
-        renderLocalState();
+        void toggleMicrophone();
       });
 
       document.getElementById('toggleCameraBtn').addEventListener('click', () => {
-        state.localDevice.cameraEnabled = !state.localDevice.cameraEnabled;
-        renderLocalState();
+        void toggleCamera();
       });
 
       document.getElementById('micControlBtn').addEventListener('click', () => {
-        state.localDevice.micEnabled = !state.localDevice.micEnabled;
-        renderLocalState();
+        if (state.localDevice.micEnabled) {
+          stopLocalMicrophone();
+          return;
+        }
+        void toggleMicrophone();
       });
 
       document.getElementById('cameraControlBtn').addEventListener('click', () => {
-        state.localDevice.cameraEnabled = !state.localDevice.cameraEnabled;
-        renderLocalState();
+        if (state.localDevice.cameraEnabled) {
+          stopLocalCamera();
+          return;
+        }
+        void toggleCamera();
       });
 
       document.getElementById('shareScreenBtn').addEventListener('click', handleScreenShareToggle);
@@ -1284,6 +1583,7 @@ function meetingUiHtml(): string {
       document.getElementById('endMeetingBtn').addEventListener('click', endMeeting);
       document.getElementById('returnHomeBtn').addEventListener('click', () => {
         stopScreenShareCapture();
+        stopAllLocalMedia();
         state.currentUserId = '';
         state.isHost = false;
         state.meetingId = '';
@@ -1301,7 +1601,7 @@ function meetingUiHtml(): string {
 }
 
 export default {
-  async fetch(request: Request, env: RealtimeEnv): Promise<Response> {
+  async fetch(request: Request, env: Partial<RealtimeEnv> = {}): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {

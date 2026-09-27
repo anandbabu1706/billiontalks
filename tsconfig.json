@@ -1,16 +1,7 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2022", "WebWorker"],
-    "strict": true,
-    "noEmit": true,
-    "types": ["@cloudflare/workers-types", "vitest/globals"],
-    "resolveJsonModule": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "isolatedModules": true
-  },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.tests.json" }
+  ]
 }

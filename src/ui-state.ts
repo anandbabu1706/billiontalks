@@ -10,6 +10,8 @@ export type LocalDeviceState = {
   micEnabled: boolean;
   cameraEnabled: boolean;
   screenShareEnabled: boolean;
+  micAvailable: boolean;
+  cameraAvailable: boolean;
 };
 
 export type UiParticipant = {
@@ -39,6 +41,22 @@ export type MeetingUiState = {
   localDevice: LocalDeviceState;
 };
 
+export type LocalMediaTrackLike = {
+  readyState: string;
+  stop: () => void;
+};
+
+export type LocalMediaStreamLike = {
+  getTracks: () => LocalMediaTrackLike[];
+};
+
+export type LocalMediaStreamState = {
+  micStream: LocalMediaStreamLike | null;
+  cameraStream: LocalMediaStreamLike | null;
+  micRequestInFlight: boolean;
+  cameraRequestInFlight: boolean;
+};
+
 export function createInitialUiState(): MeetingUiState {
   return {
     route: "home",
@@ -52,6 +70,98 @@ export function createInitialUiState(): MeetingUiState {
       micEnabled: true,
       cameraEnabled: true,
       screenShareEnabled: false,
+      micAvailable: true,
+      cameraAvailable: true,
+    },
+  };
+}
+
+export function createLocalMediaState(): LocalMediaStreamState {
+  return {
+    micStream: null,
+    cameraStream: null,
+    micRequestInFlight: false,
+    cameraRequestInFlight: false,
+  };
+}
+
+export function startLocalMediaStream(
+  state: LocalMediaStreamState,
+  device: "mic" | "camera",
+  stream: LocalMediaStreamLike | null,
+): LocalMediaStreamState {
+  if (!stream) {
+    return state;
+  }
+
+  const nextState = stopLocalMediaStream(state, device);
+
+  if (device === "mic") {
+    return {
+      ...nextState,
+      micStream: stream,
+      micRequestInFlight: false,
+    };
+  }
+
+  return {
+    ...nextState,
+    cameraStream: stream,
+    cameraRequestInFlight: false,
+  };
+}
+
+export function stopLocalMediaStream(
+  state: LocalMediaStreamState,
+  device: "mic" | "camera",
+): LocalMediaStreamState {
+  const stream = device === "mic" ? state.micStream : state.cameraStream;
+
+  if (stream) {
+    stream.getTracks().forEach((track) => {
+      if (track.readyState !== "ended") {
+        try {
+          track.stop();
+        } catch {
+          // Ignore stop failures; the stale stream ref must still be cleared.
+        }
+      }
+    });
+  }
+
+  if (device === "mic") {
+    return {
+      ...state,
+      micStream: null,
+      micRequestInFlight: false,
+    };
+  }
+
+  return {
+    ...state,
+    cameraStream: null,
+    cameraRequestInFlight: false,
+  };
+}
+
+export function removeSelectedDevParticipant(
+  state: MeetingUiState,
+  participantId: string,
+): MeetingUiState {
+  if (!state.meeting || !participantId) {
+    return state;
+  }
+
+  const nextParticipants = state.meeting.participants.filter((participant) => participant.id !== participantId);
+  if (nextParticipants.length === state.meeting.participants.length) {
+    return state;
+  }
+
+  return {
+    ...state,
+    meeting: {
+      ...state.meeting,
+      participants: nextParticipants,
     },
   };
 }
@@ -75,6 +185,20 @@ export function setScreenShareState(state: MeetingUiState, enabled: boolean): Me
     localDevice: {
       ...state.localDevice,
       screenShareEnabled: enabled,
+    },
+  };
+}
+
+export function setDeviceAvailability(
+  state: MeetingUiState,
+  device: "micAvailable" | "cameraAvailable",
+  available: boolean,
+): MeetingUiState {
+  return {
+    ...state,
+    localDevice: {
+      ...state.localDevice,
+      [device]: available,
     },
   };
 }
