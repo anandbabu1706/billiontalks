@@ -251,6 +251,59 @@ describe("MeetingService lifecycle", () => {
     expect(() => resolveMeetingRepository({})).toThrow("MEETING_STORE Durable Object binding is required");
   });
 
+  it("preserves participant identity and prevents stale duplicates on refresh/rejoin", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Reconnect test", hostUserId: "host", accessMode: "OPEN" });
+
+    const firstJoin = await service.joinMeeting(meeting.id, { userId: "guest-1", displayName: "Guest One" });
+    await service.leaveMeeting(meeting.id, "guest-1");
+
+    const rejoin = await service.joinMeeting(meeting.id, { userId: "guest-1", displayName: "Guest One Again" });
+
+    expect(rejoin.id).toBe(firstJoin.id);
+    expect(rejoin.state).toBe(ParticipantState.JOINED);
+    expect((await service.listParticipants(meeting.id)).filter((participant) => participant.userId === "guest-1")).toHaveLength(1);
+  });
+
+  it("lets the host leave and rejoin without losing host authority or creating a duplicate host entry", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Host rejoin", hostUserId: "host-1", accessMode: "OPEN" });
+
+    await service.leaveMeeting(meeting.id, "host-1");
+    const rejoinedHost = await service.joinMeeting(meeting.id, { userId: "host-1", displayName: "Host One" });
+
+    expect(rejoinedHost.role).toBe(ParticipantRole.HOST);
+    expect(rejoinedHost.state).toBe(ParticipantState.JOINED);
+    expect((await service.listParticipants(meeting.id)).filter((participant) => participant.userId === "host-1")).toHaveLength(1);
+    expect((await service.getMeeting(meeting.id))?.hostId).toBe("host-1");
+  });
+
+  it("keeps previous approval semantics when a guest re-enters a host-approved meeting", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Approval reconnect", hostUserId: "host", accessMode: "HOST_APPROVAL" });
+
+    const waiting = await service.requestAdmission(meeting.id, { userId: "guest-1", displayName: "Guest One" });
+    await service.approveAdmission(meeting.id, "host", waiting.id);
+    await service.leaveMeeting(meeting.id, "guest-1");
+
+    const rejoin = await service.joinMeeting(meeting.id, { userId: "guest-1", displayName: "Guest One" });
+    expect(rejoin.role).toBe(ParticipantRole.PARTICIPANT);
+    expect(rejoin.state).toBe(ParticipantState.JOINED);
+    expect((await service.getMeeting(meeting.id))?.accessRequests.find((request) => request.userId === "guest-1")?.status).toBe("APPROVED");
+  });
+
+  it("rejects reconnects for ended meetings and keeps host approval state stable", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Ended meeting", hostUserId: "host", accessMode: "HOST_APPROVAL" });
+
+    const waiting = await service.requestAdmission(meeting.id, { userId: "guest-1", displayName: "Guest One" });
+    await service.approveAdmission(meeting.id, "host", waiting.id);
+    await service.endMeeting(meeting.id, "host");
+
+    await expect(service.joinMeeting(meeting.id, { userId: "guest-1", displayName: "Guest One" })).rejects.toThrow("not active");
+    await expect(service.requestAdmission(meeting.id, { userId: "guest-2", displayName: "Guest Two" })).rejects.toThrow("not active");
+  });
+
   it("persists meeting state across service restarts without changing host approval behavior", async () => {
     const durableState = new Map<string, unknown>();
     const storage = {

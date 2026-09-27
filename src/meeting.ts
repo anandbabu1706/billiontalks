@@ -379,7 +379,14 @@ export class MeetingService {
   }
 
   async getMeeting(meetingId: string): Promise<Meeting | undefined> {
-    return this.repository.getMeeting(meetingId);
+    const meeting = await this.repository.getMeeting(meetingId);
+    if (!meeting) {
+      return undefined;
+    }
+
+    meeting.participants = this.deduplicateParticipants(meeting.participants);
+    await this.repository.saveMeeting(meeting);
+    return meeting;
   }
 
   async requestAdmission(
@@ -576,6 +583,7 @@ export class MeetingService {
 
   async joinMeeting(meetingId: string, input: JoinMeetingInput): Promise<MeetingParticipant> {
     const meeting = await this.getRequiredMeeting(meetingId);
+    meeting.participants = this.deduplicateParticipants(meeting.participants);
 
     if (meeting.status !== MeetingStatus.ACTIVE) {
       throw new Error("Meeting is not active.");
@@ -584,11 +592,11 @@ export class MeetingService {
     const userId = normalizeRequiredString(input.userId, "Participant userId");
     const displayName = normalizeRequiredString(input.displayName, "Participant displayName");
 
-    if (meeting.hostId === userId) {
-      const existingParticipant = meeting.participants.find(
-        (participant) => participant.userId === userId,
-      );
+    const existingParticipant = meeting.participants.find(
+      (participant) => participant.userId === userId,
+    );
 
+    if (meeting.hostId === userId) {
       if (existingParticipant) {
         existingParticipant.role = ParticipantRole.HOST;
         if (existingParticipant.state === ParticipantState.LEFT) {
@@ -634,13 +642,57 @@ export class MeetingService {
     }
 
     if (meeting.accessMode === MeetingAccessMode.HOST_APPROVAL) {
-      await this.requestAdmission(meetingId, { userId, displayName });
+      if (existingParticipant) {
+        if (existingParticipant.state === ParticipantState.LEFT) {
+          existingParticipant.state = ParticipantState.JOINED;
+          existingParticipant.leftAt = undefined;
+        }
+        existingParticipant.displayName = displayName;
+        existingParticipant.role = ParticipantRole.PARTICIPANT;
+        await this.repository.saveMeeting(meeting);
+        return existingParticipant;
+      }
+
+      const existingRequest = meeting.accessRequests.find((request) => request.userId === userId);
+      if (existingRequest) {
+        if (existingRequest.status === MeetingAdmissionStatus.APPROVED) {
+          const participant: MeetingParticipant = {
+            id: generateParticipantId(meetingId, userId),
+            meetingId,
+            userId,
+            displayName,
+            role: ParticipantRole.PARTICIPANT,
+            state: ParticipantState.JOINED,
+            joinedAt: new Date().toISOString(),
+          };
+
+          meeting.participants.push(participant);
+          await this.repository.saveMeeting(meeting);
+          return participant;
+        }
+
+        if (existingRequest.status === MeetingAdmissionStatus.REJECTED) {
+          throw new Error("Your meeting admission request was rejected.");
+        }
+
+        if (existingRequest.status === MeetingAdmissionStatus.WAITING) {
+          throw new Error("Admission request submitted and waiting for host approval.");
+        }
+      }
+
+      const request: MeetingAdmissionRequest = {
+        id: `admission-${meetingId}-${userId}-${crypto.randomUUID().slice(0, 8)}`,
+        meetingId,
+        userId,
+        displayName,
+        status: MeetingAdmissionStatus.WAITING,
+        requestedAt: new Date().toISOString(),
+      };
+
+      meeting.accessRequests.push(request);
+      await this.repository.saveMeeting(meeting);
       throw new Error("Admission request submitted and waiting for host approval.");
     }
-
-    const existingParticipant = meeting.participants.find(
-      (participant) => participant.userId === userId,
-    );
 
     if (existingParticipant) {
       if (existingParticipant.state === ParticipantState.LEFT) {
@@ -739,7 +791,51 @@ export class MeetingService {
 
   async listParticipants(meetingId: string): Promise<MeetingParticipant[]> {
     const meeting = await this.getRequiredMeeting(meetingId);
+    meeting.participants = this.deduplicateParticipants(meeting.participants);
+    await this.repository.saveMeeting(meeting);
     return [...meeting.participants];
+  }
+
+  private deduplicateParticipants(participants: MeetingParticipant[]): MeetingParticipant[] {
+    const deduped = new Map<string, MeetingParticipant>();
+
+    for (const participant of participants) {
+      const existing = deduped.get(participant.userId);
+      if (!existing) {
+        deduped.set(participant.userId, participant);
+        continue;
+      }
+
+      const preferred = this.choosePreferredParticipant(existing, participant);
+      deduped.set(participant.userId, preferred);
+    }
+
+    return Array.from(deduped.values());
+  }
+
+  private choosePreferredParticipant(
+    current: MeetingParticipant,
+    candidate: MeetingParticipant,
+  ): MeetingParticipant {
+    if (current.state === ParticipantState.JOINED && candidate.state !== ParticipantState.JOINED) {
+      return current;
+    }
+
+    if (current.state !== ParticipantState.JOINED && candidate.state === ParticipantState.JOINED) {
+      return candidate;
+    }
+
+    if (current.role === ParticipantRole.HOST && candidate.role !== ParticipantRole.HOST) {
+      return current;
+    }
+
+    if (current.role !== ParticipantRole.HOST && candidate.role === ParticipantRole.HOST) {
+      return candidate;
+    }
+
+    const currentTime = Date.parse(current.joinedAt || "1970-01-01T00:00:00.000Z");
+    const candidateTime = Date.parse(candidate.joinedAt || "1970-01-01T00:00:00.000Z");
+    return currentTime >= candidateTime ? current : candidate;
   }
 
   private async getRequiredMeeting(meetingId: string): Promise<Meeting> {
@@ -747,6 +843,11 @@ export class MeetingService {
 
     if (!meeting) {
       throw new Error(`Meeting not found: ${meetingId}`);
+    }
+
+    meeting.participants = this.deduplicateParticipants(meeting.participants);
+    if (meeting.participants.length !== 0) {
+      await this.repository.saveMeeting(meeting);
     }
 
     return meeting;
