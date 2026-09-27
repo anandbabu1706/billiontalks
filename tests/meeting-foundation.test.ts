@@ -10,7 +10,7 @@ import {
   ParticipantRole,
   ParticipantState,
 } from "../src/meeting";
-import app, { resolveMeetingRepository } from "../src/index";
+import app, { MeetingStateDurableObject, resolveMeetingRepository } from "../src/index";
 
 class StubMediaProvider implements MediaProvider {
   public created: Array<{ meetingId: string; participantId: string }> = [];
@@ -39,6 +39,24 @@ function getCookieValue(setCookieHeader: string | null, name: string): string | 
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function createSessionNamespace(durableStorage: Map<string, unknown>) {
+  return {
+    idFromName: (name: string) => name,
+    get: () => new MeetingStateDurableObject({
+      storage: {
+        transaction: async (callback: (storage: any) => Promise<unknown>) => callback({
+          get: async <T>(key: string) => durableStorage.get(key) as T | undefined,
+          put: async (key: string, value: unknown) => { durableStorage.set(key, value); },
+          delete: async (key: string) => durableStorage.delete(key),
+        }),
+        get: async <T>(key: string) => durableStorage.get(key) as T | undefined,
+        put: async (key: string, value: unknown) => { durableStorage.set(key, value); },
+        delete: async (key: string) => durableStorage.delete(key),
+      },
+    } as any, {}),
+  };
+}
+
 function makeRequestWithSession(url: string, init: RequestInit = {}, sessionCookie: string | null): Promise<Response> {
   const headers = new Headers(init.headers ?? {});
   if (sessionCookie) {
@@ -51,34 +69,68 @@ function makeRequestWithSession(url: string, init: RequestInit = {}, sessionCook
 }
 
 describe("MeetingService lifecycle", () => {
-  it("creates a server-issued session and keeps the same identity across repeated requests", async () => {
+  it("preserves cookie-backed identity across runtime re-instantiation and refreshes session expiry", async () => {
+    const durableStorage = new Map<string, unknown>();
     const sessionResponse = await app.fetch(new Request("http://localhost/api/session", { method: "POST" }), {
-      MEETING_STORE: new InMemoryMeetingRepository() as any,
+      SESSION_STORE: createSessionNamespace(durableStorage),
     });
     const payload = await sessionResponse.json();
     const cookieValue = getCookieValue(sessionResponse.headers.get("Set-Cookie"), "bt_session_v0");
+    const cookieHeader = sessionResponse.headers.get("Set-Cookie") ?? "";
+    const storedSessionKey = `v0-session:${cookieValue}`;
+    const firstStoredSession = durableStorage.get(storedSessionKey) as { lastSeenAt: string };
 
     expect(payload.ok).toBe(true);
     expect(cookieValue).toBeTruthy();
     expect(payload.data.userId).toMatch(/^session_/);
+    expect(cookieHeader).toContain("HttpOnly");
+    expect(cookieHeader).toContain("Max-Age=604800");
+
+    durableStorage.set(storedSessionKey, {
+      ...(durableStorage.get(storedSessionKey) as object),
+      lastSeenAt: new Date(Date.now() - 60_000).toISOString(),
+    });
 
     const repeatResponse = await app.fetch(new Request("http://localhost/api/session", {
       method: "POST",
       headers: { Cookie: `bt_session_v0=${cookieValue}` },
     }), {
-      MEETING_STORE: new InMemoryMeetingRepository() as any,
+      SESSION_STORE: createSessionNamespace(durableStorage),
     });
     const repeatPayload = await repeatResponse.json();
+    const refreshedSession = durableStorage.get(storedSessionKey) as { lastSeenAt: string };
 
     expect(repeatPayload.ok).toBe(true);
     expect(repeatPayload.data.userId).toBe(payload.data.userId);
+    expect(repeatPayload.data.sessionId).toBe(payload.data.sessionId);
+    expect(Date.parse(refreshedSession.lastSeenAt)).toBeGreaterThan(Date.parse(firstStoredSession.lastSeenAt));
+
+    durableStorage.set(storedSessionKey, {
+      ...(durableStorage.get(storedSessionKey) as object),
+      lastSeenAt: new Date(Date.now() - (7 * 24 * 60 * 60 * 1000) - 1).toISOString(),
+    });
+    const expiredResponse = await app.fetch(new Request("http://localhost/api/session", {
+      method: "POST",
+      headers: { Cookie: `bt_session_v0=${cookieValue}` },
+    }), {
+      SESSION_STORE: createSessionNamespace(durableStorage),
+    });
+    const expiredPayload = await expiredResponse.json();
+
+    expect(expiredPayload.data.userId).not.toBe(payload.data.userId);
+    expect(expiredPayload.data.sessionId).not.toBe(payload.data.sessionId);
   });
 
   it("rejects host and participant spoofing when a session-backed identity is present", async () => {
     const repository = new InMemoryMeetingRepository();
+    const durableStorage = new Map<string, unknown>();
+    const makeEnv = () => ({
+      MEETING_STORE: repository as any,
+      SESSION_STORE: createSessionNamespace(durableStorage),
+    });
 
     const hostSessionResponse = await app.fetch(new Request("http://localhost/api/session", { method: "POST" }), {
-      MEETING_STORE: repository as any,
+      ...makeEnv(),
     });
     const hostCookie = getCookieValue(hostSessionResponse.headers.get("Set-Cookie"), "bt_session_v0");
     const hostSession = await hostSessionResponse.json();
@@ -88,7 +140,7 @@ describe("MeetingService lifecycle", () => {
       headers: { Cookie: `bt_session_v0=${hostCookie}` },
       body: JSON.stringify({ title: "Secure room", accessMode: "OPEN" }),
     }), {
-      MEETING_STORE: repository as any,
+      ...makeEnv(),
     });
     const createdMeeting = await createMeetingResponse.json();
 
@@ -96,7 +148,7 @@ describe("MeetingService lifecycle", () => {
     expect(createdMeeting.data.hostId).toBe(hostSession.data.userId);
 
     const guestSessionResponse = await app.fetch(new Request("http://localhost/api/session", { method: "POST" }), {
-      MEETING_STORE: repository as any,
+      ...makeEnv(),
     });
     const guestCookie = getCookieValue(guestSessionResponse.headers.get("Set-Cookie"), "bt_session_v0");
     const guestUser = (await guestSessionResponse.json()).data.userId;
@@ -106,7 +158,7 @@ describe("MeetingService lifecycle", () => {
       headers: { Cookie: `bt_session_v0=${guestCookie}` },
       body: JSON.stringify({ actorUserId: "spoofed-host", accessMode: "OPEN" }),
     }), {
-      MEETING_STORE: repository as any,
+      ...makeEnv(),
     });
 
     expect(spoofedAccessResponse.status).toBe(403);
@@ -116,7 +168,7 @@ describe("MeetingService lifecycle", () => {
       headers: { Cookie: `bt_session_v0=${guestCookie}` },
       body: JSON.stringify({ userId: hostSession.data.userId, displayName: "Host impersonator" }),
     }), {
-      MEETING_STORE: repository as any,
+      ...makeEnv(),
     });
     const joinPayload = await joinResponse.json();
 

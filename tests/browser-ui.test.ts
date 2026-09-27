@@ -19,9 +19,27 @@ function createResponse(payload: unknown, ok = true, status = 200) {
 }
 
 const openWindows: JSDOM["window"][] = [];
+const browserSessions = new Map<string, { sessionId: string; userId: string; displayName: string; createdAt: string; lastSeenAt: string }>();
+
+function createSessionNamespace() {
+  const stub = {
+    getSession: async (sessionId: string) => browserSessions.get(sessionId),
+    saveSession: async (session: { sessionId: string; userId: string; displayName: string; createdAt: string; lastSeenAt: string }) => {
+      browserSessions.set(session.sessionId, session);
+    },
+    deleteSession: async (sessionId: string) => { browserSessions.delete(sessionId); },
+  };
+
+  return {
+    idFromName: (name: string) => name,
+    get: () => stub,
+  };
+}
 
 async function loadRenderedPage() {
-  const response = await app.fetch(new Request("http://localhost/"));
+  const response = await app.fetch(new Request("http://localhost/"), {
+    SESSION_STORE: createSessionNamespace(),
+  });
   const html = await response.text();
   const createdMicStreams: Array<{ getTracks: () => any[]; getAudioTracks: () => any[]; getVideoTracks: () => any[] }> = [];
   const createdCameraStreams: Array<{ getTracks: () => any[]; getAudioTracks: () => any[]; getVideoTracks: () => any[] }> = [];

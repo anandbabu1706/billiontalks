@@ -23,7 +23,33 @@ type V0Session = {
   lastSeenAt: string;
 };
 
-const sessionStore = new Map<string, V0Session>();
+type V0SessionStoreStub = {
+  getSession: (sessionId: string) => Promise<V0Session | undefined>;
+  saveSession: (session: V0Session) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
+};
+
+type WorkerEnv = Partial<RealtimeEnv> & { SESSION_STORE?: unknown };
+
+function resolveSessionStore(env: WorkerEnv): V0SessionStoreStub {
+  const binding = env.SESSION_STORE ?? env.MEETING_STORE;
+
+  if (!binding || typeof binding !== "object" || !("get" in binding) || !("idFromName" in binding)) {
+    throw new Error("A Durable Object namespace is required to persist V0 sessions.");
+  }
+
+  const namespace = binding as {
+    get: (id: unknown) => V0SessionStoreStub;
+    idFromName: (name: string) => unknown;
+  };
+  const stub = namespace.get(namespace.idFromName("billiontalks-v0-sessions"));
+
+  if (!stub || typeof stub.getSession !== "function" || typeof stub.saveSession !== "function" || typeof stub.deleteSession !== "function") {
+    throw new Error("The configured Durable Object does not support V0 session storage.");
+  }
+
+  return stub;
+}
 
 function generateSessionUserId(): string {
   return `session_${crypto.randomUUID().slice(0, 12)}`;
@@ -72,29 +98,46 @@ function withSessionCookie(response: Response, request: Request, session: V0Sess
   });
 }
 
-async function getOrCreateSession(request: Request, displayName?: string): Promise<{ session: V0Session; isNew: boolean }> {
+async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?: string): Promise<{ session: V0Session; isNew: boolean }> {
+  const store = resolveSessionStore(env);
   const sessionId = getSessionIdFromRequest(request);
 
-  if (sessionId && sessionStore.has(sessionId)) {
-    const existing = sessionStore.get(sessionId)!;
-    existing.lastSeenAt = new Date().toISOString();
+  if (sessionId) {
+    const existing = await store.getSession(sessionId);
+    const now = Date.now();
+    const lastSeenAt = existing ? Date.parse(existing.lastSeenAt) : Number.NaN;
 
-    if (displayName && displayName.trim()) {
-      existing.displayName = displayName.trim();
+    if (
+      existing &&
+      existing.sessionId === sessionId &&
+      Number.isFinite(lastSeenAt) &&
+      now >= lastSeenAt &&
+      now - lastSeenAt < SESSION_TTL_SECONDS * 1000
+    ) {
+      const updated: V0Session = {
+        ...existing,
+        displayName: displayName?.trim() || existing.displayName,
+        lastSeenAt: new Date(now).toISOString(),
+      };
+      await store.saveSession(updated);
+      return { session: updated, isNew: false };
     }
 
-    return { session: existing, isNew: false };
+    if (existing) {
+      await store.deleteSession(sessionId);
+    }
   }
 
+  const now = new Date().toISOString();
   const createSession: V0Session = {
     sessionId: crypto.randomUUID(),
     userId: generateSessionUserId(),
     displayName: displayName?.trim() || "Guest",
-    createdAt: new Date().toISOString(),
-    lastSeenAt: new Date().toISOString(),
+    createdAt: now,
+    lastSeenAt: now,
   };
 
-  sessionStore.set(createSession.sessionId, createSession);
+  await store.saveSession(createSession);
   return { session: createSession, isNew: true };
 }
 
@@ -117,6 +160,18 @@ export class MeetingStateDurableObject extends DurableObject<unknown> {
 
   async getMeeting(): Promise<Meeting | undefined> {
     return (await this.ctx.storage.get<Meeting>("meeting")) ?? undefined;
+  }
+
+  async getSession(sessionId: string): Promise<V0Session | undefined> {
+    return (await this.ctx.storage.get<V0Session>(`v0-session:${sessionId}`)) ?? undefined;
+  }
+
+  async saveSession(session: V0Session): Promise<void> {
+    await this.ctx.storage.put(`v0-session:${session.sessionId}`, session);
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.ctx.storage.delete(`v0-session:${sessionId}`);
   }
 }
 
@@ -2035,11 +2090,11 @@ function meetingUiHtml(): string {
 }
 
 export default {
-  async fetch(request: Request, env: Partial<RealtimeEnv> = {}): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
-      const { session } = await getOrCreateSession(request);
+      const { session } = await getOrCreateSession(request, env);
       return withSessionCookie(
         new Response(meetingUiHtml(), {
           headers: {
@@ -2052,7 +2107,7 @@ export default {
     }
 
     if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/session") {
-      const { session } = await getOrCreateSession(request);
+      const { session } = await getOrCreateSession(request, env);
       return withSessionCookie(
         jsonResponse({
           ok: true,
@@ -2143,7 +2198,7 @@ export default {
         );
       }
 
-      const { session } = await getOrCreateSession(request, body.displayName || body.hostDisplayName);
+      const { session } = await getOrCreateSession(request, env, body.displayName || body.hostDisplayName);
 
       try {
         const meeting = await getMeetingService(env).createMeeting({
@@ -2184,7 +2239,7 @@ export default {
 
     if (meetingAdmissionRequestMatch && request.method === "POST") {
       const body = await parseJsonBody<{ userId?: string; displayName?: string }>(request);
-      const { session } = await getOrCreateSession(request, body?.displayName);
+      const { session } = await getOrCreateSession(request, env, body?.displayName);
 
       if (!body || !body.displayName) {
         return withSessionCookie(
@@ -2227,7 +2282,7 @@ export default {
     );
 
     if (meetingPendingAdmissionsMatch && request.method === "GET") {
-      const { session } = await getOrCreateSession(request);
+      const { session } = await getOrCreateSession(request, env);
       const actorUserId = session.userId;
 
       try {
@@ -2254,7 +2309,7 @@ export default {
 
     if (meetingAdmissionDecisionMatch && request.method === "POST") {
       const body = await parseJsonBody<{ userId?: string }>(request);
-      const { session } = await getOrCreateSession(request);
+      const { session } = await getOrCreateSession(request, env);
 
       try {
         const service = getMeetingService(env);
@@ -2284,7 +2339,7 @@ export default {
 
     if (meetingAccessModeMatch && request.method === "POST") {
       const body = await parseJsonBody<{ actorUserId?: string; accessMode?: string }>(request);
-      const { session } = await getOrCreateSession(request);
+      const { session } = await getOrCreateSession(request, env);
 
       if (!body || !body.accessMode) {
         return withSessionCookie(
@@ -2353,7 +2408,7 @@ export default {
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "join") {
       const body = await parseJsonBody<{ userId?: string; displayName?: string }>(request);
-      const { session } = await getOrCreateSession(request, body?.displayName);
+      const { session } = await getOrCreateSession(request, env, body?.displayName);
 
       if (!body || !body.displayName) {
         return withSessionCookie(
@@ -2412,7 +2467,7 @@ export default {
     }
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "leave") {
-      const { session } = await getOrCreateSession(request);
+      const { session } = await getOrCreateSession(request, env);
 
       try {
         const participant = await getMeetingService(env).leaveMeeting(meetingMatch[1], session.userId);
@@ -2436,7 +2491,7 @@ export default {
     }
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "end") {
-      const { session } = await getOrCreateSession(request);
+      const { session } = await getOrCreateSession(request, env);
 
       try {
         const meeting = await getMeetingService(env).endMeeting(meetingMatch[1], session.userId);
