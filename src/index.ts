@@ -26,9 +26,1291 @@ function parseJsonBody<T>(request: Request): Promise<T | null> {
   return request.json().catch(() => null) as Promise<T | null>;
 }
 
+function meetingUiHtml(): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BillionTalks V0</title>
+    <style>
+      :root {
+        --bg: #0b1020;
+        --panel: rgba(15, 23, 42, 0.8);
+        --panel-strong: #111827;
+        --panel-soft: #172033;
+        --text: #e5eefb;
+        --muted: #9aa8c7;
+        --primary: #7c9cff;
+        --primary-strong: #4f75ff;
+        --success: #3ddc97;
+        --warning: #fbbf24;
+        --danger: #f87171;
+        --border: rgba(148, 163, 184, 0.25);
+        --shadow: 0 18px 40px rgba(15, 23, 42, 0.35);
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: radial-gradient(circle at top, #1b2540 0%, var(--bg) 48%);
+        color: var(--text);
+        font-family: Inter, "Segoe UI", sans-serif;
+      }
+      body {
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: stretch;
+      }
+      .app-shell {
+        width: min(1420px, 100%);
+        padding: 24px;
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+      .brand {
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #dfe9ff;
+      }
+      .status-pill {
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(15, 23, 42, 0.7);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .screen {
+        display: none;
+      }
+      .screen.visible {
+        display: block;
+      }
+      .home-card,
+      .panel,
+      .meeting-shell {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        box-shadow: var(--shadow);
+      }
+      .home-card {
+        max-width: 760px;
+        margin: 48px auto 0;
+        padding: 36px;
+      }
+      h1, h2, h3, p { margin-top: 0; }
+      .kicker {
+        color: var(--primary);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 28px;
+      }
+      .actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 20px;
+      }
+      button, input {
+        font: inherit;
+      }
+      button {
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+      }
+      button:hover { transform: translateY(-1px); }
+      .primary {
+        background: linear-gradient(135deg, var(--primary), var(--primary-strong));
+        color: white;
+        padding: 12px 18px;
+        font-weight: 700;
+      }
+      .secondary {
+        background: rgba(148, 163, 184, 0.12);
+        color: var(--text);
+        padding: 12px 18px;
+        border: 1px solid var(--border);
+      }
+      .ghost {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--border);
+        padding: 10px 12px;
+      }
+      .input-group {
+        margin-top: 20px;
+      }
+      label {
+        display: block;
+        color: var(--muted);
+        margin-bottom: 8px;
+        font-size: 13px;
+      }
+      input {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      .info-box {
+        padding: 18px;
+        border-radius: 16px;
+        background: rgba(124, 156, 255, 0.08);
+        border: 1px solid rgba(124, 156, 255, 0.2);
+      }
+      .form-grid {
+        display: grid;
+        gap: 16px;
+      }
+      .meeting-shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        min-height: 780px;
+        overflow: hidden;
+      }
+      .stage-panel {
+        padding: 16px 16px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .video-stage {
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.7), rgba(30, 41, 59, 0.9));
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        min-height: 500px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(160px, 1fr));
+        gap: 12px;
+        padding: 12px;
+      }
+      .tile {
+        position: relative;
+        border-radius: 18px;
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(51, 65, 85, 0.95));
+        border: 1px solid var(--border);
+        min-height: 180px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        color: var(--text);
+      }
+      .tile .placeholder {
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        opacity: 0.8;
+      }
+      .tile .meta {
+        position: absolute;
+        left: 10px;
+        bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(15, 23, 42, 0.65);
+        border-radius: 999px;
+        padding: 5px 8px;
+        font-size: 12px;
+      }
+      .tile.self {
+        background: linear-gradient(135deg, rgba(79, 117, 255, 0.38), rgba(51, 65, 85, 0.96));
+      }
+      .side-panel {
+        border-left: 1px solid var(--border);
+        background: rgba(10, 16, 28, 0.75);
+        padding: 16px;
+      }
+      .participant-list {
+        list-style: none;
+        padding: 0;
+        margin: 18px 0 0;
+        display: grid;
+        gap: 10px;
+      }
+      .participant-list li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(148, 163, 184, 0.06);
+        border: 1px solid var(--border);
+      }
+      .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--success);
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+        padding: 12px 0 4px;
+      }
+      .control {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        background: rgba(148, 163, 184, 0.12);
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        position: relative;
+      }
+      .control .device-icon {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .control .device-icon::after {
+        content: "";
+        position: absolute;
+        left: 8%;
+        right: 8%;
+        top: 50%;
+        height: 2px;
+        background: currentColor;
+        transform: translateY(-50%) rotate(-45deg);
+        opacity: 0;
+      }
+      .control.active {
+        background: rgba(61, 220, 151, 0.18);
+        border-color: rgba(61, 220, 151, 0.45);
+        color: #dfffee;
+      }
+      .control.off {
+        background: rgba(15, 23, 42, 0.7);
+        border-color: rgba(148, 163, 184, 0.5);
+        color: #f8fafc;
+      }
+      .control.off .device-icon::after {
+        opacity: 1;
+      }
+      .control.danger {
+        background: rgba(248, 113, 113, 0.16);
+        border-color: rgba(248, 113, 113, 0.45);
+      }
+      .dev-toggle {
+        padding: 8px 12px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(15, 23, 42, 0.7);
+        color: var(--muted);
+      }
+      .dev-panel {
+        display: none;
+        margin: 0 0 16px;
+        border: 1px solid rgba(124, 156, 255, 0.35);
+        border-radius: 16px;
+        background: rgba(17, 24, 39, 0.8);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+      .dev-panel.visible {
+        display: block;
+      }
+      .dev-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(124, 156, 255, 0.08);
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #dfe9ff;
+      }
+      .dev-panel-content {
+        padding: 14px;
+      }
+      .dev-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 10px;
+      }
+      .dev-grid button {
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(148, 163, 184, 0.08);
+        color: var(--text);
+        text-align: left;
+      }
+      .dev-note {
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .meeting-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 12px 14px;
+      }
+      .meeting-header strong { font-size: 18px; }
+      .meeting-id {
+        background: rgba(124, 156, 255, 0.12);
+        border: 1px solid rgba(124, 156, 255, 0.3);
+        border-radius: 10px;
+        padding: 8px 10px;
+        color: var(--text);
+        font-family: "SFMono-Regular", ui-monospace, monospace;
+      }
+      .muted { color: var(--muted); }
+      .error {
+        color: #fdd2d2;
+        background: rgba(248, 113, 113, 0.08);
+        border: 1px solid rgba(248, 113, 113, 0.35);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-top: 12px;
+      }
+      .device-status {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+      .chip {
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(148, 163, 184, 0.06);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .chip.ok {
+        border-color: rgba(61, 220, 151, 0.5);
+        color: var(--success);
+      }
+      @media (max-width: 980px) {
+        .hero, .meeting-shell {
+          grid-template-columns: 1fr;
+        }
+        .side-panel {
+          border-left: none;
+          border-top: 1px solid var(--border);
+        }
+        .video-stage {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="topbar">
+        <div class="brand">BillionTalks</div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button class="dev-toggle" id="toggleDevPanelBtn" type="button">Dev tools</button>
+          <div class="status-pill" id="statusPill">V0 Meeting UI</div>
+        </div>
+      </div>
+
+      <div class="dev-panel" id="devPanel" aria-label="Development testing panel">
+        <div class="dev-panel-header">
+          <span>Development testing</span>
+          <span class="muted" style="font-size:10px; letter-spacing:0.08em;">Local UI only</span>
+        </div>
+        <div class="dev-panel-content">
+          <div class="dev-grid">
+            <button type="button" data-dev-action="addParticipant">Add participant</button>
+            <button type="button" data-dev-action="removeParticipant">Remove participant</button>
+            <button type="button" data-dev-action="hostView">Host UI</button>
+            <button type="button" data-dev-action="participantView">Participant UI</button>
+            <button type="button" data-dev-action="participantLeave">Participant left</button>
+            <button type="button" data-dev-action="meetingEnded">Meeting ended</button>
+            <button type="button" data-dev-action="micOff">Mic off</button>
+            <button type="button" data-dev-action="cameraOff">Camera off</button>
+            <button type="button" data-dev-action="showGrid">Participant grid</button>
+          </div>
+          <div class="dev-note">This panel is for local development simulation only. It does not create real audio/video connections.</div>
+        </div>
+      </div>
+
+      <section id="homeScreen" class="screen visible">
+        <div class="home-card">
+          <div class="kicker">Meeting foundation</div>
+          <div class="hero">
+            <div>
+              <h1>Start or join a meeting</h1>
+              <p class="muted">Create a new BillionTalks room or join by Meeting ID. This interface stays separate from the Cloudflare media provider and only uses the BT meeting API layer.</p>
+              <div class="actions">
+                <button class="primary" id="startMeetingBtn">Start Meeting</button>
+                <button class="secondary" id="joinMeetingBtn">Join Meeting</button>
+              </div>
+            </div>
+            <div class="info-box">
+              <h3>Local UI state</h3>
+              <p class="muted">Microphone and camera toggles are local device controls only until the real SFU connection is available.</p>
+              <div class="device-status">
+                <span class="chip ok">Mic ready</span>
+                <span class="chip ok">Camera ready</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="createScreen" class="screen">
+        <div class="home-card">
+          <div class="kicker">Create meeting</div>
+          <h2>Set up a new room</h2>
+          <div class="form-grid">
+            <div class="input-group">
+              <label for="meetingTitle">Meeting title</label>
+              <input id="meetingTitle" type="text" placeholder="Sprint review" />
+            </div>
+            <div class="input-group">
+              <label for="hostName">Your name</label>
+              <input id="hostName" type="text" placeholder="Alex" />
+            </div>
+            <div class="actions">
+              <button class="primary" id="createMeetingButton">Create Meeting</button>
+              <button class="secondary" id="backToHomeFromCreate">Back</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="joinScreen" class="screen">
+        <div class="home-card">
+          <div class="kicker">Join meeting</div>
+          <h2>Use a Meeting ID</h2>
+          <div class="form-grid">
+            <div class="input-group">
+              <label for="meetingIdInput">Meeting ID</label>
+              <input id="meetingIdInput" type="text" placeholder="btm_..." />
+            </div>
+            <div class="actions">
+              <button class="primary" id="resolveMeetingButton">Resolve Meeting</button>
+              <button class="secondary" id="backToHomeFromJoin">Back</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="prejoinScreen" class="screen">
+        <div class="home-card">
+          <div class="kicker">Pre-join</div>
+          <h2 id="prejoinTitle">Ready to join</h2>
+          <div class="form-grid">
+            <div class="input-group">
+              <label for="displayNameInput">Display name</label>
+              <input id="displayNameInput" type="text" placeholder="Your name" />
+            </div>
+            <div class="device-status">
+              <button class="secondary" id="toggleMicBtn">Mic: On</button>
+              <button class="secondary" id="toggleCameraBtn">Camera: On</button>
+            </div>
+            <div class="actions">
+              <button class="primary" id="joinNowButton">Join Now</button>
+              <button class="secondary" id="backToHomeFromPrejoin">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="meetingScreen" class="screen">
+        <div class="meeting-shell">
+          <div class="stage-panel">
+            <div class="meeting-header">
+              <div>
+                <div class="kicker" style="margin:0;">Meeting room</div>
+                <strong id="meetingTitleText">Meeting</strong>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span class="meeting-id" id="meetingIdBadge">Loading...</span>
+                <button class="ghost" id="copyMeetingIdBtn">Copy ID</button>
+              </div>
+            </div>
+
+            <div class="video-stage" id="videoStage">
+              <div class="tile self">
+                <div class="placeholder" id="localTileLabel">You</div>
+                <div class="meta"><span class="dot"></span><span id="localStatusLabel">Mic on</span></div>
+              </div>
+              <div class="tile">
+                <div class="placeholder">Guest</div>
+                <div class="meta"><span class="dot"></span><span>Waiting</span></div>
+              </div>
+              <div class="tile">
+                <div class="placeholder">Guest</div>
+                <div class="meta"><span class="dot"></span><span>Waiting</span></div>
+              </div>
+              <div class="tile">
+                <div class="placeholder">Guest</div>
+                <div class="meta"><span class="dot"></span><span>Waiting</span></div>
+              </div>
+            </div>
+
+            <div class="controls" id="meetingControls">
+              <button class="control active" id="micControlBtn" title="Microphone">🎙️</button>
+              <button class="control active" id="cameraControlBtn" title="Camera">📷</button>
+              <button class="control" id="shareScreenBtn" title="Screen share">🖥️</button>
+              <button class="control" id="participantsBtn" title="Participants">👥</button>
+              <button class="control danger" id="leaveMeetingBtn" title="Leave">✕</button>
+              <button class="control danger" id="endMeetingBtn" title="End meeting">⏹️</button>
+            </div>
+          </div>
+
+          <aside class="side-panel">
+            <div class="kicker">Participants</div>
+            <ul class="participant-list" id="participantList"></ul>
+          </aside>
+        </div>
+      </section>
+
+      <section id="endedScreen" class="screen">
+        <div class="home-card">
+          <div class="kicker">Session ended</div>
+          <h2 id="endedTitle">The meeting has ended.</h2>
+          <div class="info-box">
+            <p id="endedMessage">The host ended the room or the connection was interrupted.</p>
+          </div>
+          <div class="actions" style="margin-top: 18px;">
+            <button class="primary" id="returnHomeBtn">Return home</button>
+          </div>
+        </div>
+      </section>
+
+      <div id="errorBanner"></div>
+    </div>
+
+    <script>
+      const state = {
+        route: 'home',
+        meetingId: '',
+        meeting: null,
+        displayName: '',
+        currentUserId: '',
+        isHost: false,
+        localDevice: {
+          micEnabled: true,
+          cameraEnabled: true,
+          screenShareEnabled: false,
+        },
+        error: null,
+      };
+
+      const screens = {
+        home: document.getElementById('homeScreen'),
+        create: document.getElementById('createScreen'),
+        join: document.getElementById('joinScreen'),
+        prejoin: document.getElementById('prejoinScreen'),
+        meeting: document.getElementById('meetingScreen'),
+        ended: document.getElementById('endedScreen'),
+      };
+
+      const statusPill = document.getElementById('statusPill');
+      const errorBanner = document.getElementById('errorBanner');
+
+      function setError(message) {
+        state.error = message;
+        if (message) {
+          errorBanner.textContent = message;
+          errorBanner.className = 'error';
+        } else {
+          errorBanner.textContent = '';
+          errorBanner.className = '';
+        }
+      }
+
+      function showScreen(name) {
+        state.route = name;
+        Object.entries(screens).forEach(([key, node]) => {
+          node.classList.toggle('visible', key === name);
+        });
+
+        if (name === 'meeting') {
+          statusPill.textContent = 'In meeting';
+        } else if (name === 'prejoin') {
+          statusPill.textContent = 'Pre-join';
+        } else if (name === 'home' || name === 'create' || name === 'join') {
+          statusPill.textContent = 'V0 Meeting UI';
+        } else if (name === 'ended') {
+          statusPill.textContent = 'Ended';
+        }
+      }
+
+      function renderLocalState() {
+        const micBtn = document.getElementById('toggleMicBtn');
+        const cameraBtn = document.getElementById('toggleCameraBtn');
+        const micControl = document.getElementById('micControlBtn');
+        const cameraControl = document.getElementById('cameraControlBtn');
+        const shareControl = document.getElementById('shareScreenBtn');
+
+        const micIsOn = state.localDevice.micEnabled;
+        const cameraIsOn = state.localDevice.cameraEnabled;
+
+        micControl.classList.toggle('active', micIsOn);
+        micControl.classList.toggle('off', !micIsOn);
+        cameraControl.classList.toggle('active', cameraIsOn);
+        cameraControl.classList.toggle('off', !cameraIsOn);
+        if (shareControl) {
+          shareControl.classList.toggle('active', state.localDevice.screenShareEnabled);
+        }
+
+        micControl.innerHTML = '<span class="device-icon">🎙️</span>';
+        cameraControl.innerHTML = '<span class="device-icon">📷</span>';
+
+        document.getElementById('localStatusLabel').textContent = micIsOn ? 'Mic on' : 'Mic off';
+        if (micBtn) {
+          micBtn.textContent = 'Mic: ' + (micIsOn ? 'On' : 'Off');
+        }
+        if (cameraBtn) {
+          cameraBtn.textContent = 'Camera: ' + (cameraIsOn ? 'On' : 'Off');
+        }
+      }
+
+      function syncMeetingRoleUi() {
+        const endMeetingBtn = document.getElementById('endMeetingBtn');
+        const meetingIsHost = Boolean(state.meeting && state.currentUserId && state.meeting.hostId === state.currentUserId);
+
+        state.isHost = meetingIsHost;
+
+        if (endMeetingBtn) {
+          endMeetingBtn.style.display = meetingIsHost ? 'flex' : 'none';
+        }
+      }
+
+      let activeScreenShareStream = null;
+
+      function clearScreenSharePreview() {
+        const selfTile = document.querySelector('.tile.self');
+        if (!selfTile) {
+          return;
+        }
+
+        const preview = selfTile.querySelector('video');
+        if (preview) {
+          preview.remove();
+        }
+
+        const placeholder = selfTile.querySelector('.placeholder');
+        if (placeholder) {
+          placeholder.style.display = 'block';
+          placeholder.textContent = 'You';
+        }
+      }
+
+      function showScreenSharePreview(stream) {
+        const selfTile = document.querySelector('.tile.self');
+        if (!selfTile || !stream) {
+          return;
+        }
+
+        clearScreenSharePreview();
+
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'contain';
+        video.style.background = 'rgba(15, 23, 42, 0.7)';
+
+        const placeholder = selfTile.querySelector('.placeholder');
+        if (placeholder) {
+          placeholder.style.display = 'none';
+        }
+
+        selfTile.appendChild(video);
+        void video.play().catch(() => undefined);
+      }
+
+      function stopScreenShareCapture() {
+        if (activeScreenShareStream) {
+          activeScreenShareStream.getTracks().forEach((track) => {
+            if (track.readyState !== 'ended') {
+              track.stop();
+            }
+          });
+          activeScreenShareStream = null;
+        }
+
+        state.localDevice.screenShareEnabled = false;
+        clearScreenSharePreview();
+        renderLocalState();
+      }
+
+      async function handleScreenShareToggle() {
+        if (state.localDevice.screenShareEnabled) {
+          stopScreenShareCapture();
+          return;
+        }
+
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+          setError('This browser does not support native screen sharing.');
+          return;
+        }
+
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true,
+          });
+
+          if (!stream) {
+            throw new DOMException('No display stream was returned.', 'NotFoundError');
+          }
+
+          activeScreenShareStream = stream;
+          state.localDevice.screenShareEnabled = true;
+          showScreenSharePreview(stream);
+          renderLocalState();
+          setError(null);
+
+          const handleStreamEnded = () => {
+            if (state.localDevice.screenShareEnabled) {
+              stopScreenShareCapture();
+            }
+          };
+
+          stream.getTracks().forEach((track) => {
+            track.addEventListener('ended', handleStreamEnded);
+          });
+        } catch (error) {
+          const name = error instanceof DOMException ? error.name : '';
+
+          if (name === 'NotAllowedError' || name === 'AbortError' || name === 'NotFoundError') {
+            setError('Screen share was cancelled or permission was denied.');
+          } else if (error instanceof Error) {
+            setError(error.message);
+          } else {
+            setError('Unable to start screen sharing.');
+          }
+
+          if (state.localDevice.screenShareEnabled) {
+            state.localDevice.screenShareEnabled = false;
+            renderLocalState();
+          }
+        }
+      }
+
+      function createMockParticipants() {
+        return [
+          { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED' },
+          { id: 'demo-guest-1', displayName: 'Ava', role: 'PARTICIPANT', state: 'JOINED' },
+          { id: 'demo-guest-2', displayName: 'Sam', role: 'PARTICIPANT', state: 'PENDING' },
+        ];
+      }
+
+      function applyDemoMeeting(overrides = {}) {
+        state.meeting = {
+          id: 'btm_dev_1234567890',
+          title: 'Development Test Room',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          hostId: 'host-dev',
+          participants: createMockParticipants(),
+          ...overrides,
+        };
+        state.meetingId = state.meeting.id;
+        renderMeetingRoom();
+        showScreen('meeting');
+      }
+
+      function renderMeetingRoom() {
+        if (!state.meeting) {
+          return;
+        }
+
+        document.getElementById('meetingTitleText').textContent = state.meeting.title;
+        document.getElementById('meetingIdBadge').textContent = state.meeting.id;
+
+        const participantList = document.getElementById('participantList');
+        const stage = document.getElementById('videoStage');
+        const visibleParticipants = state.meeting.participants.filter((participant) => participant.state !== 'LEFT');
+        const allParticipants = visibleParticipants.length ? visibleParticipants : [{
+          id: 'local-user',
+          userId: 'local-user',
+          displayName: state.displayName || 'You',
+          role: 'PARTICIPANT',
+          state: 'JOINED',
+        }];
+
+        participantList.innerHTML = '';
+        stage.innerHTML = '';
+
+        allParticipants.forEach((participant) => {
+          const item = document.createElement('li');
+          const participantColor = participant.state === 'JOINED' ? '#9ae6b4' : '#d1d5db';
+          const statusColor = participant.state === 'JOINED' ? '#3ddc97' : '#94a3b8';
+          const displayName = participant.displayName === state.displayName ? 'You' : participant.displayName;
+
+          item.innerHTML =
+            '<span>' + displayName + '</span>' +
+            '<span style="display:flex; align-items:center; gap:8px; color:' + participantColor + ';">' +
+              '<span class="dot" style="background:' + statusColor + '"></span>' +
+              participant.role +
+            '</span>';
+          participantList.appendChild(item);
+        });
+
+        const orderedParticipants = [...allParticipants];
+        const localIndex = orderedParticipants.findIndex((participant) => {
+          const participantName = (participant.displayName || '').trim().toLowerCase();
+          const localName = (state.displayName || '').trim().toLowerCase();
+          return participantName === localName || participant.userId === 'user-me' || participant.id === 'demo-me';
+        });
+
+        if (localIndex > 0) {
+          const [localParticipant] = orderedParticipants.splice(localIndex, 1);
+          orderedParticipants.unshift(localParticipant);
+        }
+
+        const stageParticipants = orderedParticipants.length ? orderedParticipants : [{
+          id: 'local-user',
+          userId: 'local-user',
+          displayName: state.displayName || 'You',
+          role: 'PARTICIPANT',
+          state: 'JOINED',
+        }];
+
+        const count = Math.max(stageParticipants.length, 1);
+        stage.style.gridTemplateColumns = count <= 1 ? '1fr' : count <= 4 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))';
+
+        stageParticipants.forEach((participant) => {
+          const tile = document.createElement('div');
+          tile.className = 'tile';
+          if (participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me') {
+            tile.classList.add('self');
+          }
+
+          const tileLabel = participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me' ? 'You' : participant.displayName;
+          const tileStatus = participant.state === 'JOINED' ? 'Joined' : 'Waiting';
+
+          tile.innerHTML =
+            '<div class="placeholder">' + tileLabel + '</div>' +
+            '<div class="meta"><span class="dot"></span><span>' + tileStatus + '</span></div>';
+          stage.appendChild(tile);
+        });
+
+        syncMeetingRoleUi();
+      }
+
+      async function createMeeting() {
+        const title = document.getElementById('meetingTitle').value.trim();
+        const hostName = document.getElementById('hostName').value.trim();
+
+        if (!title || !hostName) {
+          setError('Please provide a meeting title and your name.');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/meetings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: title, hostUserId: 'host-' + Date.now() })
+          });
+
+          const payload = await response.json();
+          if (!response.ok || !payload.ok || !payload.data) {
+            throw new Error(payload.error || 'Unable to create the meeting.');
+          }
+
+          state.meetingId = payload.data.id;
+          state.currentUserId = payload.data.hostId;
+          state.displayName = hostName;
+          state.isHost = true;
+          state.meeting = payload.data;
+          document.getElementById('displayNameInput').value = hostName;
+          document.getElementById('prejoinTitle').textContent = payload.data.title + ' • ' + payload.data.id;
+          setError(null);
+          syncMeetingRoleUi();
+          showScreen('prejoin');
+        } catch (error) {
+          setError(error instanceof Error ? error.message : 'Unable to create meeting.');
+        }
+      }
+
+      async function resolveMeeting() {
+        const meetingId = document.getElementById('meetingIdInput').value.trim();
+        if (!meetingId) {
+          setError('Please enter a Meeting ID.');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId));
+          const payload = await response.json();
+
+          if (!response.ok || !payload.ok || !payload.data) {
+            throw new Error(payload.error || 'Meeting not found.');
+          }
+
+          state.meetingId = payload.data.id;
+          state.meeting = payload.data;
+          state.currentUserId = '';
+          state.isHost = false;
+          document.getElementById('displayNameInput').value = '';
+          document.getElementById('prejoinTitle').textContent = payload.data.title + ' • ' + payload.data.id;
+          setError(null);
+          syncMeetingRoleUi();
+          showScreen('prejoin');
+        } catch (error) {
+          setError(error instanceof Error ? error.message : 'Unable to resolve meeting.');
+        }
+      }
+
+      async function joinMeetingNow() {
+        const displayName = document.getElementById('displayNameInput').value.trim();
+        if (!displayName) {
+          setError('Please enter a display name.');
+          return;
+        }
+
+        const meetingId = state.meetingId || document.getElementById('meetingIdInput').value.trim();
+        const userId = 'user-' + Date.now();
+
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: userId, displayName: displayName })
+          });
+
+          const payload = await response.json();
+          if (!response.ok || !payload.ok || !payload.data) {
+            throw new Error(payload.error || 'Unable to join the meeting.');
+          }
+
+          const nextParticipants = [...(state.meeting?.participants ?? [])];
+          const existingIndex = nextParticipants.findIndex((participant) => participant.userId === payload.data.userId);
+
+          if (existingIndex >= 0) {
+            nextParticipants[existingIndex] = payload.data;
+          } else {
+            nextParticipants.push(payload.data);
+          }
+
+          state.currentUserId = payload.data.userId;
+          state.displayName = displayName;
+          state.meeting = {
+            ...state.meeting,
+            participants: nextParticipants,
+          };
+
+          renderMeetingRoom();
+          setError(null);
+          showScreen('meeting');
+        } catch (error) {
+          setError(error instanceof Error ? error.message : 'Unable to join the meeting.');
+        }
+      }
+
+      async function leaveMeeting() {
+        const meetingId = state.meetingId;
+        if (!meetingId) return;
+
+        const userId = state.currentUserId || 'user-' + Date.now();
+
+        try {
+          await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/leave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: userId })
+          });
+        } catch (error) {
+          console.warn('Leave request ignored in local UI demo:', error);
+        }
+
+        stopScreenShareCapture();
+        state.currentUserId = '';
+        state.isHost = false;
+        state.meeting = null;
+        state.meetingId = '';
+        syncMeetingRoleUi();
+        showScreen('home');
+      }
+
+      async function endMeeting() {
+        const meetingId = state.meetingId;
+        if (!meetingId) return;
+
+        if (!state.currentUserId || !state.isHost) {
+          setError('Only the host may end the meeting.');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/end', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: state.currentUserId })
+          });
+
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.error || 'Unable to end the meeting.');
+          }
+
+          state.meeting = payload.data;
+          state.isHost = false;
+          syncMeetingRoleUi();
+          showScreen('ended');
+        } catch (error) {
+          setError(error instanceof Error ? error.message : 'Unable to end the meeting.');
+        }
+      }
+
+      async function copyMeetingId() {
+        if (!state.meetingId) return;
+        try {
+          await navigator.clipboard.writeText(state.meetingId);
+          setError('Meeting ID copied to clipboard.');
+        } catch {
+          setError('Clipboard access unavailable in this browser.');
+        }
+      }
+
+      function toggleDevPanel() {
+        const panel = document.getElementById('devPanel');
+        panel.classList.toggle('visible');
+      }
+
+      function handleDevAction(action) {
+        if (action === 'addParticipant') {
+          const baseMeeting = state.meeting && state.meeting.id ? state.meeting : {
+            id: 'btm_dev_1234567890',
+            title: 'Development Test Room',
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            hostId: 'host-dev',
+            participants: createMockParticipants(),
+          };
+
+          const nextId = 'demo-guest-' + (baseMeeting.participants.length + 1);
+          baseMeeting.participants.push({
+            id: nextId,
+            displayName: 'Guest ' + baseMeeting.participants.length,
+            role: 'PARTICIPANT',
+            state: 'JOINED',
+            meetingId: baseMeeting.id,
+            userId: nextId,
+            joinedAt: new Date().toISOString(),
+          });
+          state.meeting = baseMeeting;
+          state.meetingId = baseMeeting.id;
+          state.currentUserId = state.currentUserId || 'host-dev';
+          renderMeetingRoom();
+          showScreen('meeting');
+          return;
+        }
+
+        if (action === 'removeParticipant') {
+          if (!state.meeting || state.meeting.participants.length <= 1) {
+            setError('No removable participant available in the local dev state.');
+            return;
+          }
+
+          state.meeting.participants = state.meeting.participants.filter((participant) => participant.role !== 'PARTICIPANT');
+          state.meeting.participants = state.meeting.participants.length ? state.meeting.participants : [
+            { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED', meetingId: state.meeting.id, userId: 'host-dev', joinedAt: new Date().toISOString() },
+          ];
+          renderMeetingRoom();
+          showScreen('meeting');
+          return;
+        }
+
+        if (action === 'hostView') {
+          state.currentUserId = 'host-dev';
+          state.isHost = true;
+          applyDemoMeeting({
+            title: 'Development Host View',
+            participants: [
+              { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'host-dev', joinedAt: new Date().toISOString() },
+              { id: 'demo-guest-1', displayName: 'Ava', role: 'PARTICIPANT', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'user-ava', joinedAt: new Date().toISOString() },
+              { id: 'demo-guest-2', displayName: 'Sam', role: 'PARTICIPANT', state: 'PENDING', meetingId: 'btm_dev_1234567890', userId: 'user-sam', joinedAt: new Date().toISOString() },
+            ],
+          });
+          syncMeetingRoleUi();
+          return;
+        }
+
+        if (action === 'participantView') {
+          state.currentUserId = 'user-me';
+          state.isHost = false;
+          applyDemoMeeting({
+            title: 'Development Participant View',
+            participants: [
+              { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'host-dev', joinedAt: new Date().toISOString() },
+              { id: 'demo-me', displayName: 'You', role: 'PARTICIPANT', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'user-me', joinedAt: new Date().toISOString() },
+            ],
+          });
+          syncMeetingRoleUi();
+          return;
+        }
+
+        if (action === 'participantLeave') {
+          state.isHost = false;
+          applyDemoMeeting({
+            title: 'Participant left state',
+            participants: [
+              { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'host-dev', joinedAt: new Date().toISOString() },
+              { id: 'demo-guest-1', displayName: 'Ava', role: 'PARTICIPANT', state: 'LEFT', meetingId: 'btm_dev_1234567890', userId: 'user-ava', joinedAt: new Date().toISOString(), leftAt: new Date().toISOString() },
+            ],
+          });
+          return;
+        }
+
+        if (action === 'meetingEnded') {
+          state.meeting = {
+            id: 'btm_dev_1234567890',
+            title: 'Development Ended State',
+            status: 'ended',
+            createdAt: new Date().toISOString(),
+            hostId: 'host-dev',
+            participants: [
+              { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'LEFT', meetingId: 'btm_dev_1234567890', userId: 'host-dev', joinedAt: new Date().toISOString(), leftAt: new Date().toISOString() },
+            ],
+          };
+          state.meetingId = state.meeting.id;
+          showScreen('ended');
+          document.getElementById('endedTitle').textContent = 'Development testing ended';
+          document.getElementById('endedMessage').textContent = 'This is a local UI simulation only — no real meeting was connected.';
+          return;
+        }
+
+        if (action === 'micOff') {
+          state.localDevice.micEnabled = false;
+          renderLocalState();
+          return;
+        }
+
+        if (action === 'cameraOff') {
+          state.localDevice.cameraEnabled = false;
+          renderLocalState();
+          return;
+        }
+
+        if (action === 'showGrid') {
+          state.isHost = true;
+          applyDemoMeeting({
+            title: 'Participant grid layout',
+            participants: [
+              { id: 'demo-host', displayName: 'Host', role: 'HOST', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'host-dev', joinedAt: new Date().toISOString() },
+              { id: 'demo-guest-1', displayName: 'Ava', role: 'PARTICIPANT', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'user-ava', joinedAt: new Date().toISOString() },
+              { id: 'demo-guest-2', displayName: 'Sam', role: 'PARTICIPANT', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'user-sam', joinedAt: new Date().toISOString() },
+              { id: 'demo-guest-3', displayName: 'Priya', role: 'PARTICIPANT', state: 'JOINED', meetingId: 'btm_dev_1234567890', userId: 'user-priya', joinedAt: new Date().toISOString() },
+            ],
+          });
+        }
+      }
+
+      document.getElementById('toggleDevPanelBtn').addEventListener('click', toggleDevPanel);
+      document.querySelectorAll('[data-dev-action]').forEach((button) => {
+        button.addEventListener('click', () => handleDevAction(button.dataset.devAction));
+      });
+
+      document.getElementById('startMeetingBtn').addEventListener('click', () => {
+        setError(null);
+        showScreen('create');
+      });
+
+      document.getElementById('joinMeetingBtn').addEventListener('click', () => {
+        setError(null);
+        showScreen('join');
+      });
+
+      document.getElementById('createMeetingButton').addEventListener('click', createMeeting);
+      document.getElementById('backToHomeFromCreate').addEventListener('click', () => showScreen('home'));
+      document.getElementById('backToHomeFromJoin').addEventListener('click', () => showScreen('home'));
+      document.getElementById('resolveMeetingButton').addEventListener('click', resolveMeeting);
+      document.getElementById('joinNowButton').addEventListener('click', joinMeetingNow);
+      document.getElementById('backToHomeFromPrejoin').addEventListener('click', () => showScreen('home'));
+      document.getElementById('toggleMicBtn').addEventListener('click', () => {
+        state.localDevice.micEnabled = !state.localDevice.micEnabled;
+        renderLocalState();
+      });
+
+      document.getElementById('toggleCameraBtn').addEventListener('click', () => {
+        state.localDevice.cameraEnabled = !state.localDevice.cameraEnabled;
+        renderLocalState();
+      });
+
+      document.getElementById('micControlBtn').addEventListener('click', () => {
+        state.localDevice.micEnabled = !state.localDevice.micEnabled;
+        renderLocalState();
+      });
+
+      document.getElementById('cameraControlBtn').addEventListener('click', () => {
+        state.localDevice.cameraEnabled = !state.localDevice.cameraEnabled;
+        renderLocalState();
+      });
+
+      document.getElementById('shareScreenBtn').addEventListener('click', handleScreenShareToggle);
+
+      document.getElementById('copyMeetingIdBtn').addEventListener('click', copyMeetingId);
+      document.getElementById('leaveMeetingBtn').addEventListener('click', leaveMeeting);
+      document.getElementById('endMeetingBtn').addEventListener('click', endMeeting);
+      document.getElementById('returnHomeBtn').addEventListener('click', () => {
+        stopScreenShareCapture();
+        state.currentUserId = '';
+        state.isHost = false;
+        state.meetingId = '';
+        state.meeting = null;
+        setError(null);
+        syncMeetingRoleUi();
+        showScreen('home');
+      });
+
+      renderLocalState();
+      showScreen('home');
+    </script>
+  </body>
+</html>`;
+}
+
 export default {
   async fetch(request: Request, env: RealtimeEnv): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
+      return new Response(meetingUiHtml(), {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+        },
+      });
+    }
 
     if (request.method === "GET" && url.pathname === "/health") {
       const validation = validateRealtimeEnv(env);
@@ -158,12 +1440,12 @@ export default {
       }
 
       try {
-        const meeting = await getMeetingService(env).joinMeeting(meetingMatch[1], {
+        const participant = await getMeetingService(env).joinMeeting(meetingMatch[1], {
           userId: body.userId,
           displayName: body.displayName,
         });
 
-        return jsonResponse({ ok: true, data: meeting });
+        return jsonResponse({ ok: true, data: participant });
       } catch (error) {
         return jsonResponse(
           {

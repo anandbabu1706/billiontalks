@@ -91,6 +91,32 @@ describe("MeetingService lifecycle", () => {
     expect("mediaProviderSessionId" in meeting).toBe(false);
   });
 
+  it("keeps participant lifecycle deterministic across leave, rejoin, and host end", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Lifecycle validation", hostUserId: "host" });
+
+    const participant = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest" });
+    const leftParticipant = await service.leaveMeeting(meeting.id, "guest");
+
+    expect(leftParticipant?.state).toBe(ParticipantState.LEFT);
+    expect(service.getMeeting(meeting.id)?.status).toBe(MeetingStatus.ACTIVE);
+
+    const rejoin = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest Again" });
+    expect(rejoin.id).toBe(participant.id);
+    expect(service.listParticipants(meeting.id).filter((entry) => entry.userId === "guest")).toHaveLength(1);
+
+    const hostLeave = await service.leaveMeeting(meeting.id, "host");
+    expect(hostLeave?.state).toBe(ParticipantState.LEFT);
+    expect(service.getMeeting(meeting.id)?.status).toBe(MeetingStatus.ACTIVE);
+
+    service.endMeeting(meeting.id, "host");
+    expect(service.getMeeting(meeting.id)?.status).toBe(MeetingStatus.ENDED);
+
+    await expect(
+      service.joinMeeting(meeting.id, { userId: "guest-2", displayName: "Late guest" }),
+    ).rejects.toThrow("not active");
+  });
+
   it("rejects joins after end and keeps join state deterministic", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
     const meeting = await service.createMeeting({ title: "Closed meeting", hostUserId: "host" });

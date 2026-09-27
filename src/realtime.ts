@@ -22,6 +22,7 @@ export class CloudflareRealtimeConnectionClient {
     baseUrl = "https://rtc.live.cloudflare.com",
   ) {
     this.baseUrl = baseUrl;
+    this.fetcher = fetcher.bind(globalThis);
   }
 
   async createSession(): Promise<CloudflareRealtimeSessionResult> {
