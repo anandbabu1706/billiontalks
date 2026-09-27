@@ -2,6 +2,7 @@ import { validateRealtimeEnv, type RealtimeEnv } from "./config";
 import {
   CloudflareMediaProvider,
   InMemoryMeetingRepository,
+  MeetingAccessMode,
   MeetingService,
   NullMediaProvider,
 } from "./meeting";
@@ -597,6 +598,15 @@ function meetingUiHtml(): string {
           <aside class="side-panel">
             <div class="kicker">Participants</div>
             <ul class="participant-list" id="participantList"></ul>
+            <div id="admissionPanel" style="margin-top: 18px; display:none;">
+              <div class="kicker">Admission</div>
+              <div id="admissionModeLabel" class="muted" style="margin-bottom: 10px;">Host approval</div>
+              <div id="pendingAdmissionsList" class="participant-list" style="margin-top: 8px;"></div>
+              <div class="actions" style="margin-top: 12px;">
+                <button class="secondary" id="requestAdmissionBtn" type="button">Request to join</button>
+                <button class="ghost" id="refreshAdmissionsBtn" type="button">Refresh</button>
+              </div>
+            </div>
           </aside>
         </div>
       </section>
@@ -625,6 +635,7 @@ function meetingUiHtml(): string {
         displayName: '',
         currentUserId: '',
         isHost: false,
+        admissionStatus: '',
         localDevice: {
           micEnabled: true,
           cameraEnabled: true,
@@ -1138,6 +1149,70 @@ function meetingUiHtml(): string {
         }
       }
 
+      function syncAdmissionPanel() {
+        const panel = document.getElementById('admissionPanel');
+        const modeLabel = document.getElementById('admissionModeLabel');
+        const pendingList = document.getElementById('pendingAdmissionsList');
+        const requestBtn = document.getElementById('requestAdmissionBtn');
+
+        if (!panel || !state.meeting) {
+          return;
+        }
+
+        const meetingMode = state.meeting.accessMode || 'HOST_APPROVAL';
+        const isHost = Boolean(state.currentUserId && state.meeting.hostId === state.currentUserId);
+        panel.style.display = isHost ? 'block' : 'none';
+
+        if (requestBtn) {
+          requestBtn.style.display = isHost || meetingMode !== 'HOST_APPROVAL' || state.admissionStatus === 'WAITING' ? 'none' : 'inline-flex';
+        }
+
+        if (modeLabel) {
+          modeLabel.textContent = 'Access: ' + meetingMode;
+        }
+
+        if (!isHost || !pendingList) {
+          return;
+        }
+
+        const pending = Array.isArray(state.meeting.accessRequests) ? state.meeting.accessRequests.filter((request) => request.status === 'WAITING') : [];
+
+        if (!pending.length) {
+          pendingList.innerHTML = '<li><span>No pending requests</span><span class="muted">0</span></li>';
+          return;
+        }
+
+        pendingList.innerHTML = pending.map((request) => {
+          return '<li><span>' + (request.displayName || request.userId) + '</span><span style="display:flex; gap:6px;"><button type="button" data-admission-action="approve" data-request-id="' + request.id + '" style="padding:4px 8px; border-radius:8px; background:rgba(61,220,151,0.16); color:#dfffee; border:1px solid rgba(61,220,151,0.35);">Approve</button><button type="button" data-admission-action="reject" data-request-id="' + request.id + '" style="padding:4px 8px; border-radius:8px; background:rgba(248,113,113,0.12); color:#fdd2d2; border:1px solid rgba(248,113,113,0.35);">Reject</button></span></li>';
+        }).join('');
+
+        pendingList.querySelectorAll('[data-admission-action]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const action = button.getAttribute('data-admission-action');
+            const requestId = button.getAttribute('data-request-id');
+            if (!requestId || !state.meetingId) {
+              return;
+            }
+
+            const url = '/api/meetings/' + encodeURIComponent(state.meetingId) + '/admission/' + encodeURIComponent(requestId) + '/' + action;
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: state.currentUserId }) });
+            const payload = await response.json();
+
+            if (!response.ok || !payload.ok) {
+              setError(payload.error || 'Unable to update a meeting admission request.');
+              return;
+            }
+
+            const meetingResponse = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId));
+            const meetingPayload = await meetingResponse.json();
+            if (meetingResponse.ok && meetingPayload.ok && meetingPayload.data) {
+              state.meeting = meetingPayload.data;
+              renderMeetingRoom();
+            }
+          });
+        });
+      }
+
       function renderMeetingRoom() {
         if (!state.meeting) {
           return;
@@ -1152,6 +1227,7 @@ function meetingUiHtml(): string {
           meetingIdBadge.textContent = state.meeting.id;
         }
         syncDevParticipantSelection();
+        syncAdmissionPanel();
 
         const participantList = document.getElementById('participantList');
         const stage = document.getElementById('videoStage');
@@ -1225,6 +1301,41 @@ function meetingUiHtml(): string {
         syncMeetingRoleUi();
       }
 
+      async function requestAdmissionForMeeting() {
+        const meetingId = state.meetingId || document.getElementById('meetingIdInput').value.trim();
+        const displayName = document.getElementById('displayNameInput').value.trim();
+
+        if (!meetingId || !displayName) {
+          setError('Please enter a display name before requesting entry.');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/admission/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: 'user-' + Date.now(), displayName: displayName }),
+          });
+
+          const payload = await response.json();
+          if (!response.ok || !payload.ok || !payload.data) {
+            throw new Error(payload.error || 'Unable to request meeting admission.');
+          }
+
+          state.currentUserId = payload.data.userId;
+          state.displayName = displayName;
+          state.meeting = {
+            ...(state.meeting || { id: meetingId, title: 'Meeting', status: 'active', hostId: '', participants: [], accessRequests: [] }),
+            accessRequests: [...((state.meeting && Array.isArray(state.meeting.accessRequests)) ? state.meeting.accessRequests : []), payload.data],
+          };
+          renderMeetingRoom();
+          setError(null);
+          showScreen('meeting');
+        } catch (error) {
+          setError(error instanceof Error ? error.message : 'Unable to request admission.');
+        }
+      }
+
       async function createMeeting() {
         const title = document.getElementById('meetingTitle').value.trim();
         const hostName = document.getElementById('hostName').value.trim();
@@ -1238,7 +1349,7 @@ function meetingUiHtml(): string {
           const response = await fetch('/api/meetings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: title, hostUserId: 'host-' + Date.now() })
+            body: JSON.stringify({ title: title, hostUserId: 'host-' + Date.now(), accessMode: 'HOST_APPROVAL' })
           });
 
           const payload = await response.json();
@@ -1301,7 +1412,11 @@ function meetingUiHtml(): string {
         const userId = 'user-' + Date.now();
 
         try {
-          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/join', {
+          const meetingEndpoint = state.meeting && state.meeting.accessMode === 'HOST_APPROVAL'
+            ? '/api/meetings/' + encodeURIComponent(meetingId) + '/admission/request'
+            : '/api/meetings/' + encodeURIComponent(meetingId) + '/join';
+
+          const response = await fetch(meetingEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: userId, displayName: displayName })
@@ -1312,6 +1427,30 @@ function meetingUiHtml(): string {
             throw new Error(payload.error || 'Unable to join the meeting.');
           }
 
+          if (payload.data.status === 'WAITING') {
+            state.currentUserId = payload.data.userId;
+            state.displayName = displayName;
+            state.admissionStatus = 'WAITING';
+            state.meeting = {
+              ...(state.meeting || { id: meetingId, title: 'Meeting', status: 'active', hostId: '', participants: [], accessRequests: [], accessMode: 'HOST_APPROVAL' }),
+              accessRequests: [...((state.meeting && Array.isArray(state.meeting.accessRequests)) ? state.meeting.accessRequests : []), payload.data],
+            };
+            const joinButton = document.getElementById('joinNowButton');
+            if (joinButton) {
+              joinButton.textContent = 'Waiting for host approval';
+              joinButton.disabled = true;
+            }
+            const prejoinTitle = document.getElementById('prejoinTitle');
+            if (prejoinTitle) {
+              prejoinTitle.textContent = (state.meeting.title || 'Meeting') + ' • ' + meetingId + ' • Waiting for host approval';
+            }
+            renderMeetingRoom();
+            setError(null);
+            showScreen('prejoin');
+            return;
+          }
+
+          state.admissionStatus = 'APPROVED';
           const nextParticipants = [...(state.meeting?.participants ?? [])];
           const existingIndex = nextParticipants.findIndex((participant) => participant.userId === payload.data.userId);
 
@@ -1577,6 +1716,24 @@ function meetingUiHtml(): string {
       document.getElementById('backToHomeFromJoin').addEventListener('click', () => showScreen('home'));
       document.getElementById('resolveMeetingButton').addEventListener('click', resolveMeeting);
       document.getElementById('joinNowButton').addEventListener('click', joinMeetingNow);
+      document.getElementById('requestAdmissionBtn').addEventListener('click', requestAdmissionForMeeting);
+      document.getElementById('refreshAdmissionsBtn').addEventListener('click', async () => {
+        if (!state.meetingId || !state.currentUserId || !state.isHost) {
+          return;
+        }
+
+        const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/admission/pending', {
+          headers: { 'X-Host-User-Id': state.currentUserId },
+        });
+        const payload = await response.json();
+        if (response.ok && payload.ok && payload.data) {
+          state.meeting = {
+            ...(state.meeting || { id: state.meetingId, title: 'Meeting', status: 'active', hostId: state.currentUserId, participants: [], accessRequests: [] }),
+            accessRequests: payload.data,
+          };
+          renderMeetingRoom();
+        }
+      });
       document.getElementById('backToHomeFromPrejoin').addEventListener('click', () => showScreen('home'));
       document.getElementById('toggleMicBtn').addEventListener('click', () => {
         void toggleMicrophone();
@@ -1702,7 +1859,7 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/api/meetings") {
-      const body = await parseJsonBody<{ title?: string; hostUserId?: string }>(request);
+      const body = await parseJsonBody<{ title?: string; hostUserId?: string; accessMode?: string }>(request);
 
       if (!body || !body.title || !body.hostUserId) {
         return jsonResponse(
@@ -1718,6 +1875,7 @@ export default {
         const meeting = await getMeetingService(env).createMeeting({
           title: body.title,
           hostUserId: body.hostUserId,
+          accessMode: body.accessMode,
         });
 
         return jsonResponse(
@@ -1734,6 +1892,136 @@ export default {
             error: error instanceof Error ? error.message : "Unable to create meeting.",
           },
           500,
+        );
+      }
+    }
+
+    const meetingAdmissionRequestMatch = /^\/api\/meetings\/([^/]+)\/admission\/request$/.exec(
+      url.pathname,
+    );
+
+    if (meetingAdmissionRequestMatch && request.method === "POST") {
+      const body = await parseJsonBody<{ userId?: string; displayName?: string }>(request);
+
+      if (!body || !body.userId || !body.displayName) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "userId and displayName are required to request meeting admission.",
+          },
+          400,
+        );
+      }
+
+      try {
+        const requestResult = await getMeetingService(env).requestAdmission(meetingAdmissionRequestMatch[1], {
+          userId: body.userId,
+          displayName: body.displayName,
+        });
+
+        return jsonResponse({ ok: true, data: requestResult });
+      } catch (error) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: error instanceof Error ? error.message : "Unable to request meeting admission.",
+          },
+          400,
+        );
+      }
+    }
+
+    const meetingPendingAdmissionsMatch = /^\/api\/meetings\/([^/]+)\/admission\/pending$/.exec(
+      url.pathname,
+    );
+
+    if (meetingPendingAdmissionsMatch && request.method === "GET") {
+      const actorUserId = request.headers.get("x-host-user-id") || request.headers.get("X-Host-User-Id");
+
+      if (!actorUserId) {
+        return jsonResponse({ ok: false, error: "Host userId is required to list pending admissions." }, 403);
+      }
+
+      try {
+        const pending = getMeetingService(env).listPendingAdmissions(meetingPendingAdmissionsMatch[1], actorUserId);
+        return jsonResponse({ ok: true, data: pending });
+      } catch (error) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: error instanceof Error ? error.message : "Unable to list pending admissions.",
+          },
+          403,
+        );
+      }
+    }
+
+    const meetingAdmissionDecisionMatch = /^\/api\/meetings\/([^/]+)\/admission\/([^/]+)\/(approve|reject)$/.exec(
+      url.pathname,
+    );
+
+    if (meetingAdmissionDecisionMatch && request.method === "POST") {
+      const body = await parseJsonBody<{ userId?: string }>(request);
+
+      if (!body || !body.userId) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "userId is required to decide an admission request.",
+          },
+          400,
+        );
+      }
+
+      try {
+        const service = getMeetingService(env);
+        const admission =
+          meetingAdmissionDecisionMatch[3] === "approve"
+            ? await service.approveAdmission(meetingAdmissionDecisionMatch[1], body.userId, meetingAdmissionDecisionMatch[2])
+            : await service.rejectAdmission(meetingAdmissionDecisionMatch[1], body.userId, meetingAdmissionDecisionMatch[2]);
+
+        return jsonResponse({ ok: true, data: admission });
+      } catch (error) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: error instanceof Error ? error.message : "Unable to process meeting admission.",
+          },
+          403,
+        );
+      }
+    }
+
+    const meetingAccessModeMatch = /^\/api\/meetings\/([^/]+)\/access-mode$/.exec(url.pathname);
+
+    if (meetingAccessModeMatch && request.method === "POST") {
+      const body = await parseJsonBody<{ actorUserId?: string; accessMode?: string }>(request);
+
+      if (!body || !body.actorUserId || !body.accessMode) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "actorUserId and accessMode are required to change meeting access.",
+          },
+          400,
+        );
+      }
+
+      try {
+        const accessMode = await getMeetingService(env).changeAccessMode(
+          meetingAccessModeMatch[1],
+          body.actorUserId,
+          body.accessMode,
+        );
+
+        return jsonResponse({ ok: true, data: { accessMode } });
+      } catch (error) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: error instanceof Error ? error.message : "Unable to change meeting access mode.",
+          },
+          403,
         );
       }
     }
@@ -1766,7 +2054,18 @@ export default {
       }
 
       try {
-        const participant = await getMeetingService(env).joinMeeting(meetingMatch[1], {
+        const service = getMeetingService(env);
+        const meeting = service.getMeeting(meetingMatch[1]);
+
+        if (meeting && meeting.accessMode === "HOST_APPROVAL") {
+          const requestResult = await service.requestAdmission(meetingMatch[1], {
+            userId: body.userId,
+            displayName: body.displayName,
+          });
+          return jsonResponse({ ok: true, data: requestResult });
+        }
+
+        const participant = await service.joinMeeting(meetingMatch[1], {
           userId: body.userId,
           displayName: body.displayName,
         });

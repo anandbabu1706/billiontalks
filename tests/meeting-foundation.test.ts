@@ -44,7 +44,7 @@ describe("MeetingService lifecycle", () => {
 
   it("allows host-only end meeting and removes participant state on leave", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
-    const meeting = await service.createMeeting({ title: "Standup", hostUserId: "host" });
+    const meeting = await service.createMeeting({ title: "Standup", hostUserId: "host", accessMode: "OPEN" });
 
     const participant = await service.joinMeeting(meeting.id, {
       userId: "guest-1",
@@ -65,7 +65,7 @@ describe("MeetingService lifecycle", () => {
 
   it("enforces basic host and participant permissions", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
-    const meeting = await service.createMeeting({ title: "Design review", hostUserId: "host" });
+    const meeting = await service.createMeeting({ title: "Design review", hostUserId: "host", accessMode: "OPEN" });
 
     await service.joinMeeting(meeting.id, { userId: "p1", displayName: "Participant 1" });
 
@@ -79,7 +79,7 @@ describe("MeetingService lifecycle", () => {
     const mediaProvider = new StubMediaProvider();
     const service = new MeetingService(new InMemoryMeetingRepository(), mediaProvider);
 
-    const meeting = await service.createMeeting({ title: "Demo", hostUserId: "host" });
+    const meeting = await service.createMeeting({ title: "Demo", hostUserId: "host", accessMode: "OPEN" });
     const participant = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest" });
 
     const connection = service.getParticipantMediaConnection(meeting.id, participant.id);
@@ -93,7 +93,7 @@ describe("MeetingService lifecycle", () => {
 
   it("keeps participant lifecycle deterministic across leave, rejoin, and host end", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
-    const meeting = await service.createMeeting({ title: "Lifecycle validation", hostUserId: "host" });
+    const meeting = await service.createMeeting({ title: "Lifecycle validation", hostUserId: "host", accessMode: "OPEN" });
 
     const participant = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest" });
     const leftParticipant = await service.leaveMeeting(meeting.id, "guest");
@@ -119,7 +119,7 @@ describe("MeetingService lifecycle", () => {
 
   it("rejects joins after end and keeps join state deterministic", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
-    const meeting = await service.createMeeting({ title: "Closed meeting", hostUserId: "host" });
+    const meeting = await service.createMeeting({ title: "Closed meeting", hostUserId: "host", accessMode: "OPEN" });
 
     const firstJoin = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest" });
     const secondJoin = await service.joinMeeting(meeting.id, { userId: "guest", displayName: "Guest Updated" });
@@ -131,6 +131,88 @@ describe("MeetingService lifecycle", () => {
 
     await expect(
       service.joinMeeting(meeting.id, { userId: "guest-2", displayName: "New guest" }),
+    ).rejects.toThrow("not active");
+  });
+
+  it("defaults new meetings to host approval and leaves waiting participants out of active participants", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Access review", hostUserId: "host" });
+
+    expect(meeting.accessMode).toBe("HOST_APPROVAL");
+
+    const waiting = await service.requestAdmission(meeting.id, {
+      userId: "guest-1",
+      displayName: "Guest One",
+    });
+
+    expect(waiting.status).toBe("WAITING");
+    expect(service.listParticipants(meeting.id).some((participant) => participant.userId === "guest-1")).toBe(false);
+    expect(service.listPendingAdmissions(meeting.id, "host")).toHaveLength(1);
+  });
+
+  it("allows the host to approve a waiting participant and makes them active", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Approval review", hostUserId: "host" });
+
+    const waiting = await service.requestAdmission(meeting.id, {
+      userId: "guest-1",
+      displayName: "Guest One",
+    });
+
+    const approved = await service.approveAdmission(meeting.id, "host", waiting.id);
+
+    expect(approved.status).toBe("APPROVED");
+    expect(service.listParticipants(meeting.id).some((participant) => participant.userId === "guest-1")).toBe(true);
+    expect(
+      service.listParticipants(meeting.id).find((participant) => participant.userId === "guest-1")?.state,
+    ).toBe(ParticipantState.JOINED);
+  });
+
+  it("allows the host to reject a waiting participant and keeps them out of the active room", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Reject review", hostUserId: "host" });
+
+    const waiting = await service.requestAdmission(meeting.id, {
+      userId: "guest-1",
+      displayName: "Guest One",
+    });
+
+    const rejected = await service.rejectAdmission(meeting.id, "host", waiting.id);
+
+    expect(rejected.status).toBe("REJECTED");
+    expect(service.listParticipants(meeting.id).some((participant) => participant.userId === "guest-1")).toBe(false);
+    expect(service.listPendingAdmissions(meeting.id, "host")).toHaveLength(0);
+  });
+
+  it("enforces host-only actions and blocks spoofed host identity", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Security review", hostUserId: "host" });
+
+    const waiting = await service.requestAdmission(meeting.id, {
+      userId: "guest-1",
+      displayName: "Guest One",
+    });
+
+    await expect(service.approveAdmission(meeting.id, "guest-1", waiting.id)).rejects.toThrow("Only the host");
+    await expect(service.rejectAdmission(meeting.id, "guest-1", waiting.id)).rejects.toThrow("Only the host");
+    await expect(service.changeAccessMode(meeting.id, "guest-1", "OPEN")).rejects.toThrow("Only the host");
+    await expect(service.changeAccessMode(meeting.id, "host", "OPEN" as any)).resolves.toBeDefined();
+  });
+
+  it("rejects new admissions when the meeting is locked or ended", async () => {
+    const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
+    const meeting = await service.createMeeting({ title: "Locked meeting", hostUserId: "host" });
+
+    await service.changeAccessMode(meeting.id, "host", "LOCKED");
+    await expect(
+      service.requestAdmission(meeting.id, { userId: "guest-1", displayName: "Guest One" }),
+    ).rejects.toThrow("locked");
+
+    const ended = service.endMeeting(meeting.id, "host");
+    expect(ended.status).toBe(MeetingStatus.ENDED);
+
+    await expect(
+      service.requestAdmission(meeting.id, { userId: "guest-2", displayName: "Guest Two" }),
     ).rejects.toThrow("not active");
   });
 });

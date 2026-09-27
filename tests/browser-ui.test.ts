@@ -133,6 +133,27 @@ async function loadRenderedPage() {
   return { window, document: window.document, fetchMock, getUserMediaMock, micStreams: createdMicStreams, cameraStreams: createdCameraStreams };
 }
 
+function createApprovalMeetingState() {
+  return {
+    id: "btm_wait_123",
+    title: "Access review",
+    status: "active",
+    hostId: "host-123",
+    accessMode: "HOST_APPROVAL" as const,
+    participants: [
+      { id: "host-1", userId: "host-123", displayName: "Host", role: "HOST", state: "JOINED" },
+    ] as Array<{ id: string; userId: string; displayName: string; role: string; state: string }>,
+    accessRequests: [] as Array<{
+      id: string;
+      meetingId: string;
+      userId: string;
+      displayName: string;
+      status: string;
+      requestedAt: string;
+    }>,
+  };
+}
+
 function getVisibleScreen(document: Document, id: string): boolean {
   return document.getElementById(id)?.classList.contains("visible") ?? false;
 }
@@ -236,6 +257,130 @@ describe("BillionTalks browser UI regression tests", () => {
     cameraControl.click();
     await flush();
     expect(getUserMediaMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("submits admission requests on Join Now and keeps guests waiting without entering the active room", async () => {
+    const { document, fetchMock } = await loadRenderedPage();
+    const meeting = createApprovalMeetingState();
+
+    const fetchWithAdmission = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url === "/api/meetings" && method === "POST") {
+        return createResponse({ ok: true, data: { ...meeting, id: "btm_wait_123" } });
+      }
+
+      if (url === "/api/meetings/btm_wait_123" && method === "GET") {
+        return createResponse({ ok: true, data: meeting });
+      }
+
+      if (url === "/api/meetings/btm_wait_123/admission/request" && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        const request = {
+          id: "req-guest-1",
+          meetingId: "btm_wait_123",
+          userId: body.userId,
+          displayName: body.displayName,
+          status: "WAITING",
+          requestedAt: new Date().toISOString(),
+        };
+        meeting.accessRequests.push(request);
+        return createResponse({ ok: true, data: request });
+      }
+
+      return createResponse({ ok: true, data: null });
+    });
+
+    const browserWindow = document.defaultView as Window & typeof globalThis;
+    Object.defineProperty(browserWindow, "fetch", { value: fetchWithAdmission, configurable: true });
+    Object.defineProperty(globalThis, "fetch", { value: fetchWithAdmission, configurable: true });
+
+    (document.getElementById("meetingIdInput") as HTMLInputElement).value = "btm_wait_123";
+    document.getElementById("resolveMeetingButton")?.click();
+    await flush();
+
+    const displayNameInput = document.getElementById("displayNameInput") as HTMLInputElement;
+    displayNameInput.value = "Guest A";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    expect(fetchWithAdmission).toHaveBeenCalledWith(
+      "/api/meetings/btm_wait_123/admission/request",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(getVisibleScreen(document, "prejoinScreen")).toBe(true);
+    expect(document.getElementById("joinNowButton")?.textContent).toContain("Waiting for host approval");
+    expect(document.getElementById("requestAdmissionBtn")?.style.display).toBe("none");
+    expect(document.getElementById("meetingScreen")?.classList.contains("visible")).toBe(false);
+  });
+
+  it("host sees pending guests and can approve or reject them from the admission queue", async () => {
+    const { document, fetchMock } = await loadRenderedPage();
+    const meeting = createApprovalMeetingState();
+    const hostMeetingId = "btm_dev_1234567890";
+    meeting.id = hostMeetingId;
+    meeting.accessRequests = [{
+      id: "req-guest-1",
+      meetingId: hostMeetingId,
+      userId: "guest-abc",
+      displayName: "Guest A",
+      status: "WAITING",
+      requestedAt: new Date().toISOString(),
+    }];
+
+    const fetchWithAdmission = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url === "/api/meetings/btm_dev_1234567890/admission/pending" && method === "GET") {
+        return createResponse({ ok: true, data: meeting.accessRequests });
+      }
+
+      if (url === "/api/meetings/btm_dev_1234567890/admission/req-guest-1/approve" && method === "POST") {
+        meeting.accessRequests = [];
+        meeting.participants.push({
+          id: "guest-1",
+          userId: "guest-abc",
+          displayName: "Guest A",
+          role: "PARTICIPANT",
+          state: "JOINED",
+        });
+        return createResponse({ ok: true, data: { id: "req-guest-1", status: "APPROVED" } });
+      }
+
+      if (url === "/api/meetings/btm_dev_1234567890/admission/req-guest-1/reject" && method === "POST") {
+        meeting.accessRequests = [];
+        return createResponse({ ok: true, data: { id: "req-guest-1", status: "REJECTED" } });
+      }
+
+      if (url === "/api/meetings/btm_dev_1234567890" && method === "GET") {
+        return createResponse({ ok: true, data: meeting });
+      }
+
+      return createResponse({ ok: true, data: null });
+    });
+
+    const browserWindow = document.defaultView as Window & typeof globalThis;
+    Object.defineProperty(browserWindow, "fetch", { value: fetchWithAdmission, configurable: true });
+    Object.defineProperty(globalThis, "fetch", { value: fetchWithAdmission, configurable: true });
+
+    document.querySelector('[data-dev-action="hostView"]')?.dispatchEvent(new Event("click", { bubbles: true }));
+    await flush();
+    const requestBtn = document.getElementById("requestAdmissionBtn");
+    expect(requestBtn?.style.display).toBe("none");
+
+    document.getElementById("refreshAdmissionsBtn")?.click();
+    await flush();
+    expect(document.getElementById("pendingAdmissionsList")?.textContent).toContain("Guest A");
+
+    const approveBtn = Array.from(document.querySelectorAll('[data-admission-action="approve"]'))[0] as HTMLButtonElement;
+    approveBtn.click();
+    await flush();
+    expect(fetchWithAdmission).toHaveBeenCalledWith(
+      "/api/meetings/btm_dev_1234567890/admission/req-guest-1/approve",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state", async () => {
