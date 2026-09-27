@@ -57,6 +57,70 @@ function createSessionNamespace(durableStorage: Map<string, unknown>) {
   };
 }
 
+function createDurableObjectNamespace(backingStorage = new Map<string, Map<string, unknown>>()) {
+  return {
+    idFromName: (name: string) => name,
+    get: (id: string) => {
+      let values = backingStorage.get(id);
+      if (!values) {
+        values = new Map<string, unknown>();
+        backingStorage.set(id, values);
+      }
+      const storage = {
+        transaction: async (callback: (transactionStorage: any) => Promise<unknown>) => callback(storage),
+        get: async <T>(key: string) => values!.get(key) as T | undefined,
+        put: async (key: string, value: unknown) => { values!.set(key, value); },
+        delete: async (key: string) => values!.delete(key),
+      };
+      return new MeetingStateDurableObject({ storage } as any, {});
+    },
+  };
+}
+
+function createChatApiFixture(namespace = createDurableObjectNamespace()) {
+  const env = { MEETING_STORE: namespace as any };
+  const request = (path: string, method = "GET", cookie?: string, body?: unknown) => {
+    const headers = new Headers();
+    if (cookie) headers.set("Cookie", cookie);
+    if (body !== undefined) headers.set("Content-Type", "application/json");
+    return app.fetch(new Request(`http://localhost${path}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }), env);
+  };
+
+  return {
+    request,
+    async createSession() {
+      const response = await request("/api/session", "POST");
+      const payload = await response.json();
+      const token = getCookieValue(response.headers.get("Set-Cookie"), "bt_session_v0");
+      if (!token) throw new Error("Session cookie was not issued.");
+      return { userId: payload.data.userId as string, cookie: `bt_session_v0=${token}` };
+    },
+    async createOpenMeeting(cookie: string, title = "Chat room") {
+      const response = await request("/api/meetings", "POST", cookie, { title, accessMode: "OPEN" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error);
+      return payload.data as { id: string; hostId: string };
+    },
+  };
+}
+
+async function createJoinedChatRoom() {
+  const api = createChatApiFixture();
+  const host = await api.createSession();
+  const meeting = await api.createOpenMeeting(host.cookie);
+  const participant = await api.createSession();
+  const joinResponse = await api.request(`/api/meetings/${meeting.id}/join`, "POST", participant.cookie, {
+    userId: "untrusted-client-user",
+    displayName: "Guest",
+  });
+  if (!joinResponse.ok) throw new Error("Unable to join the chat test meeting.");
+  return { api, host, meeting, participant };
+}
+
 function makeRequestWithSession(url: string, init: RequestInit = {}, sessionCookie: string | null): Promise<Response> {
   const headers = new Headers(init.headers ?? {});
   if (sessionCookie) {
@@ -176,6 +240,112 @@ describe("MeetingService lifecycle", () => {
     expect(joinPayload.data.userId).toBe(guestUser);
     expect(joinPayload.data.displayName).toBe("Host impersonator");
     expect(joinPayload.data.userId).not.toBe(hostSession.data.userId);
+  });
+
+  it("allows the host to post chat messages", async () => {
+    const { api, host, meeting } = await createJoinedChatRoom();
+    const response = await api.request(`/api/meetings/${meeting.id}/chat`, "POST", host.cookie, { content: "Host message" });
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.data).toMatchObject({
+      meetingId: meeting.id,
+      senderUserId: host.userId,
+      senderDisplayName: "Host",
+      content: "Host message",
+      sequence: 1,
+    });
+  });
+
+  it("allows a joined participant to post chat messages", async () => {
+    const { api, participant, meeting } = await createJoinedChatRoom();
+    const response = await api.request(`/api/meetings/${meeting.id}/chat`, "POST", participant.cookie, { content: "Guest message" });
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.data.senderUserId).toBe(participant.userId);
+    expect(payload.data.senderDisplayName).toBe("Guest");
+    expect(payload.data.content).toBe("Guest message");
+  });
+
+  it("ignores client-supplied chat sender identities", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const response = await api.request(`/api/meetings/${meeting.id}/chat`, "POST", participant.cookie, {
+      content: "Not the host",
+      senderUserId: host.userId,
+      userId: host.userId,
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.data.senderUserId).toBe(participant.userId);
+    expect(payload.data.senderUserId).not.toBe(host.userId);
+  });
+
+  it("preserves ordered chat history across Worker and Durable Object re-instantiation", async () => {
+    const backingStorage = new Map<string, Map<string, unknown>>();
+    const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie);
+    await api.request(`/api/meetings/${meeting.id}/chat`, "POST", host.cookie, { content: "First" });
+    await api.request(`/api/meetings/${meeting.id}/chat`, "POST", host.cookie, { content: "Second" });
+
+    const restartedApi = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const response = await restartedApi.request(`/api/meetings/${meeting.id}/chat`, "GET", host.cookie);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.data.map((message: { content: string }) => message.content)).toEqual(["First", "Second"]);
+    expect(payload.data.map((message: { sequence: number }) => message.sequence)).toEqual([1, 2]);
+    expect(Date.parse(payload.data[1].createdAt)).toBeGreaterThan(Date.parse(payload.data[0].createdAt));
+  });
+
+  it("returns prior chat history to a participant who reconnects", async () => {
+    const { api, participant, meeting } = await createJoinedChatRoom();
+    await api.request(`/api/meetings/${meeting.id}/chat`, "POST", participant.cookie, { content: "Before reconnect" });
+    await api.request(`/api/meetings/${meeting.id}/leave`, "POST", participant.cookie);
+    const rejoinResponse = await api.request(`/api/meetings/${meeting.id}/join`, "POST", participant.cookie, { displayName: "Guest again" });
+    expect(rejoinResponse.status).toBe(200);
+
+    const historyResponse = await api.request(`/api/meetings/${meeting.id}/chat`, "GET", participant.cookie);
+    const payload = await historyResponse.json();
+    expect(historyResponse.status).toBe(200);
+    expect(payload.data).toHaveLength(1);
+    expect(payload.data[0].content).toBe("Before reconnect");
+  });
+
+  it("rejects new chat messages after the meeting ends", async () => {
+    const { api, host, meeting } = await createJoinedChatRoom();
+    await api.request(`/api/meetings/${meeting.id}/end`, "POST", host.cookie);
+
+    const response = await api.request(`/api/meetings/${meeting.id}/chat`, "POST", host.cookie, { content: "Too late" });
+    expect(response.status).toBe(409);
+  });
+
+  it("prevents a removed participant from posting in meeting chat", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const removeResponse = await api.request(`/api/meetings/${meeting.id}/remove`, "POST", host.cookie, {
+      actorUserId: host.userId,
+      targetUserId: participant.userId,
+    });
+    expect(removeResponse.status).toBe(200);
+
+    const response = await api.request(`/api/meetings/${meeting.id}/chat`, "POST", participant.cookie, { content: "Still here" });
+    expect(response.status).toBe(403);
+  });
+
+  it("keeps chat histories isolated between meetings", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const firstMeeting = await api.createOpenMeeting(host.cookie, "First chat room");
+    const secondMeeting = await api.createOpenMeeting(host.cookie, "Second chat room");
+    await api.request(`/api/meetings/${firstMeeting.id}/chat`, "POST", host.cookie, { content: "Only in the first room" });
+
+    const firstHistory = await api.request(`/api/meetings/${firstMeeting.id}/chat`, "GET", host.cookie);
+    const secondHistory = await api.request(`/api/meetings/${secondMeeting.id}/chat`, "GET", host.cookie);
+
+    expect((await firstHistory.json()).data).toHaveLength(1);
+    expect((await secondHistory.json()).data).toEqual([]);
   });
 
   it("creates a meeting with a generated BT meeting ID and host participant", async () => {

@@ -5,8 +5,11 @@ import {
   DurableMeetingRepository,
   InMemoryMeetingRepository,
   MeetingAccessMode,
+  MeetingStatus,
   MeetingService,
   NullMediaProvider,
+  ParticipantState,
+  type MeetingChatMessage,
   type Meeting,
   type MeetingRepository,
 } from "./meeting";
@@ -14,6 +17,7 @@ import { CloudflareRealtimeConnectionClient } from "./realtime";
 
 const SESSION_COOKIE_NAME = "bt_session_v0";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+const MAX_CHAT_MESSAGE_LENGTH = 2000;
 
 type V0Session = {
   sessionId: string;
@@ -160,6 +164,45 @@ export class MeetingStateDurableObject extends DurableObject<unknown> {
 
   async getMeeting(): Promise<Meeting | undefined> {
     return (await this.ctx.storage.get<Meeting>("meeting")) ?? undefined;
+  }
+
+  async listChatMessages(): Promise<MeetingChatMessage[]> {
+    return (await this.ctx.storage.get<MeetingChatMessage[]>("chat")) ?? [];
+  }
+
+  async appendChatMessage(senderUserId: string, content: string): Promise<MeetingChatMessage> {
+    return this.ctx.storage.transaction(async (storage: { get: <T>(key: string) => Promise<T | undefined> | T | undefined; put: (key: string, value: unknown) => Promise<void> | void }) => {
+      const meeting = await storage.get<Meeting>("meeting");
+      if (!meeting) {
+        throw new Error("Meeting not found.");
+      }
+      if (meeting.status !== MeetingStatus.ACTIVE) {
+        throw new Error("Meeting is not active.");
+      }
+
+      const participant = meeting.participants.find((entry) => entry.userId === senderUserId);
+      if (participant?.state === ParticipantState.REMOVED) {
+        throw new Error("You were removed from this meeting.");
+      }
+      if (!participant || participant.state !== ParticipantState.JOINED) {
+        throw new Error("Only joined participants may send chat messages.");
+      }
+
+      const messages = (await storage.get<MeetingChatMessage[]>("chat")) ?? [];
+      const previousTimestamp = messages.length ? Date.parse(messages[messages.length - 1].createdAt) : Number.NaN;
+      const timestamp = Math.max(Date.now(), Number.isFinite(previousTimestamp) ? previousTimestamp + 1 : 0);
+      const message: MeetingChatMessage = {
+        id: `chat_${crypto.randomUUID()}`,
+        meetingId: meeting.id,
+        sequence: messages.length + 1,
+        senderUserId: participant.userId,
+        senderDisplayName: participant.displayName,
+        content,
+        createdAt: new Date(timestamp).toISOString(),
+      };
+      await storage.put("chat", [...messages, message]);
+      return message;
+    });
   }
 
   async getSession(sessionId: string): Promise<V0Session | undefined> {
@@ -427,6 +470,66 @@ function meetingUiHtml(): string {
         border-left: 1px solid var(--border);
         background: rgba(10, 16, 28, 0.75);
         padding: 16px;
+      }
+      .chat-panel {
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+      }
+      .chat-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .chat-status {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .chat-messages {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 230px;
+        overflow-y: auto;
+        margin: 8px 0 12px;
+        padding: 0;
+      }
+      .chat-message {
+        min-width: 0;
+        padding: 8px 10px;
+        border-left: 2px solid rgba(124, 156, 255, 0.55);
+        background: rgba(148, 163, 184, 0.06);
+        overflow-wrap: anywhere;
+      }
+      .chat-message-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 3px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .chat-message-content {
+        margin: 0;
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+      .chat-form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+      }
+      .chat-form input {
+        min-width: 0;
+        padding: 9px 10px;
+      }
+      .chat-form button {
+        padding: 9px 12px;
+        border-radius: 10px;
       }
       .participant-list {
         list-style: none;
@@ -801,6 +904,17 @@ function meetingUiHtml(): string {
                 <button class="ghost" id="refreshAdmissionsBtn" type="button">Refresh</button>
               </div>
             </div>
+            <section class="chat-panel" aria-label="Meeting chat">
+              <div class="chat-heading">
+                <div class="kicker" style="margin:0;">Chat</div>
+                <span id="chatStatus" class="chat-status" aria-live="polite">No messages</span>
+              </div>
+              <ol id="chatMessages" class="chat-messages" aria-live="polite"></ol>
+              <form id="chatForm" class="chat-form">
+                <input id="chatInput" type="text" maxlength="2000" placeholder="Write a message" aria-label="Chat message" autocomplete="off" />
+                <button type="submit" class="secondary" aria-label="Send chat message">Send</button>
+              </form>
+            </section>
           </aside>
         </div>
       </section>
@@ -908,6 +1022,10 @@ function meetingUiHtml(): string {
       let hostActionVersion = 0;
       let meetingRefreshTimer = null;
       let meetingRefreshPending = false;
+      let chatRefreshPending = false;
+      let chatRefreshMeetingId = '';
+      let chatMessagesMeetingId = '';
+      let chatMessages = [];
 
       function escapeHtml(value) {
         const span = document.createElement('span');
@@ -958,6 +1076,84 @@ function meetingUiHtml(): string {
         if (changed) renderMeetingRoom();
       }
 
+      function renderChatMessages(messages) {
+        const list = document.getElementById('chatMessages');
+        const status = document.getElementById('chatStatus');
+        if (!list || !status) return;
+
+        const wasNearBottom = list.scrollHeight - list.clientHeight - list.scrollTop < 32;
+        chatMessages = Array.isArray(messages) ? messages : [];
+        status.textContent = chatMessages.length ? chatMessages.length + (chatMessages.length === 1 ? ' message' : ' messages') : 'No messages';
+        list.innerHTML = chatMessages.length ? chatMessages.map((message) => {
+          const timestamp = new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const sender = message.senderUserId === state.currentUserId ? 'You' : message.senderDisplayName;
+          return '<li class="chat-message"><div class="chat-message-meta"><span>' + escapeHtml(sender) + '</span><time datetime="' + escapeHtml(message.createdAt) + '">' + escapeHtml(timestamp) + '</time></div><p class="chat-message-content">' + escapeHtml(message.content) + '</p></li>';
+        }).join('') : '<li class="muted">No messages yet.</li>';
+        if (wasNearBottom) list.scrollTop = list.scrollHeight;
+      }
+
+      async function refreshMeetingChat() {
+        if (!state.meetingId || state.route !== 'meeting') return;
+        const meetingId = state.meetingId;
+        if (chatMessagesMeetingId !== meetingId) {
+          chatMessagesMeetingId = meetingId;
+          chatMessages = [];
+          renderChatMessages(chatMessages);
+        }
+        if (chatRefreshPending && chatRefreshMeetingId === meetingId) return;
+        chatRefreshPending = true;
+        chatRefreshMeetingId = meetingId;
+
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/chat');
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to load chat.');
+          if (meetingId === state.meetingId && state.route === 'meeting') {
+            renderChatMessages(payload.data);
+          }
+        } catch (error) {
+          if (meetingId === state.meetingId && state.route === 'meeting') {
+            const status = document.getElementById('chatStatus');
+            if (status) status.textContent = 'Chat unavailable';
+          }
+        } finally {
+          if (chatRefreshMeetingId === meetingId) {
+            chatRefreshPending = false;
+            chatRefreshMeetingId = '';
+          }
+        }
+      }
+
+      async function submitMeetingChat(event) {
+        event.preventDefault();
+        const input = document.getElementById('chatInput');
+        const submitButton = document.querySelector('#chatForm button[type="submit"]');
+        const content = input.value.trim();
+        if (!content || !state.meetingId || state.route !== 'meeting') return;
+
+        const meetingId = state.meetingId;
+        submitButton.disabled = true;
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content }),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to send message.');
+          if (meetingId === state.meetingId && state.route === 'meeting') {
+            input.value = '';
+            chatMessages = [...chatMessages, payload.data];
+            renderChatMessages(chatMessages);
+          }
+        } catch (error) {
+          const status = document.getElementById('chatStatus');
+          if (status) status.textContent = error instanceof Error ? error.message : 'Unable to send message.';
+        } finally {
+          submitButton.disabled = false;
+        }
+      }
+
       async function refreshMeetingState() {
         if (meetingRefreshPending || hostActionPending || !state.meetingId || !state.currentUserId) return;
         const meetingId = state.meetingId;
@@ -968,7 +1164,10 @@ function meetingUiHtml(): string {
           const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId));
           const payload = await response.json();
           if (!response.ok || !payload.ok || !payload.data) throw new Error(payload.error || 'Unable to refresh meeting.');
-          if (meetingId === state.meetingId && userId === state.currentUserId && actionVersion === hostActionVersion && !hostActionPending && ['meeting', 'prejoin'].includes(state.route)) applyMeetingSnapshot(payload.data);
+          if (meetingId === state.meetingId && userId === state.currentUserId && actionVersion === hostActionVersion && !hostActionPending && ['meeting', 'prejoin'].includes(state.route)) {
+            applyMeetingSnapshot(payload.data);
+            if (state.route === 'meeting') await refreshMeetingChat();
+          }
         } catch (error) {
           if (meetingId === state.meetingId && ['meeting', 'prejoin'].includes(state.route)) setError('Unable to refresh meeting. Retrying automatically.');
         } finally {
@@ -1018,6 +1217,7 @@ function meetingUiHtml(): string {
 
       function showScreen(name) {
         state.route = name;
+        if (name === 'meeting') void refreshMeetingChat();
         if (name === 'prejoin' && state.admissionStatus !== 'WAITING') {
           document.getElementById('joinNowButton').disabled = false;
           document.getElementById('joinNowButton').textContent = 'Join now';
@@ -1673,6 +1873,7 @@ function meetingUiHtml(): string {
         renderLocalState();
         if (activeScreenShareStream) showScreenSharePreview(activeScreenShareStream);
         syncHostActionButtons();
+        if (state.route === 'meeting') void refreshMeetingChat();
       }
 
       async function requestAdmissionForMeeting() {
@@ -2067,6 +2268,7 @@ function meetingUiHtml(): string {
       document.getElementById('shareScreenBtn').addEventListener('click', handleScreenShareToggle);
 
       document.getElementById('copyMeetingIdBtn').addEventListener('click', copyMeetingId);
+      document.getElementById('chatForm').addEventListener('submit', submitMeetingChat);
       document.getElementById('leaveMeetingBtn').addEventListener('click', leaveMeeting);
       document.getElementById('endMeetingBtn').addEventListener('click', endMeeting);
       document.getElementById('returnHomeBtn').addEventListener('click', () => {
@@ -2375,6 +2577,54 @@ export default {
           request,
           session,
         );
+      }
+    }
+
+    const meetingChatMatch = /^\/api\/meetings\/([^/]+)\/chat$/.exec(url.pathname);
+
+    if (meetingChatMatch && request.method === "GET") {
+      const { session } = await getOrCreateSession(request, env);
+
+      try {
+        const messages = await getMeetingService(env).listChatMessages(meetingChatMatch[1], session.userId);
+        return withSessionCookie(jsonResponse({ ok: true, data: messages }), request, session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to read meeting chat.";
+        const status = message === "Meeting not found." ? 404 : 403;
+        return withSessionCookie(jsonResponse({ ok: false, error: message }, status), request, session);
+      }
+    }
+
+    if (meetingChatMatch && request.method === "POST") {
+      const body = await parseJsonBody<{ content?: string; senderUserId?: string; userId?: string }>(request);
+      const { session } = await getOrCreateSession(request, env);
+
+      if (!body || typeof body.content !== "string" || !body.content.trim()) {
+        return withSessionCookie(
+          jsonResponse({ ok: false, error: "Chat message content is required." }, 400),
+          request,
+          session,
+        );
+      }
+      if (body.content.length > MAX_CHAT_MESSAGE_LENGTH) {
+        return withSessionCookie(
+          jsonResponse({ ok: false, error: `Chat messages must be ${MAX_CHAT_MESSAGE_LENGTH} characters or fewer.` }, 400),
+          request,
+          session,
+        );
+      }
+
+      try {
+        const message = await getMeetingService(env).postChatMessage(
+          meetingChatMatch[1],
+          session.userId,
+          body.content,
+        );
+        return withSessionCookie(jsonResponse({ ok: true, data: message }, 201), request, session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to post chat message.";
+        const status = message === "Meeting not found." ? 404 : message === "Meeting is not active." ? 409 : 403;
+        return withSessionCookie(jsonResponse({ ok: false, error: message }, status), request, session);
       }
     }
 

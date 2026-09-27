@@ -96,6 +96,25 @@ async function loadRenderedPage() {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
 
+    if (url.endsWith("/chat")) {
+      if (method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        return createResponse({
+          ok: true,
+          data: {
+            id: "chat-test-1",
+            meetingId: "btm_test_123",
+            sequence: 1,
+            senderUserId: "host-123",
+            senderDisplayName: "Alex",
+            content: body.content,
+            createdAt: new Date().toISOString(),
+          },
+        }, true, 201);
+      }
+      return createResponse({ ok: true, data: [] });
+    }
+
     if (url === "/api/meetings" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}"));
       return createResponse({
@@ -233,6 +252,32 @@ describe("BillionTalks browser UI regression tests", () => {
 
     expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
     expect(document.getElementById("meetingTitleText")?.textContent).toContain("Sprint review");
+  });
+
+  it("loads the meeting chat panel and submits a message from the room", async () => {
+    const { document, fetchMock } = await loadRenderedPage();
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Sprint review";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+    expect(document.getElementById("chatMessages")).not.toBeNull();
+    expect(document.getElementById("chatInput")).not.toBeNull();
+
+    const input = document.getElementById("chatInput") as HTMLInputElement;
+    input.value = "Hello from the room";
+    document.getElementById("chatForm")?.dispatchEvent(new document.defaultView!.Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/chat", expect.objectContaining({ method: "POST" }));
+    expect(document.getElementById("chatMessages")?.textContent).toContain("Hello from the room");
+    expect(input.value).toBe("");
   });
 
   it("uses the real bottom mic/camera controls without null DOM writes and reacquires fresh live tracks", async () => {

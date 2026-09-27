@@ -66,6 +66,16 @@ export type Meeting = {
   accessRequests: MeetingAdmissionRequest[];
 };
 
+export type MeetingChatMessage = {
+  id: string;
+  meetingId: string;
+  sequence: number;
+  senderUserId: string;
+  senderDisplayName: string;
+  content: string;
+  createdAt: string;
+};
+
 export type MeetingMediaConnection = {
   id: string;
   meetingId: string;
@@ -161,6 +171,44 @@ function normalizeRequiredString(value: string | undefined, label: string): stri
   return normalized;
 }
 
+function getActiveChatParticipant(meeting: Meeting | undefined, senderUserId: string): MeetingParticipant {
+  if (!meeting) {
+    throw new Error("Meeting not found.");
+  }
+  if (meeting.status !== MeetingStatus.ACTIVE) {
+    throw new Error("Meeting is not active.");
+  }
+
+  const participant = meeting.participants.find((entry) => entry.userId === senderUserId);
+  if (participant?.state === ParticipantState.REMOVED) {
+    throw new Error("You were removed from this meeting.");
+  }
+  if (!participant || participant.state !== ParticipantState.JOINED) {
+    throw new Error("Only joined participants may send chat messages.");
+  }
+  return participant;
+}
+
+function createChatMessage(
+  meetingId: string,
+  participant: MeetingParticipant,
+  content: string,
+  sequence: number,
+  previousCreatedAt?: string,
+): MeetingChatMessage {
+  const previousTimestamp = previousCreatedAt ? Date.parse(previousCreatedAt) : Number.NaN;
+  const timestamp = Math.max(Date.now(), Number.isFinite(previousTimestamp) ? previousTimestamp + 1 : 0);
+  return {
+    id: `chat_${crypto.randomUUID()}`,
+    meetingId,
+    sequence,
+    senderUserId: participant.userId,
+    senderDisplayName: participant.displayName,
+    content,
+    createdAt: new Date(timestamp).toISOString(),
+  };
+}
+
 function normalizeMeetingAccessMode(value: string | undefined, label: string): MeetingAccessMode {
   const normalized = (value ?? "").trim().toUpperCase();
 
@@ -174,6 +222,8 @@ function normalizeMeetingAccessMode(value: string | undefined, label: string): M
 export interface MeetingRepository {
   saveMeeting(meeting: Meeting): Promise<void> | void;
   getMeeting(meetingId: string): Promise<Meeting | undefined> | Meeting | undefined;
+  listChatMessages(meetingId: string): Promise<MeetingChatMessage[]> | MeetingChatMessage[];
+  appendChatMessage(meetingId: string, senderUserId: string, content: string): Promise<MeetingChatMessage>;
   setMediaConnection(connection: MeetingMediaConnection): Promise<void> | void;
   getMediaConnection(meetingId: string, participantId: string): Promise<MeetingMediaConnection | undefined> | MeetingMediaConnection | undefined;
   deleteMediaConnection(meetingId: string, participantId: string): Promise<void> | void;
@@ -190,6 +240,8 @@ type DurableObjectStorageLike = {
 type DurableObjectStubLike = {
   saveMeeting: (meeting: Meeting) => Promise<number | void>;
   getMeeting: () => Promise<Meeting | undefined>;
+  listChatMessages: () => Promise<MeetingChatMessage[]>;
+  appendChatMessage: (senderUserId: string, content: string) => Promise<MeetingChatMessage>;
 };
 
 type DurableObjectNamespaceLike = {
@@ -199,6 +251,7 @@ type DurableObjectNamespaceLike = {
 
 export class InMemoryMeetingRepository implements MeetingRepository {
   private readonly meetings = new Map<string, Meeting>();
+  private readonly chatMessages = new Map<string, MeetingChatMessage[]>();
   private readonly participantMediaConnections = new Map<string, MeetingMediaConnection>();
 
   async saveMeeting(meeting: Meeting): Promise<void> {
@@ -207,6 +260,20 @@ export class InMemoryMeetingRepository implements MeetingRepository {
 
   async getMeeting(meetingId: string): Promise<Meeting | undefined> {
     return this.meetings.get(meetingId);
+  }
+
+  async listChatMessages(meetingId: string): Promise<MeetingChatMessage[]> {
+    return [...(this.chatMessages.get(meetingId) ?? [])];
+  }
+
+  async appendChatMessage(meetingId: string, senderUserId: string, content: string): Promise<MeetingChatMessage> {
+    const meeting = this.meetings.get(meetingId);
+    const participant = getActiveChatParticipant(meeting, senderUserId);
+    const messages = this.chatMessages.get(meetingId) ?? [];
+    const message = createChatMessage(meetingId, participant, content, messages.length + 1, messages.at(-1)?.createdAt);
+    messages.push(message);
+    this.chatMessages.set(meetingId, messages);
+    return message;
   }
 
   async setMediaConnection(connection: MeetingMediaConnection): Promise<void> {
@@ -270,6 +337,33 @@ export class DurableMeetingRepository implements MeetingRepository {
     }
 
     return this.meetings.get(meetingId);
+  }
+
+  async listChatMessages(meetingId: string): Promise<MeetingChatMessage[]> {
+    if (this.namespace) {
+      const stub = this.namespace.get(this.namespace.idFromName(meetingId));
+      return stub.listChatMessages();
+    }
+
+    if (this.storage) {
+      return ((await this.storage.get(`chat:${meetingId}`)) as MeetingChatMessage[] | undefined) ?? [];
+    }
+
+    return [];
+  }
+
+  async appendChatMessage(meetingId: string, senderUserId: string, content: string): Promise<MeetingChatMessage> {
+    if (this.namespace) {
+      const stub = this.namespace.get(this.namespace.idFromName(meetingId));
+      return stub.appendChatMessage(senderUserId, content);
+    }
+
+    const meeting = await this.getMeeting(meetingId);
+    const participant = getActiveChatParticipant(meeting, senderUserId);
+    const messages = await this.listChatMessages(meetingId);
+    const message = createChatMessage(meetingId, participant, content, messages.length + 1, messages.at(-1)?.createdAt);
+    await this.storage?.put(`chat:${meetingId}`, [...messages, message]);
+    return message;
   }
 
   async setMediaConnection(connection: MeetingMediaConnection): Promise<void> {
@@ -831,6 +925,20 @@ export class MeetingService {
   async listParticipants(meetingId: string): Promise<MeetingParticipant[]> {
     const meeting = await this.getRequiredMeeting(meetingId);
     return this.deduplicateParticipants(meeting.participants);
+  }
+
+  async listChatMessages(meetingId: string, userId: string): Promise<MeetingChatMessage[]> {
+    const meeting = await this.getRequiredMeeting(meetingId);
+    const participant = meeting.participants.find((entry) => entry.userId === userId);
+    if (!participant || participant.state === ParticipantState.REMOVED || participant.state === ParticipantState.PENDING || participant.state === ParticipantState.WAITING || participant.state === ParticipantState.REJECTED) {
+      throw new Error("Only meeting participants may read chat history.");
+    }
+    return this.repository.listChatMessages(meetingId);
+  }
+
+  async postChatMessage(meetingId: string, userId: string, content: string): Promise<MeetingChatMessage> {
+    const normalizedContent = normalizeRequiredString(content, "Chat message");
+    return this.repository.appendChatMessage(meetingId, userId, normalizedContent);
   }
 
   private deduplicateParticipants(participants: MeetingParticipant[]): MeetingParticipant[] {
