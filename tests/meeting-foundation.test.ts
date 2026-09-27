@@ -348,6 +348,113 @@ describe("MeetingService lifecycle", () => {
     expect((await secondHistory.json()).data).toEqual([]);
   });
 
+  it("allows the authenticated host to start recording and hides the R2 object key", async () => {
+    const backingStorage = new Map<string, Map<string, unknown>>();
+    const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Recording room");
+    const response = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const payload = await response.json();
+    const stored = backingStorage.get(meeting.id)?.get("recordings") as Array<{ storageRef: { objectKey: string } }>;
+
+    expect(response.status).toBe(200);
+    expect(payload.data).toMatchObject({
+      meetingId: meeting.id,
+      status: "RECORDING",
+      initiatedByUserId: host.userId,
+    });
+    expect(payload.data.recordingId).toBeTruthy();
+    expect(payload.data.startedAt).toBeTruthy();
+    expect(payload.data).not.toHaveProperty("storageRef");
+    expect(JSON.stringify(payload)).not.toContain("objectKey");
+    expect(stored[1].storageRef.objectKey).toContain(`recordings/${encodeURIComponent(meeting.id)}/`);
+  });
+
+  it("prevents a non-host from starting or stopping recording", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const participantStart = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", participant.cookie);
+    expect(participantStart.status).toBe(403);
+
+    await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const participantStop = await api.request(`/api/meetings/${meeting.id}/recording/stop`, "POST", participant.cookie);
+    expect(participantStop.status).toBe(403);
+  });
+
+  it("rejects a duplicate recording start while one is active", async () => {
+    const { api, host, meeting } = await createJoinedChatRoom();
+    const first = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const firstPayload = await first.json();
+    const duplicate = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const duplicatePayload = await duplicate.json();
+
+    expect(first.status).toBe(200);
+    expect(duplicate.status).toBe(409);
+    expect(duplicatePayload.error).toContain("already active");
+    expect(firstPayload.data.recordingId).toBeTruthy();
+  });
+
+  it("persists final recording metadata when the host stops recording", async () => {
+    const backingStorage = new Map<string, Map<string, unknown>>();
+    const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Recording stop room");
+    const started = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const startedPayload = await started.json();
+    const stopped = await api.request(`/api/meetings/${meeting.id}/recording/stop`, "POST", host.cookie);
+    const stoppedPayload = await stopped.json();
+    const stored = backingStorage.get(meeting.id)?.get("recordings") as Array<Record<string, unknown>>;
+
+    expect(stopped.status).toBe(200);
+    expect(stoppedPayload.data).toMatchObject({
+      recordingId: startedPayload.data.recordingId,
+      meetingId: meeting.id,
+      initiatedByUserId: host.userId,
+      status: "STOPPED",
+    });
+    expect(stoppedPayload.data.stoppedAt).toBeTruthy();
+    expect(stored[1]).toMatchObject({ recordingId: startedPayload.data.recordingId, status: "STOPPED" });
+  });
+
+  it("rejects starting a recording after the meeting has ended", async () => {
+    const { api, host, meeting } = await createJoinedChatRoom();
+    await api.request(`/api/meetings/${meeting.id}/end`, "POST", host.cookie);
+    const response = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+
+    expect(response.status).toBe(409);
+  });
+
+  it("recovers recording metadata after runtime re-instantiation without exposing storage URLs", async () => {
+    const backingStorage = new Map<string, Map<string, unknown>>();
+    const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Restart recording room");
+    const started = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const startedPayload = await started.json();
+
+    const restartedApi = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const statusResponse = await restartedApi.request(`/api/meetings/${meeting.id}/recording`, "GET", host.cookie);
+    const statusPayload = await statusResponse.json();
+
+    expect(statusResponse.status).toBe(200);
+    expect(statusPayload.data).toHaveLength(2);
+    expect(statusPayload.data[1]).toMatchObject({ recordingId: startedPayload.data.recordingId, status: "RECORDING" });
+    expect(JSON.stringify(statusPayload)).not.toMatch(/https?:\/\/|objectKey|storageRef/);
+  });
+
+  it("keeps recording metadata isolated between meetings", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const firstMeeting = await api.createOpenMeeting(host.cookie, "First recording room");
+    const secondMeeting = await api.createOpenMeeting(host.cookie, "Second recording room");
+    await api.request(`/api/meetings/${firstMeeting.id}/recording/start`, "POST", host.cookie);
+
+    const firstStatus = await api.request(`/api/meetings/${firstMeeting.id}/recording`, "GET", host.cookie);
+    const secondStatus = await api.request(`/api/meetings/${secondMeeting.id}/recording`, "GET", host.cookie);
+
+    expect((await firstStatus.json()).data.map((entry: { status: string }) => entry.status)).toEqual(["NOT_STARTED", "RECORDING"]);
+    expect((await secondStatus.json()).data.map((entry: { status: string }) => entry.status)).toEqual(["NOT_STARTED"]);
+  });
+
   it("creates a meeting with a generated BT meeting ID and host participant", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
 

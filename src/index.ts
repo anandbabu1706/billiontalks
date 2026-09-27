@@ -1,15 +1,18 @@
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
 import { validateRealtimeEnv, type RealtimeEnv } from "./config";
 import {
+  buildRecordingObjectKey,
   CloudflareMediaProvider,
   DurableMeetingRepository,
   InMemoryMeetingRepository,
   MeetingAccessMode,
+  MeetingRecordingStatus,
   MeetingStatus,
   MeetingService,
   NullMediaProvider,
   ParticipantState,
   type MeetingChatMessage,
+  type MeetingRecordingMetadata,
   type Meeting,
   type MeetingRepository,
 } from "./meeting";
@@ -158,12 +161,71 @@ export class MeetingStateDurableObject extends DurableObject<unknown> {
       }
       const revision = (current?.revision ?? 0) + 1;
       await storage.put("meeting", { ...meeting, revision });
+      if (!current && !(await storage.get<MeetingRecordingMetadata[]>("recordings"))) {
+        await storage.put("recordings", [{ meetingId: meeting.id, status: MeetingRecordingStatus.NOT_STARTED }]);
+      }
       return revision;
     });
   }
 
   async getMeeting(): Promise<Meeting | undefined> {
     return (await this.ctx.storage.get<Meeting>("meeting")) ?? undefined;
+  }
+
+  async getRecordingMetadata(): Promise<MeetingRecordingMetadata[]> {
+    return (await this.ctx.storage.get<MeetingRecordingMetadata[]>("recordings")) ?? [];
+  }
+
+  async startRecording(actorUserId: string): Promise<MeetingRecordingMetadata> {
+    return this.ctx.storage.transaction(async (storage: { get: <T>(key: string) => Promise<T | undefined> | T | undefined; put: (key: string, value: unknown) => Promise<void> | void }) => {
+      const meeting = await storage.get<Meeting>("meeting");
+      if (!meeting) throw new Error("Meeting not found.");
+      if (meeting.hostId !== actorUserId || !meeting.participants.some((participant) => participant.userId === actorUserId && participant.role === "HOST")) {
+        throw new Error("Only the meeting host may control recording.");
+      }
+      if (meeting.status !== MeetingStatus.ACTIVE) throw new Error("Meeting is not active.");
+
+      const recordings = (await storage.get<MeetingRecordingMetadata[]>("recordings")) ?? [];
+      if (recordings.some((recording) => recording.status === MeetingRecordingStatus.RECORDING)) {
+        throw new Error("Recording is already active.");
+      }
+
+      const recordingId = `rec_${crypto.randomUUID()}`;
+      const recording: MeetingRecordingMetadata = {
+        meetingId: meeting.id,
+        recordingId,
+        status: MeetingRecordingStatus.RECORDING,
+        startedAt: new Date().toISOString(),
+        initiatedByUserId: actorUserId,
+        storageRef: {
+          provider: "r2",
+            objectKey: buildRecordingObjectKey(meeting.id, recordingId),
+        },
+      };
+      await storage.put("recordings", [...recordings, recording]);
+      return recording;
+    });
+  }
+
+  async stopRecording(actorUserId: string): Promise<MeetingRecordingMetadata> {
+    return this.ctx.storage.transaction(async (storage: { get: <T>(key: string) => Promise<T | undefined> | T | undefined; put: (key: string, value: unknown) => Promise<void> | void }) => {
+      const meeting = await storage.get<Meeting>("meeting");
+      if (!meeting) throw new Error("Meeting not found.");
+      if (meeting.hostId !== actorUserId || !meeting.participants.some((participant) => participant.userId === actorUserId && participant.role === "HOST")) {
+        throw new Error("Only the meeting host may control recording.");
+      }
+
+      const recordings = (await storage.get<MeetingRecordingMetadata[]>("recordings")) ?? [];
+      const index = recordings.findIndex((recording) => recording.status === MeetingRecordingStatus.RECORDING);
+      if (index < 0) throw new Error("No active recording to stop.");
+      const updated: MeetingRecordingMetadata = {
+        ...recordings[index],
+        status: MeetingRecordingStatus.STOPPED,
+        stoppedAt: new Date().toISOString(),
+      };
+      await storage.put("recordings", recordings.map((recording, entryIndex) => entryIndex === index ? updated : recording));
+      return updated;
+    });
   }
 
   async listChatMessages(): Promise<MeetingChatMessage[]> {
@@ -220,6 +282,11 @@ export class MeetingStateDurableObject extends DurableObject<unknown> {
 
 function jsonResponse(data: unknown, status = 200): Response {
   return Response.json(data, { status });
+}
+
+function toPublicRecordingMetadata(recording: MeetingRecordingMetadata): Omit<MeetingRecordingMetadata, "storageRef"> {
+  const { storageRef: _storageRef, ...publicMetadata } = recording;
+  return publicMetadata;
 }
 
 export function resolveMeetingRepository(env: Partial<RealtimeEnv> = {}): MeetingRepository {
@@ -529,6 +596,25 @@ function meetingUiHtml(): string {
       }
       .chat-form button {
         padding: 9px 12px;
+        border-radius: 10px;
+      }
+      .recording-panel {
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+      .recording-copy {
+        margin: 6px 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .recording-controls {
+        display: flex;
+        gap: 8px;
+      }
+      .recording-controls button {
+        padding: 8px 10px;
         border-radius: 10px;
       }
       .participant-list {
@@ -888,6 +974,14 @@ function meetingUiHtml(): string {
           <aside class="side-panel">
             <div class="kicker">Participants</div>
             <ul class="participant-list" id="participantList"></ul>
+            <section class="recording-panel" aria-label="Meeting recording">
+              <div class="kicker" style="margin:0;">Recording</div>
+              <p id="recordingStatus" class="recording-copy" aria-live="polite">Not started. Media capture is not connected.</p>
+              <div id="recordingControls" class="recording-controls" style="display:none;">
+                <button id="startRecordingBtn" type="button" class="secondary">Start</button>
+                <button id="stopRecordingBtn" type="button" class="ghost" style="display:none;">Stop</button>
+              </div>
+            </section>
             <div id="admissionPanel" style="margin-top: 18px; display:none;">
               <div class="kicker">Admission</div>
               <label for="meetingAccessMode">Who can join?</label>
@@ -944,6 +1038,7 @@ function meetingUiHtml(): string {
         currentUserId: '',
         isHost: false,
         admissionStatus: '',
+        recordings: [],
         localDevice: {
           micEnabled: true,
           cameraEnabled: true,
@@ -1026,6 +1121,10 @@ function meetingUiHtml(): string {
       let chatRefreshMeetingId = '';
       let chatMessagesMeetingId = '';
       let chatMessages = [];
+      let recordingRefreshPending = false;
+      let recordingRefreshMeetingId = '';
+      let recordingsMeetingId = '';
+      let recordingActionPending = false;
 
       function escapeHtml(value) {
         const span = document.createElement('span');
@@ -1154,6 +1253,88 @@ function meetingUiHtml(): string {
         }
       }
 
+      function renderRecordingStatus() {
+        const statusElement = document.getElementById('recordingStatus');
+        const controls = document.getElementById('recordingControls');
+        const startButton = document.getElementById('startRecordingBtn');
+        const stopButton = document.getElementById('stopRecordingBtn');
+        if (!statusElement || !controls || !startButton || !stopButton) return;
+
+        const current = state.recordings[state.recordings.length - 1];
+        const active = current && current.status === 'RECORDING';
+        if (active) {
+          statusElement.textContent = 'Recording is active. Media capture is not connected yet.';
+        } else if (current && current.status === 'STOPPED') {
+          statusElement.textContent = 'Recording stopped. Media capture is not connected yet.';
+        } else if (current && current.status === 'FAILED') {
+          statusElement.textContent = 'Recording failed. Media capture is not connected yet.';
+        } else {
+          statusElement.textContent = 'Not started. Media capture is not connected.';
+        }
+
+        const hostCanControl = state.isHost && state.meeting && state.meeting.status === 'active';
+        controls.style.display = hostCanControl ? 'flex' : 'none';
+        startButton.style.display = active ? 'none' : 'inline-flex';
+        stopButton.style.display = active ? 'inline-flex' : 'none';
+        startButton.disabled = recordingActionPending;
+        stopButton.disabled = recordingActionPending;
+      }
+
+      async function refreshRecordingStatus() {
+        if (!state.meetingId || state.route !== 'meeting') return;
+        const meetingId = state.meetingId;
+        if (recordingsMeetingId !== meetingId) {
+          recordingsMeetingId = meetingId;
+          state.recordings = [];
+          renderRecordingStatus();
+        }
+        if (recordingRefreshPending && recordingRefreshMeetingId === meetingId) return;
+        recordingRefreshPending = true;
+        recordingRefreshMeetingId = meetingId;
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/recording');
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to load recording status.');
+          if (meetingId === state.meetingId && state.route === 'meeting') {
+            state.recordings = Array.isArray(payload.data) ? payload.data : [];
+            renderRecordingStatus();
+          }
+        } catch (error) {
+          const statusElement = document.getElementById('recordingStatus');
+          if (meetingId === state.meetingId && state.route === 'meeting' && statusElement) {
+            statusElement.textContent = 'Recording status unavailable.';
+          }
+        } finally {
+          if (recordingRefreshMeetingId === meetingId) {
+            recordingRefreshPending = false;
+            recordingRefreshMeetingId = '';
+          }
+        }
+      }
+
+      async function updateRecording(action) {
+        if (!state.isHost || recordingActionPending || !state.meetingId || state.route !== 'meeting') return;
+        const meetingId = state.meetingId;
+        recordingActionPending = true;
+        renderRecordingStatus();
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/recording/' + action, { method: 'POST' });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to update recording.');
+          if (meetingId === state.meetingId) {
+            const existing = state.recordings.filter((recording) => recording.recordingId !== payload.data.recordingId);
+            state.recordings = [...existing, payload.data];
+            renderRecordingStatus();
+          }
+        } catch (error) {
+          const statusElement = document.getElementById('recordingStatus');
+          if (statusElement) statusElement.textContent = error instanceof Error ? error.message : 'Unable to update recording.';
+        } finally {
+          recordingActionPending = false;
+          renderRecordingStatus();
+        }
+      }
+
       async function refreshMeetingState() {
         if (meetingRefreshPending || hostActionPending || !state.meetingId || !state.currentUserId) return;
         const meetingId = state.meetingId;
@@ -1166,7 +1347,10 @@ function meetingUiHtml(): string {
           if (!response.ok || !payload.ok || !payload.data) throw new Error(payload.error || 'Unable to refresh meeting.');
           if (meetingId === state.meetingId && userId === state.currentUserId && actionVersion === hostActionVersion && !hostActionPending && ['meeting', 'prejoin'].includes(state.route)) {
             applyMeetingSnapshot(payload.data);
-            if (state.route === 'meeting') await refreshMeetingChat();
+            if (state.route === 'meeting') {
+              await refreshMeetingChat();
+              await refreshRecordingStatus();
+            }
           }
         } catch (error) {
           if (meetingId === state.meetingId && ['meeting', 'prejoin'].includes(state.route)) setError('Unable to refresh meeting. Retrying automatically.');
@@ -1217,7 +1401,10 @@ function meetingUiHtml(): string {
 
       function showScreen(name) {
         state.route = name;
-        if (name === 'meeting') void refreshMeetingChat();
+        if (name === 'meeting') {
+          void refreshMeetingChat();
+          void refreshRecordingStatus();
+        }
         if (name === 'prejoin' && state.admissionStatus !== 'WAITING') {
           document.getElementById('joinNowButton').disabled = false;
           document.getElementById('joinNowButton').textContent = 'Join now';
@@ -1543,6 +1730,7 @@ function meetingUiHtml(): string {
         if (endMeetingBtn) {
           endMeetingBtn.style.display = meetingIsHost ? 'flex' : 'none';
         }
+        renderRecordingStatus();
       }
 
       let activeScreenShareStream = null;
@@ -2269,6 +2457,8 @@ function meetingUiHtml(): string {
 
       document.getElementById('copyMeetingIdBtn').addEventListener('click', copyMeetingId);
       document.getElementById('chatForm').addEventListener('submit', submitMeetingChat);
+      document.getElementById('startRecordingBtn').addEventListener('click', () => { void updateRecording('start'); });
+      document.getElementById('stopRecordingBtn').addEventListener('click', () => { void updateRecording('stop'); });
       document.getElementById('leaveMeetingBtn').addEventListener('click', leaveMeeting);
       document.getElementById('endMeetingBtn').addEventListener('click', endMeeting);
       document.getElementById('returnHomeBtn').addEventListener('click', () => {
@@ -2577,6 +2767,38 @@ export default {
           request,
           session,
         );
+      }
+    }
+
+    const meetingRecordingMatch = /^\/api\/meetings\/([^/]+)\/recording(?:\/(start|stop))?$/.exec(url.pathname);
+
+    if (meetingRecordingMatch && request.method === "GET" && !meetingRecordingMatch[2]) {
+      const { session } = await getOrCreateSession(request, env);
+      try {
+        const recordings = await getMeetingService(env).getRecordingMetadata(meetingRecordingMatch[1], session.userId);
+        return withSessionCookie(
+          jsonResponse({ ok: true, data: recordings.map(toPublicRecordingMetadata) }),
+          request,
+          session,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to read recording status.";
+        return withSessionCookie(jsonResponse({ ok: false, error: message }, message === "Meeting not found." ? 404 : 403), request, session);
+      }
+    }
+
+    if (meetingRecordingMatch && request.method === "POST" && meetingRecordingMatch[2]) {
+      const { session } = await getOrCreateSession(request, env);
+      try {
+        const service = getMeetingService(env);
+        const recording = meetingRecordingMatch[2] === "start"
+          ? await service.startRecording(meetingRecordingMatch[1], session.userId)
+          : await service.stopRecording(meetingRecordingMatch[1], session.userId);
+        return withSessionCookie(jsonResponse({ ok: true, data: toPublicRecordingMetadata(recording) }), request, session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to update recording status.";
+        const status = message === "Meeting not found." ? 404 : message === "Meeting is not active." || message.includes("already active") || message.includes("No active recording") ? 409 : 403;
+        return withSessionCookie(jsonResponse({ ok: false, error: message }, status), request, session);
       }
     }
 

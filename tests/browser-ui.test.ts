@@ -96,6 +96,39 @@ async function loadRenderedPage() {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
 
+    if (url.endsWith("/recording/start")) {
+      return createResponse({
+        ok: true,
+        data: {
+          meetingId: "btm_test_123",
+          recordingId: "rec-test-1",
+          status: "RECORDING",
+          startedAt: new Date().toISOString(),
+          initiatedByUserId: "host-123",
+        },
+      });
+    }
+
+    if (url.endsWith("/recording/stop")) {
+      return createResponse({
+        ok: true,
+        data: {
+          meetingId: "btm_test_123",
+          recordingId: "rec-test-1",
+          status: "STOPPED",
+          stoppedAt: new Date().toISOString(),
+          initiatedByUserId: "host-123",
+        },
+      });
+    }
+
+    if (url.endsWith("/recording")) {
+      return createResponse({
+        ok: true,
+        data: [{ meetingId: "btm_test_123", status: "NOT_STARTED" }],
+      });
+    }
+
     if (url.endsWith("/chat")) {
       if (method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}"));
@@ -278,6 +311,34 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/chat", expect.objectContaining({ method: "POST" }));
     expect(document.getElementById("chatMessages")?.textContent).toContain("Hello from the room");
     expect(input.value).toBe("");
+  });
+
+  it("shows recording lifecycle status and host start/stop controls in the meeting room", async () => {
+    const { document, fetchMock } = await loadRenderedPage();
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Sprint review";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+    expect((document.getElementById("recordingControls") as HTMLElement).style.display).toBe("flex");
+    expect(document.getElementById("recordingStatus")?.textContent).toContain("Not started");
+
+    document.getElementById("startRecordingBtn")?.click();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/start", expect.objectContaining({ method: "POST" }));
+    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording is active");
+    expect(document.getElementById("recordingStatus")?.textContent).toContain("Media capture is not connected yet");
+
+    document.getElementById("stopRecordingBtn")?.click();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/stop", expect.objectContaining({ method: "POST" }));
+    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording stopped");
   });
 
   it("uses the real bottom mic/camera controls without null DOM writes and reacquires fresh live tracks", async () => {

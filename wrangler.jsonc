@@ -11,6 +11,12 @@
       }
     ]
   },
+  "r2_buckets": [
+    {
+      "binding": "RECORDINGS_BUCKET",
+      "bucket_name": "billiontalks-recordings"
+    }
+  ],
   "migrations": [
     {
       "tag": "v1",
