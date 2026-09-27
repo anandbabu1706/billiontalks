@@ -105,6 +105,12 @@ function createChatApiFixture(namespace = createDurableObjectNamespace()) {
       if (!response.ok) throw new Error(payload.error);
       return payload.data as { id: string; hostId: string };
     },
+    async createMeeting(cookie: string, title: string, accessMode = "OPEN") {
+      const response = await request("/api/meetings", "POST", cookie, { title, accessMode });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error);
+      return payload.data as { id: string; hostId: string };
+    },
   };
 }
 
@@ -453,6 +459,126 @@ describe("MeetingService lifecycle", () => {
 
     expect((await firstStatus.json()).data.map((entry: { status: string }) => entry.status)).toEqual(["NOT_STARTED", "RECORDING"]);
     expect((await secondStatus.json()).data.map((entry: { status: string }) => entry.status)).toEqual(["NOT_STARTED"]);
+  });
+
+  it("lists a meeting for its host with role, status, and creation time", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Host history room");
+    const response = await api.request("/api/meetings/history", "GET", host.cookie);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.data).toContainEqual(expect.objectContaining({
+      meetingId: meeting.id,
+      title: "Host history room",
+      status: "active",
+      participantRole: "HOST",
+      latestRecordingStatus: "NOT_STARTED",
+    }));
+    expect(payload.data[0].createdAt).toBeTruthy();
+  });
+
+  it("lists a meeting for a participant after they join", async () => {
+    const { api, participant, meeting } = await createJoinedChatRoom();
+    const response = await api.request("/api/meetings/history", "GET", participant.cookie);
+    const payload = await response.json();
+
+    expect(payload.data).toContainEqual(expect.objectContaining({
+      meetingId: meeting.id,
+      participantRole: "PARTICIPANT",
+      status: "active",
+    }));
+  });
+
+  it("does not show another user's meeting even if a userId is supplied by the client", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Private history room");
+    const unrelated = await api.createSession();
+    const response = await api.request(`/api/meetings/history?userId=${encodeURIComponent(host.userId)}`, "GET", unrelated.cookie);
+    const payload = await response.json();
+
+    expect(payload.data).toEqual([]);
+    expect(JSON.stringify(payload)).not.toContain(meeting.id);
+  });
+
+  it("keeps ended meetings visible and includes their end time", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Ended history room");
+    await api.request(`/api/meetings/${meeting.id}/end`, "POST", host.cookie);
+
+    const response = await api.request("/api/meetings/history", "GET", host.cookie);
+    const payload = await response.json();
+    const historyEntry = payload.data.find((entry: { meetingId: string }) => entry.meetingId === meeting.id);
+
+    expect(historyEntry).toMatchObject({ meetingId: meeting.id, status: "ended", participantRole: "HOST" });
+    expect(historyEntry.endedAt).toBeTruthy();
+  });
+
+  it("preserves meeting history across Worker and Durable Object re-instantiation", async () => {
+    const backingStorage = new Map<string, Map<string, unknown>>();
+    const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Restarted history room");
+    await api.request(`/api/meetings/${meeting.id}/end`, "POST", host.cookie);
+
+    const restartedApi = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const response = await restartedApi.request("/api/meetings/history", "GET", host.cookie);
+    const payload = await response.json();
+
+    expect(payload.data).toContainEqual(expect.objectContaining({
+      meetingId: meeting.id,
+      title: "Restarted history room",
+      status: "ended",
+      participantRole: "HOST",
+    }));
+  });
+
+  it("includes latest recording lifecycle status without exposing its storage reference", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Recording history room");
+    await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+
+    const response = await api.request("/api/meetings/history", "GET", host.cookie);
+    const payload = await response.json();
+    const historyEntry = payload.data.find((entry: { meetingId: string }) => entry.meetingId === meeting.id);
+
+    expect(historyEntry.latestRecordingStatus).toBe("RECORDING");
+    expect(JSON.stringify(payload)).not.toMatch(/storageRef|objectKey|https?:\/\//);
+  });
+
+  it("does not add rejected or never-admitted users to meeting history", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const guest = await api.createSession();
+    const meeting = await api.createMeeting(host.cookie, "Approval history room", "HOST_APPROVAL");
+    const admissionResponse = await api.request(`/api/meetings/${meeting.id}/admission/request`, "POST", guest.cookie, { displayName: "Waiting Guest" });
+    const admission = (await admissionResponse.json()).data;
+    const rejectResponse = await api.request(`/api/meetings/${meeting.id}/admission/${admission.id}/reject`, "POST", host.cookie);
+    expect(rejectResponse.status).toBe(200);
+
+    const response = await api.request("/api/meetings/history", "GET", guest.cookie);
+    expect((await response.json()).data).toEqual([]);
+  });
+
+  it("keeps meeting histories isolated across users", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const participant = await api.createSession();
+    const unrelated = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "User history isolation");
+    await api.request(`/api/meetings/${meeting.id}/join`, "POST", participant.cookie, { displayName: "History Guest" });
+
+    const hostHistory = await api.request("/api/meetings/history", "GET", host.cookie);
+    const participantHistory = await api.request("/api/meetings/history", "GET", participant.cookie);
+    const unrelatedHistory = await api.request("/api/meetings/history", "GET", unrelated.cookie);
+
+    expect((await hostHistory.json()).data.map((entry: { meetingId: string }) => entry.meetingId)).toContain(meeting.id);
+    expect((await participantHistory.json()).data.map((entry: { meetingId: string }) => entry.meetingId)).toContain(meeting.id);
+    expect((await unrelatedHistory.json()).data).toEqual([]);
   });
 
   it("creates a meeting with a generated BT meeting ID and host participant", async () => {

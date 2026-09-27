@@ -96,6 +96,21 @@ async function loadRenderedPage() {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
 
+    if (url === "/api/meetings/history" && method === "GET") {
+      return createResponse({
+        ok: true,
+        data: [{
+          meetingId: "btm_history_123",
+          title: "Quarterly review",
+          status: "ended",
+          createdAt: "2026-09-27T10:00:00.000Z",
+          endedAt: "2026-09-27T11:00:00.000Z",
+          participantRole: "HOST",
+          latestRecordingStatus: "STOPPED",
+        }],
+      });
+    }
+
     if (url.endsWith("/recording/start")) {
       return createResponse({
         ok: true,
@@ -261,6 +276,25 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("devPanel")?.classList.contains("visible")).toBe(true);
     expect(document.getElementById("devPanel")?.textContent).toContain("Developer tools");
     expect(document.getElementById("devPanel")?.textContent).toContain("Local-only");
+  });
+
+  it("shows expandable read-only meeting history details on Home", async () => {
+    const { document } = await loadRenderedPage();
+    document.getElementById("startMeetingBtn")?.click();
+    document.getElementById("backToHomeFromCreate")?.click();
+    await flush();
+
+    const historyList = document.getElementById("meetingHistoryList");
+    expect(historyList?.textContent).toContain("Quarterly review");
+    const historyDetails = historyList?.querySelector("details");
+    expect(historyDetails).not.toBeNull();
+    historyDetails?.querySelector("summary")?.dispatchEvent(new document.defaultView!.MouseEvent("click", { bubbles: true }));
+
+    expect(historyDetails?.textContent).toContain("btm_history_123");
+    expect(historyDetails?.textContent).toContain("ended");
+    expect(historyDetails?.textContent).toContain("HOST");
+    expect(historyDetails?.textContent).toContain("STOPPED");
+    expect(historyDetails?.querySelector("a, button")).toBeNull();
   });
 
   it("opens the create flow and joins the room from the actual rendered UI", async () => {

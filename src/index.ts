@@ -172,6 +172,18 @@ export class MeetingStateDurableObject extends DurableObject<unknown> {
     return (await this.ctx.storage.get<Meeting>("meeting")) ?? undefined;
   }
 
+  async addMeetingHistoryReference(userId: string, meetingId: string): Promise<void> {
+    await this.ctx.storage.transaction(async (storage: { get: <T>(key: string) => Promise<T | undefined> | T | undefined; put: (key: string, value: unknown) => Promise<void> | void }) => {
+      const key = `meeting-history:${userId}`;
+      const references = (await storage.get<string[]>(key)) ?? [];
+      if (!references.includes(meetingId)) await storage.put(key, [...references, meetingId]);
+    });
+  }
+
+  async listMeetingHistoryReferences(userId: string): Promise<string[]> {
+    return (await this.ctx.storage.get<string[]>(`meeting-history:${userId}`)) ?? [];
+  }
+
   async getRecordingMetadata(): Promise<MeetingRecordingMetadata[]> {
     return (await this.ctx.storage.get<MeetingRecordingMetadata[]>("recordings")) ?? [];
   }
@@ -478,6 +490,55 @@ function meetingUiHtml(): string {
       .form-grid {
         display: grid;
         gap: 16px;
+      }
+      .history-section {
+        margin-top: 24px;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+      }
+      .history-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .history-status {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .history-list {
+        list-style: none;
+        margin: 8px 0 0;
+        padding: 0;
+        display: grid;
+        gap: 6px;
+      }
+      .history-entry {
+        padding: 9px 11px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(148, 163, 184, 0.05);
+      }
+      .history-entry summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        cursor: pointer;
+      }
+      .history-entry summary strong {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .history-entry-meta,
+      .history-details {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .history-details {
+        margin-top: 8px;
+        display: grid;
+        gap: 4px;
       }
       .meeting-shell {
         display: grid;
@@ -866,6 +927,13 @@ function meetingUiHtml(): string {
               </div>
             </div>
           </div>
+          <section class="history-section" aria-label="Meeting history">
+            <div class="history-heading">
+              <div class="kicker" style="margin:0;">Recent Meetings</div>
+              <span id="historyStatus" class="history-status" aria-live="polite">Loading</span>
+            </div>
+            <ol id="meetingHistoryList" class="history-list"></ol>
+          </section>
         </div>
       </section>
 
@@ -1125,11 +1193,74 @@ function meetingUiHtml(): string {
       let recordingRefreshMeetingId = '';
       let recordingsMeetingId = '';
       let recordingActionPending = false;
+      let historyRefreshPending = false;
 
       function escapeHtml(value) {
         const span = document.createElement('span');
         span.textContent = String(value || '');
         return span.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      }
+
+      function renderMeetingHistory(entries) {
+        const list = document.getElementById('meetingHistoryList');
+        const status = document.getElementById('historyStatus');
+        if (!list || !status) return;
+
+        list.replaceChildren();
+        const history = Array.isArray(entries) ? entries : [];
+        status.textContent = history.length ? history.length + (history.length === 1 ? ' meeting' : ' meetings') : 'No meetings yet';
+        if (!history.length) {
+          const empty = document.createElement('li');
+          empty.className = 'history-status';
+          empty.textContent = 'Your previous meetings will appear here.';
+          list.appendChild(empty);
+          return;
+        }
+
+        history.forEach((entry) => {
+          const item = document.createElement('li');
+          item.className = 'history-entry';
+          const disclosure = document.createElement('details');
+          const summary = document.createElement('summary');
+          const title = document.createElement('strong');
+          title.textContent = entry.title || entry.meetingId;
+          const meta = document.createElement('span');
+          meta.className = 'history-entry-meta';
+          meta.textContent = entry.status + ' · ' + entry.participantRole;
+          summary.append(title, meta);
+
+          const details = document.createElement('div');
+          details.className = 'history-details';
+          const addDetail = (label, value) => {
+            const row = document.createElement('div');
+            row.textContent = label + ': ' + value;
+            details.appendChild(row);
+          };
+          addDetail('Meeting ID', entry.meetingId);
+          addDetail('Created', new Date(entry.createdAt).toLocaleString());
+          if (entry.endedAt) addDetail('Ended', new Date(entry.endedAt).toLocaleString());
+          if (entry.latestRecordingStatus) addDetail('Recording', entry.latestRecordingStatus);
+          disclosure.append(summary, details);
+          item.appendChild(disclosure);
+          list.appendChild(item);
+        });
+      }
+
+      async function refreshMeetingHistory() {
+        if (historyRefreshPending) return;
+        historyRefreshPending = true;
+        const status = document.getElementById('historyStatus');
+        if (status) status.textContent = 'Loading';
+        try {
+          const response = await fetch('/api/meetings/history');
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to load meeting history.');
+          renderMeetingHistory(payload.data);
+        } catch (error) {
+          if (status) status.textContent = 'History unavailable';
+        } finally {
+          historyRefreshPending = false;
+        }
       }
 
       function syncHostActionButtons() {
@@ -1401,6 +1532,7 @@ function meetingUiHtml(): string {
 
       function showScreen(name) {
         state.route = name;
+        if (name === 'home') void refreshMeetingHistory();
         if (name === 'meeting') {
           void refreshMeetingChat();
           void refreshRecordingStatus();
@@ -2764,6 +2896,20 @@ export default {
             },
             403,
           ),
+          request,
+          session,
+        );
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/meetings/history") {
+      const { session } = await getOrCreateSession(request, env);
+      try {
+        const history = await getMeetingService(env).listMeetingHistory(session.userId);
+        return withSessionCookie(jsonResponse({ ok: true, data: history }), request, session);
+      } catch (error) {
+        return withSessionCookie(
+          jsonResponse({ ok: false, error: error instanceof Error ? error.message : "Unable to load meeting history." }, 500),
           request,
           session,
         );

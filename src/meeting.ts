@@ -50,6 +50,15 @@ export type MeetingParticipant = {
   leftAt?: string;
 };
 
+function hasJoinedMeetingHistory(participant: MeetingParticipant): boolean {
+  return Boolean(
+    participant.joinedAt &&
+    (participant.state === ParticipantState.JOINED ||
+      participant.state === ParticipantState.LEFT ||
+      participant.state === ParticipantState.REMOVED),
+  );
+}
+
 export type MeetingAdmissionRequest = {
   id: string;
   meetingId: string;
@@ -67,6 +76,7 @@ export type Meeting = {
   title: string;
   status: MeetingStatus;
   createdAt: string;
+  endedAt?: string;
   hostId: string;
   accessMode: MeetingAccessMode;
   participants: MeetingParticipant[];
@@ -84,6 +94,16 @@ export type MeetingRecordingMetadata = {
     provider: "r2";
     objectKey: string;
   };
+};
+
+export type MeetingHistoryEntry = {
+  meetingId: string;
+  title: string;
+  status: MeetingStatus;
+  createdAt: string;
+  endedAt?: string;
+  participantRole: ParticipantRole;
+  latestRecordingStatus?: MeetingRecordingStatus;
 };
 
 export type MeetingChatMessage = {
@@ -275,6 +295,7 @@ function normalizeMeetingAccessMode(value: string | undefined, label: string): M
 export interface MeetingRepository {
   saveMeeting(meeting: Meeting): Promise<void> | void;
   getMeeting(meetingId: string): Promise<Meeting | undefined> | Meeting | undefined;
+  listMeetingHistoryReferences(userId: string): Promise<string[]>;
   getRecordingMetadata(meetingId: string): Promise<MeetingRecordingMetadata[]>;
   startRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
   stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
@@ -296,6 +317,8 @@ type DurableObjectStorageLike = {
 type DurableObjectStubLike = {
   saveMeeting: (meeting: Meeting) => Promise<number | void>;
   getMeeting: () => Promise<Meeting | undefined>;
+  addMeetingHistoryReference: (userId: string, meetingId: string) => Promise<void>;
+  listMeetingHistoryReferences: (userId: string) => Promise<string[]>;
   getRecordingMetadata: () => Promise<MeetingRecordingMetadata[]>;
   startRecording: (actorUserId: string) => Promise<MeetingRecordingMetadata>;
   stopRecording: (actorUserId: string) => Promise<MeetingRecordingMetadata>;
@@ -310,12 +333,14 @@ type DurableObjectNamespaceLike = {
 
 export class InMemoryMeetingRepository implements MeetingRepository {
   private readonly meetings = new Map<string, Meeting>();
+  private readonly meetingHistoryReferences = new Map<string, Set<string>>();
   private readonly recordingMetadata = new Map<string, MeetingRecordingMetadata[]>();
   private readonly chatMessages = new Map<string, MeetingChatMessage[]>();
   private readonly participantMediaConnections = new Map<string, MeetingMediaConnection>();
 
   async saveMeeting(meeting: Meeting): Promise<void> {
     this.meetings.set(meeting.id, meeting);
+    this.indexMeetingParticipants(meeting);
     if (!this.recordingMetadata.has(meeting.id)) {
       this.recordingMetadata.set(meeting.id, [createInitialRecordingMetadata(meeting.id)]);
     }
@@ -323,6 +348,19 @@ export class InMemoryMeetingRepository implements MeetingRepository {
 
   async getMeeting(meetingId: string): Promise<Meeting | undefined> {
     return this.meetings.get(meetingId);
+  }
+
+  async listMeetingHistoryReferences(userId: string): Promise<string[]> {
+    return [...(this.meetingHistoryReferences.get(userId) ?? [])];
+  }
+
+  private indexMeetingParticipants(meeting: Meeting): void {
+    for (const participant of meeting.participants) {
+      if (!hasJoinedMeetingHistory(participant)) continue;
+      const references = this.meetingHistoryReferences.get(participant.userId) ?? new Set<string>();
+      references.add(meeting.id);
+      this.meetingHistoryReferences.set(participant.userId, references);
+    }
   }
 
   async getRecordingMetadata(meetingId: string): Promise<MeetingRecordingMetadata[]> {
@@ -384,6 +422,7 @@ export class InMemoryMeetingRepository implements MeetingRepository {
 
 export class DurableMeetingRepository implements MeetingRepository {
   private readonly meetings = new Map<string, Meeting>();
+  private readonly meetingHistoryReferences = new Map<string, Set<string>>();
   private readonly recordingMetadata = new Map<string, MeetingRecordingMetadata[]>();
   private readonly participantMediaConnections = new Map<string, MeetingMediaConnection>();
   private readonly storage?: DurableObjectStorageLike;
@@ -405,6 +444,10 @@ export class DurableMeetingRepository implements MeetingRepository {
       const stub = this.namespace.get(this.namespace.idFromName(meeting.id));
       const revision = await stub.saveMeeting(meeting);
       if (typeof revision === "number") meeting.revision = revision;
+      const historyIndex = this.namespace.get(this.namespace.idFromName("billiontalks-meeting-history"));
+      await Promise.all(meeting.participants.filter(hasJoinedMeetingHistory).map((participant) =>
+        historyIndex.addMeetingHistoryReference(participant.userId, meeting.id),
+      ));
       return;
     }
 
@@ -413,10 +456,21 @@ export class DurableMeetingRepository implements MeetingRepository {
       if (!(await this.storage.get(`recordings:${meeting.id}`))) {
         await this.storage.put(`recordings:${meeting.id}`, [createInitialRecordingMetadata(meeting.id)]);
       }
+      await Promise.all(meeting.participants.filter(hasJoinedMeetingHistory).map(async (participant) => {
+        const key = `meeting-history:${participant.userId}`;
+        const references = ((await this.storage!.get(key)) as string[] | undefined) ?? [];
+        if (!references.includes(meeting.id)) await this.storage!.put(key, [...references, meeting.id]);
+      }));
       return;
     }
 
     this.meetings.set(meeting.id, meeting);
+    for (const participant of meeting.participants) {
+      if (!hasJoinedMeetingHistory(participant)) continue;
+      const references = this.meetingHistoryReferences.get(participant.userId) ?? new Set<string>();
+      references.add(meeting.id);
+      this.meetingHistoryReferences.set(participant.userId, references);
+    }
     if (!this.recordingMetadata.has(meeting.id)) {
       this.recordingMetadata.set(meeting.id, [createInitialRecordingMetadata(meeting.id)]);
     }
@@ -434,6 +488,16 @@ export class DurableMeetingRepository implements MeetingRepository {
     }
 
     return this.meetings.get(meetingId);
+  }
+
+  async listMeetingHistoryReferences(userId: string): Promise<string[]> {
+    if (this.namespace) {
+      return this.namespace.get(this.namespace.idFromName("billiontalks-meeting-history")).listMeetingHistoryReferences(userId);
+    }
+    if (this.storage) {
+      return ((await this.storage.get(`meeting-history:${userId}`)) as string[] | undefined) ?? [];
+    }
+    return [...(this.meetingHistoryReferences.get(userId) ?? [])];
   }
 
   async getRecordingMetadata(meetingId: string): Promise<MeetingRecordingMetadata[]> {
@@ -1039,7 +1103,9 @@ export class MeetingService {
       throw new Error("Only the host may end the meeting.");
     }
 
+    const endedAt = new Date().toISOString();
     meeting.status = MeetingStatus.ENDED;
+    meeting.endedAt = endedAt;
     for (const request of meeting.accessRequests.filter((entry) => entry.status === MeetingAdmissionStatus.WAITING)) {
       request.status = MeetingAdmissionStatus.REJECTED;
       request.resolvedAt = new Date().toISOString();
@@ -1048,7 +1114,7 @@ export class MeetingService {
     meeting.participants.forEach((participant) => {
       if (participant.state === ParticipantState.JOINED) {
         participant.state = ParticipantState.LEFT;
-        participant.leftAt = new Date().toISOString();
+        participant.leftAt = endedAt;
       }
     });
 
@@ -1086,6 +1152,29 @@ export class MeetingService {
       throw new Error("Only meeting participants may view recording status.");
     }
     return this.repository.getRecordingMetadata(meetingId);
+  }
+
+  async listMeetingHistory(userId: string): Promise<MeetingHistoryEntry[]> {
+    const meetingIds = await this.repository.listMeetingHistoryReferences(userId);
+    const entries = await Promise.all(meetingIds.map(async (meetingId) => {
+      const meeting = await this.repository.getMeeting(meetingId);
+      const participant = meeting?.participants.find((entry) => entry.userId === userId);
+      if (!meeting || !participant || !hasJoinedMeetingHistory(participant)) return undefined;
+      const recordings = await this.repository.getRecordingMetadata(meetingId);
+      const historyEntry: MeetingHistoryEntry = {
+        meetingId: meeting.id,
+        title: meeting.title,
+        status: meeting.status,
+        createdAt: meeting.createdAt,
+        participantRole: participant.role,
+        ...(meeting.endedAt ? { endedAt: meeting.endedAt } : {}),
+        ...(recordings.length ? { latestRecordingStatus: recordings[recordings.length - 1].status } : {}),
+      };
+      return historyEntry;
+    }));
+    return entries
+      .filter((entry): entry is MeetingHistoryEntry => entry !== undefined)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   async startRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
