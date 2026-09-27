@@ -836,6 +836,16 @@ describe("MeetingService lifecycle", () => {
       });
       expect(publish.status).toBe(200);
 
+      const pendingSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", participant.cookie, { connectionId: "subscriber-connection-1" });
+      expect((await pendingSubscribe.json()).data.tracks).toEqual([]);
+      expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote")).toHaveLength(0);
+
+      const ready = await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", host.cookie, {
+        connectionId: "publisher-connection-1",
+        trackNames: ["camera", "microphone"],
+      });
+      expect(ready.status).toBe(200);
+
       const subscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", participant.cookie, { connectionId: "subscriber-connection-1" });
       const subscribePayload = await subscribe.json();
       expect(subscribe.status).toBe(200);
@@ -858,6 +868,217 @@ describe("MeetingService lifecycle", () => {
         { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "camera" },
         { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "microphone" },
       ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("recovers only the publisher transport and republishes active tracks without duplicating membership", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = async (cookie: string, connectionId: string, sdp: string, tracks: Array<{ trackName: string; mid: string }>) => {
+        const response = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", cookie, {
+          connectionId,
+          sessionDescription: { type: "offer", sdp },
+          tracks,
+        });
+        expect(response.status).toBe(200);
+      };
+      const ready = (cookie: string, connectionId: string, trackNames: string[]) => api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", cookie, { connectionId, trackNames });
+
+      await publish(participant.cookie, "participant-publisher-recovery", "participant-mic-offer", [{ trackName: "microphone", mid: "0" }]);
+      expect((await ready(participant.cookie, "participant-publisher-recovery", ["microphone"])).status).toBe(200);
+      await publish(host.cookie, "host-publisher-recovery", "host-initial-offer", [
+        { trackName: "camera", mid: "0" },
+        { trackName: "microphone", mid: "1" },
+      ]);
+      expect((await ready(host.cookie, "host-publisher-recovery", ["camera", "microphone"])).status).toBe(200);
+
+      const hostSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-publisher-recovery" });
+      const hostSubscribePayload = await hostSubscribe.json();
+      expect(hostSubscribe.status).toBe(200);
+      expect((await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", host.cookie, {
+        connectionId: "host-publisher-recovery",
+        operationId: hostSubscribePayload.data.operationId,
+        sessionDescription: { type: "answer", sdp: "host-subscriber-answer" },
+      })).status).toBe(200);
+
+      const recovered = await api.request(`/api/meetings/${meeting.id}/media/recover`, "POST", host.cookie, {
+        connectionId: "host-publisher-recovery",
+        direction: "publisher",
+      });
+      expect(recovered.status).toBe(200);
+      expect(sfu.calls.some((call) => call.url.endsWith("/sessions/sfu-session-2-secretish/tracks/close") && call.body.tracks.map((track: { mid: string }) => track.mid).sort().join(",") === "0,1")).toBe(true);
+
+      const unchangedSubscriber = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-publisher-recovery" });
+      expect((await unchangedSubscriber.json()).data.tracks).toEqual([]);
+      expect(sfu.calls.filter((call) => call.url.endsWith("/sessions/new"))).toHaveLength(3);
+
+      await publish(host.cookie, "host-publisher-recovery", "host-republished-offer", [
+        { trackName: "camera", mid: "2" },
+        { trackName: "microphone", mid: "3" },
+      ]);
+      expect((await ready(host.cookie, "host-publisher-recovery", ["camera", "microphone"])).status).toBe(200);
+      const participantSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", participant.cookie, { connectionId: "participant-new-subscriber" });
+      const participantPayload = await participantSubscribe.json();
+      expect(participantPayload.data.tracks.map((track: { trackName: string }) => track.trackName)).toEqual(["camera", "microphone"]);
+      const republishedRemoteCreate = sfu.calls.find((call) => call.url.endsWith("/sessions/sfu-session-5-secretish/tracks/new"));
+      expect(republishedRemoteCreate?.body.tracks).toEqual([
+        { location: "remote", sessionId: "sfu-session-4-secretish", trackName: "camera" },
+        { location: "remote", sessionId: "sfu-session-4-secretish", trackName: "microphone" },
+      ]);
+
+      const meetingResponse = await api.request(`/api/meetings/${meeting.id}`);
+      const meetingPayload = await meetingResponse.json();
+      expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === host.userId)).toHaveLength(1);
+      expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === participant.userId)).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("recovers only the subscriber transport while preserving the publisher session and membership", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "host-subscriber-recovery",
+        sessionDescription: { type: "offer", sdp: "host-publisher-offer" },
+        tracks: [{ trackName: "microphone", mid: "0" }],
+      });
+      expect(publish.status).toBe(200);
+      expect((await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", host.cookie, {
+        connectionId: "host-subscriber-recovery",
+        trackNames: ["microphone"],
+      })).status).toBe(200);
+
+      const subscribe = async () => api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", participant.cookie, { connectionId: "participant-subscriber-recovery" });
+      const firstSubscribe = await subscribe();
+      const firstPayload = await firstSubscribe.json();
+      expect(firstPayload.data.tracks).toEqual([
+        expect.objectContaining({ publisherUserId: host.userId, trackName: "microphone", mid: "remote-0" }),
+      ]);
+      expect((await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", participant.cookie, {
+        connectionId: "participant-subscriber-recovery",
+        operationId: firstPayload.data.operationId,
+        sessionDescription: { type: "answer", sdp: "participant-first-answer" },
+      })).status).toBe(200);
+
+      const recovered = await api.request(`/api/meetings/${meeting.id}/media/recover`, "POST", participant.cookie, {
+        connectionId: "participant-subscriber-recovery",
+        direction: "subscriber",
+      });
+      expect(recovered.status).toBe(200);
+      expect(sfu.calls.some((call) => call.url.endsWith("/sessions/sfu-session-2-secretish/tracks/close") && call.body.tracks[0].mid === "remote-0")).toBe(true);
+
+      const afterRecovery = await subscribe();
+      const afterPayload = await afterRecovery.json();
+      expect(afterPayload.data.tracks).toEqual([
+        expect.objectContaining({ publisherUserId: host.userId, trackName: "microphone", mid: "remote-0" }),
+      ]);
+      const recreatedSubscriberCall = sfu.calls.find((call) => call.url.endsWith("/sessions/sfu-session-3-secretish/tracks/new"));
+      expect(recreatedSubscriberCall?.body.tracks).toEqual([
+        { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "microphone" },
+      ]);
+
+      const meetingPayload = await (await api.request(`/api/meetings/${meeting.id}`)).json();
+      expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === participant.userId)).toHaveLength(1);
+      expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === host.userId)).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("allows a participant microphone publication to be discovered and subscribed by the host", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", participant.cookie, {
+        connectionId: "participant-mic-connection",
+        sessionDescription: { type: "offer", sdp: "participant-mic-offer" },
+        tracks: [{ trackName: "microphone", mid: "0" }],
+      });
+      expect(publish.status).toBe(200);
+      const ready = await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", participant.cookie, {
+        connectionId: "participant-mic-connection",
+        trackNames: ["microphone"],
+      });
+      expect(ready.status).toBe(200);
+
+      const subscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-subscriber" });
+      const payload = await subscribe.json();
+      expect(subscribe.status).toBe(200);
+      expect(payload.data.tracks).toEqual([
+        expect.objectContaining({ publisherUserId: participant.userId, trackName: "microphone", mid: "remote-0" }),
+      ]);
+      const remoteCreate = sfu.calls.find((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote");
+      expect(remoteCreate?.body.tracks).toEqual([
+        { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "microphone" },
+      ]);
+      const answer = await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", host.cookie, {
+        connectionId: "host-mic-subscriber",
+        operationId: payload.data.operationId,
+        sessionDescription: { type: "answer", sdp: "host-mic-answer" },
+      });
+      expect(answer.status).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("removes and republishes a participant microphone across OFF/ON without duplicate subscriptions", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = (mid: string, sdp: string) => api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", participant.cookie, {
+        connectionId: "participant-mic-off-on",
+        sessionDescription: { type: "offer", sdp },
+        tracks: [{ trackName: "microphone", mid }],
+      });
+      const ready = () => api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", participant.cookie, {
+        connectionId: "participant-mic-off-on",
+        trackNames: ["microphone"],
+      });
+
+      expect((await publish("0", "mic-on-first-offer")).status).toBe(200);
+      expect((await ready()).status).toBe(200);
+      const firstSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-off-on-subscriber" });
+      const firstPayload = await firstSubscribe.json();
+      expect(firstPayload.data.tracks).toEqual([
+        expect.objectContaining({ publisherUserId: participant.userId, trackName: "microphone" }),
+      ]);
+      expect((await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", host.cookie, {
+        connectionId: "host-mic-off-on-subscriber",
+        operationId: firstPayload.data.operationId,
+        sessionDescription: { type: "answer", sdp: "host-mic-first-answer" },
+      })).status).toBe(200);
+
+      const repeatedSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-off-on-subscriber" });
+      expect((await repeatedSubscribe.json()).data.tracks).toEqual([]);
+      expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote")).toHaveLength(1);
+
+      const closed = await api.request(`/api/meetings/${meeting.id}/media/tracks/close`, "POST", participant.cookie, {
+        connectionId: "participant-mic-off-on",
+        trackNames: ["microphone"],
+      });
+      expect((await closed.json()).data.closed).toEqual(["microphone"]);
+      const offSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-off-on-subscriber" });
+      expect((await offSubscribe.json()).data.tracks).toEqual([]);
+
+      expect((await publish("1", "mic-on-fresh-offer")).status).toBe(200);
+      expect((await ready()).status).toBe(200);
+      const onSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-off-on-subscriber" });
+      const onPayload = await onSubscribe.json();
+      expect(onPayload.data.tracks).toEqual([
+        expect.objectContaining({ publisherUserId: participant.userId, trackName: "microphone" }),
+      ]);
+      expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote")).toHaveLength(2);
+      expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/close")).length).toBeGreaterThanOrEqual(2);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -924,6 +1145,11 @@ describe("MeetingService lifecycle", () => {
         sessionDescription: { type: "offer", sdp: "room-a-offer" },
         tracks: [{ trackName: "camera", mid: "0" }],
       });
+      const ready = await api.request(`/api/meetings/${roomA.id}/media/publish/ready`, "POST", host.cookie, {
+        connectionId: "room-a-publisher",
+        trackNames: ["camera"],
+      });
+      expect(ready.status).toBe(200);
       const response = await api.request(`/api/meetings/${roomB.id}/media/subscribe`, "POST", visitor.cookie, { connectionId: "room-b-subscriber" });
       const payload = await response.json();
       expect(response.status).toBe(200);

@@ -46,6 +46,7 @@ export type RealtimeParticipantMediaState = {
   publisherSessionId?: string;
   subscriberSessionId?: string;
   publishedTracks: RealtimePublishedTrack[];
+  pendingPublishedTracks?: RealtimePublishedTrack[];
   subscribedTracks: RealtimeSubscribedTrack[];
   pendingSubscriptions?: {
     operationId: string;

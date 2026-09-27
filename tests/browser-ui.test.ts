@@ -19,14 +19,20 @@ function createResponse(payload: unknown, ok = true, status = 200) {
 }
 
 class FakePeerConnection {
+  static instances: FakePeerConnection[] = [];
+  static initialRemoteTrackKind: "audio" | "video" = "video";
   public connectionState = "new";
+  public iceConnectionState = "new";
   public iceGatheringState = "complete";
   public signalingState = "stable";
   public localDescription: any = null;
   public remoteDescription: any = null;
   public onconnectionstatechange: (() => void) | null = null;
+  public oniceconnectionstatechange: (() => void) | null = null;
   public ontrack: ((event: any) => void) | null = null;
   private transceivers: any[] = [];
+
+  constructor() { FakePeerConnection.instances.push(this); }
 
   addTransceiver(track: any, init: { direction: string }) {
     const transceiver = {
@@ -42,20 +48,25 @@ class FakePeerConnection {
   getTransceivers() { return this.transceivers; }
   async createOffer() { return { type: "offer", sdp: "browser-offer-sdp" }; }
   async createAnswer() { return { type: "answer", sdp: "browser-answer-sdp" }; }
+  emitTrack(mid: string, track: any) { this.ontrack?.({ transceiver: { mid }, track }); }
+  setConnectionStates(connectionState: string, iceConnectionState: string) {
+    this.connectionState = connectionState;
+    this.iceConnectionState = iceConnectionState;
+    this.onconnectionstatechange?.();
+    this.oniceconnectionstatechange?.();
+  }
   async setLocalDescription(description: any) { this.localDescription = description; this.signalingState = description.type === "offer" ? "have-local-offer" : "stable"; }
   async setRemoteDescription(description: any) {
     this.remoteDescription = description;
     this.signalingState = "stable";
+    this.setConnectionStates("connected", "connected");
     if (description.type === "offer" && this.ontrack) {
-      this.ontrack({
-        transceiver: { mid: "remote-0" },
-        track: { id: "remote-camera-track", kind: "video", readyState: "live", addEventListener() {} },
-      });
+      this.emitTrack("remote-0", createFakeRemoteTrack("remote-initial-track", FakePeerConnection.initialRemoteTrackKind));
     }
   }
   addEventListener() {}
   removeEventListener() {}
-  close() { this.connectionState = "closed"; }
+  close() { this.setConnectionStates("closed", "closed"); }
 }
 
 class FakeMediaStream {
@@ -92,6 +103,23 @@ class FakeMediaRecorder {
 const openWindows: JSDOM["window"][] = [];
 const browserSessions = new Map<string, { sessionId: string; userId: string; displayName: string; createdAt: string; lastSeenAt: string }>();
 
+function createFakeRemoteTrack(id: string, kind: "audio" | "video") {
+  const listeners = new Map<string, Array<() => void>>();
+  const track: any = {
+    id,
+    kind,
+    readyState: "live",
+    addEventListener(type: string, listener: () => void) {
+      listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+    },
+    stop: vi.fn(() => {
+      track.readyState = "ended";
+      listeners.get("ended")?.forEach((listener) => listener());
+    }),
+  };
+  return track;
+}
+
 function createSessionNamespace() {
   const stub = {
     getSession: async (sessionId: string) => browserSessions.get(sessionId),
@@ -107,10 +135,22 @@ function createSessionNamespace() {
   };
 }
 
-async function loadRenderedPage(pageUrl = "http://localhost/") {
+async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenShare = true) {
   let nextSubscribePayload: unknown = null;
   let subscribePayloadUsed = false;
+  let nextSubscribeError: string | null = null;
   let includeRemoteParticipant = false;
+  let additionalRemoteParticipant: { id: string; userId: string; displayName: string; role: string; state: string } | null = null;
+  const remoteParticipants = () => [
+    ...(includeRemoteParticipant ? [{
+      id: "remote-participant",
+      userId: "remote-user",
+      displayName: "Remote Guest",
+      role: "PARTICIPANT",
+      state: "JOINED",
+    }] : []),
+    ...(additionalRemoteParticipant ? [additionalRemoteParticipant] : []),
+  ];
   const response = await app.fetch(new Request(pageUrl), {
     SESSION_STORE: createSessionNamespace(),
   });
@@ -153,6 +193,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/") {
 
             return stream;
           }),
+          ...(supportsScreenShare ? { getDisplayMedia: vi.fn(async () => ({ getTracks: () => [], getVideoTracks: () => [], getAudioTracks: () => [] })) } : {}),
         },
         configurable: true,
       });
@@ -204,6 +245,11 @@ async function loadRenderedPage(pageUrl = "http://localhost/") {
     }
 
     if (url.endsWith("/media/subscribe") && method === "POST") {
+      if (nextSubscribeError) {
+        const error = nextSubscribeError;
+        nextSubscribeError = null;
+        return createResponse({ ok: false, error }, false, 502);
+      }
       if (nextSubscribePayload && !subscribePayloadUsed) {
         subscribePayloadUsed = true;
         return createResponse(nextSubscribePayload);
@@ -298,13 +344,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/") {
           hostId: "host-123",
           participants: [
             { id: "host-123", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED" },
-            ...(includeRemoteParticipant ? [{
-              id: "remote-participant",
-              userId: "remote-user",
-              displayName: "Remote Guest",
-              role: "PARTICIPANT",
-              state: "JOINED",
-            }] : []),
+            ...remoteParticipants(),
           ],
         },
       });
@@ -333,7 +373,9 @@ async function loadRenderedPage(pageUrl = "http://localhost/") {
           title: "Sprint review",
           status: "active",
           hostId: "host-123",
-          participants: [],
+          participants: includeRemoteParticipant || additionalRemoteParticipant
+            ? [{ id: "host-123", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED" }, ...remoteParticipants()]
+            : [],
         },
       });
     }
@@ -359,8 +401,12 @@ async function loadRenderedPage(pageUrl = "http://localhost/") {
     getUserMediaMock,
     micStreams: createdMicStreams,
     cameraStreams: createdCameraStreams,
-    setNextSubscribePayload(payload: unknown) { nextSubscribePayload = payload; },
+    setNextSubscribePayload(payload: unknown) { nextSubscribePayload = payload; subscribePayloadUsed = false; },
+    setNextSubscribeError(message: string) { nextSubscribeError = message; },
     setIncludeRemoteParticipant() { includeRemoteParticipant = true; },
+    setAdditionalRemoteParticipant(userId: string, displayName: string) {
+      additionalRemoteParticipant = { id: "participant-" + userId, userId, displayName, role: "PARTICIPANT", state: "JOINED" };
+    },
   };
 }
 
@@ -393,8 +439,21 @@ function getParticipantNames(document: Document): string[] {
   return Array.from(document.querySelectorAll("#participantList li")).map((item) => item.textContent ?? "");
 }
 
+async function joinHostMeeting(document: Document, title: string): Promise<void> {
+  document.getElementById("startMeetingBtn")?.click();
+  (document.getElementById("meetingTitle") as HTMLInputElement).value = title;
+  (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+  document.getElementById("createMeetingButton")?.click();
+  await flush();
+  (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+  document.getElementById("joinNowButton")?.click();
+  await flush();
+}
+
 afterEach(() => {
   openWindows.splice(0).forEach((window) => window.close());
+  FakePeerConnection.instances.length = 0;
+  FakePeerConnection.initialRemoteTrackKind = "video";
   vi.restoreAllMocks();
 });
 
@@ -578,6 +637,10 @@ describe("BillionTalks browser UI regression tests", () => {
       .map(([, init]) => JSON.parse(String(init?.body)));
     expect(publishBodies.flatMap((body) => body.tracks.map((track: { trackName: string }) => track.trackName))).toEqual(expect.arrayContaining(["microphone", "camera"]));
     expect(publishBodies.every((body) => body.connectionId && body.sessionDescription && !("userId" in body))).toBe(true);
+    const readyCalls = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(readyCalls.flatMap((body) => body.trackNames)).toEqual(expect.arrayContaining(["microphone", "camera"]));
 
     micControl.click();
     await flush();
@@ -588,17 +651,24 @@ describe("BillionTalks browser UI regression tests", () => {
   });
 
   it("publishes and stops screen share using the existing share control", async () => {
-    const { window, document, fetchMock } = await loadRenderedPage();
+    const { window, document, fetchMock, getUserMediaMock, micStreams, cameraStreams } = await loadRenderedPage();
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
-    const screenTrack = {
-      id: "screen-share-track",
-      kind: "video",
-      readyState: "live",
-      stop: vi.fn(() => { screenTrack.readyState = "ended"; }),
-      addEventListener: vi.fn(),
-    };
+    const screenTracks = [0, 1].map((index) => {
+      const track: any = {
+        id: "screen-share-track-" + index,
+        kind: "video",
+        readyState: "live",
+        stop: vi.fn(() => { track.readyState = "ended"; }),
+        addEventListener: vi.fn(),
+      };
+      return track;
+    });
+    let screenCaptureIndex = 0;
     Object.defineProperty(window.navigator.mediaDevices, "getDisplayMedia", {
-      value: vi.fn(async () => ({ getTracks: () => [screenTrack], getVideoTracks: () => [screenTrack], getAudioTracks: () => [] })),
+      value: vi.fn(async () => {
+        const track = screenTracks[screenCaptureIndex++];
+        return { getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [] };
+      }),
       configurable: true,
     });
 
@@ -610,6 +680,15 @@ describe("BillionTalks browser UI regression tests", () => {
     (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
     document.getElementById("joinNowButton")?.click();
     await flush();
+    const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
+    const cameraControl = document.getElementById("cameraControlBtn") as HTMLButtonElement;
+    micControl.click();
+    micControl.click();
+    await flush();
+    cameraControl.click();
+    cameraControl.click();
+    await flush();
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
 
     document.getElementById("shareScreenBtn")?.click();
     await flush();
@@ -617,14 +696,79 @@ describe("BillionTalks browser UI regression tests", () => {
       .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
       .map(([, init]) => JSON.parse(String(init?.body))).find((body) => body.tracks.some((track: { trackName: string }) => track.trackName === "screen-video"));
     expect(publishBody).toBeTruthy();
+    const firstShareReady = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body))).find((body) => body.trackNames.includes("screen-video"));
+    expect(firstShareReady).toBeTruthy();
+
+    const initialPublisher = FakePeerConnection.instances.find((peer) => peer.getTransceivers().some((entry) => entry.sender.track === screenTracks[0]));
+    expect(initialPublisher).toBeTruthy();
+    initialPublisher!.setConnectionStates("failed", "failed");
+    initialPublisher!.onconnectionstatechange?.();
+    initialPublisher!.oniceconnectionstatechange?.();
+    await flush();
+    await flush();
+    const recoveryCalls = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(recoveryCalls).toEqual([expect.objectContaining({ direction: "publisher" })]);
+    const recoveredPublisher = FakePeerConnection.instances.filter((peer) => peer.getTransceivers().some((entry) => entry.sender.track === screenTracks[0])).at(-1);
+    expect(recoveredPublisher).not.toBe(initialPublisher);
+    const recoveryPublish = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.tracks.some((track: { trackName: string }) => track.trackName === "screen-video"))
+      .at(-1);
+    expect(recoveryPublish?.tracks.map((track: { trackName: string }) => track.trackName)).toEqual(expect.arrayContaining(["microphone", "camera", "screen-video"]));
 
     document.getElementById("shareScreenBtn")?.click();
     await flush();
     const closeBody = fetchMock.mock.calls
       .filter(([url, init]) => String(url).endsWith("/media/tracks/close") && init?.method === "POST")
       .map(([, init]) => JSON.parse(String(init?.body))).at(-1);
-    expect(closeBody.trackNames).toContain("screen-video");
-    expect(screenTrack.stop).toHaveBeenCalled();
+    expect(closeBody.trackNames).toEqual(["screen-video"]);
+    expect(screenTracks[0].stop).toHaveBeenCalled();
+    expect(micStreams[0]?.getAudioTracks()[0]?.readyState).toBe("live");
+    expect(cameraStreams[0]?.getVideoTracks()[0]?.readyState).toBe("live");
+
+    document.getElementById("shareScreenBtn")?.click();
+    await flush();
+    const sharePublishBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.tracks.some((track: { trackName: string }) => track.trackName === "screen-video"));
+    expect(screenCaptureIndex).toBe(2);
+    expect(sharePublishBodies).toHaveLength(3);
+    expect(sharePublishBodies.every((body) => body.tracks.filter((track: { trackName: string }) => track.trackName === "screen-video").length === 1)).toBe(true);
+    expect(sharePublishBodies[0].tracks.find((track: { trackName: string }) => track.trackName === "screen-video").mid)
+      .not.toBe(sharePublishBodies[2].tracks.find((track: { trackName: string }) => track.trackName === "screen-video").mid);
+
+    document.getElementById("shareScreenBtn")?.click();
+    await flush();
+    const finalCloseBody = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/tracks/close") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body))).at(-1);
+    expect(finalCloseBody.trackNames).toEqual(["screen-video"]);
+    expect(screenTracks[1].stop).toHaveBeenCalled();
+    expect(micStreams[0]?.getAudioTracks()[0]?.readyState).toBe("live");
+    expect(cameraStreams[0]?.getVideoTracks()[0]?.readyState).toBe("live");
+  });
+
+  it("disables screen share and explains capability when getDisplayMedia is unavailable", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage("http://localhost/", false);
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    expect(window.navigator.mediaDevices.getDisplayMedia).toBeUndefined();
+
+    await joinHostMeeting(document, "Unsupported screen share");
+    const shareButton = document.getElementById("shareScreenBtn") as HTMLButtonElement;
+    const unavailableMessage = document.getElementById("screenShareUnavailableMessage");
+    expect(shareButton.disabled).toBe(true);
+    expect(unavailableMessage?.textContent).toBe("Screen sharing is not supported by this browser or device.");
+    expect(unavailableMessage?.style.display).not.toBe("none");
+
+    shareButton.click();
+    await flush();
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")).toHaveLength(0);
   });
 
   it("subscribes to a remote SFU video track and renders it in the matching participant tile", async () => {
@@ -655,6 +799,280 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(remoteVideo).not.toBeNull();
     expect((remoteVideo?.srcObject as unknown as FakeMediaStream).getVideoTracks()).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/media/renegotiate", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("replaces remote camera, microphone, and screen-share tracks idempotently without affecting another participant", async () => {
+    const { window, document, setNextSubscribePayload, setIncludeRemoteParticipant, setAdditionalRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    setAdditionalRemoteParticipant("other-user", "Other Guest");
+    setNextSubscribePayload({
+      ok: true,
+      data: {
+        operationId: "remote-replacement-operation",
+        sessionDescription: { type: "offer", sdp: "sfu-remote-offer" },
+        tracks: [
+          { mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "remote-camera" },
+          { mid: "remote-1", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "microphone", publicationKey: "remote-microphone" },
+          { mid: "remote-2", publisherUserId: "other-user", publisherDisplayName: "Other Guest", trackName: "camera", publicationKey: "other-camera" },
+          { mid: "remote-3", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "screen-video", publicationKey: "remote-screen" },
+        ],
+      },
+    });
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Track replacement check";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack);
+    expect(subscriber).toBeTruthy();
+    const remoteTile = document.querySelector('#videoStage .tile[data-user-id="remote-user"]');
+    const otherTile = document.querySelector('#videoStage .tile[data-user-id="other-user"]');
+    const remoteVideo = remoteTile?.querySelector("video.remote-media") as HTMLVideoElement | null;
+    const remoteStream = remoteVideo?.srcObject as unknown as FakeMediaStream;
+    expect(remoteVideo).not.toBeNull();
+    expect(remoteStream.getVideoTracks()).toHaveLength(1);
+
+    const firstCamera = remoteStream.getVideoTracks()[0];
+    const firstMicrophone = createFakeRemoteTrack("remote-mic-first", "audio");
+    const firstScreenShare = createFakeRemoteTrack("remote-screen-first", "video");
+    const unrelatedCamera = createFakeRemoteTrack("other-camera", "video");
+    subscriber!.emitTrack("remote-1", firstMicrophone);
+    subscriber!.emitTrack("remote-2", unrelatedCamera);
+    subscriber!.emitTrack("remote-3", firstScreenShare);
+    const nextCamera = createFakeRemoteTrack("remote-camera-next", "video");
+    subscriber!.emitTrack("remote-0", nextCamera);
+    const nextMicrophone = createFakeRemoteTrack("remote-mic-next", "audio");
+    subscriber!.emitTrack("remote-1", nextMicrophone);
+    const nextScreenShare = createFakeRemoteTrack("remote-screen-next", "video");
+    subscriber!.emitTrack("remote-3", nextScreenShare);
+
+    expect(firstCamera.stop).toHaveBeenCalledTimes(1);
+    expect(firstMicrophone.stop).toHaveBeenCalledTimes(1);
+    expect(firstScreenShare.stop).toHaveBeenCalledTimes(1);
+    expect(remoteStream.getVideoTracks()).toEqual([nextCamera, nextScreenShare]);
+    expect(remoteStream.getAudioTracks()).toEqual([nextMicrophone]);
+    expect(remoteStream.getTracks()).toHaveLength(3);
+    expect(remoteTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
+    expect(remoteTile?.querySelectorAll("audio.remote-media")).toHaveLength(0);
+    expect(otherTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
+    expect(((otherTile?.querySelector("video.remote-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream).getVideoTracks()).toEqual([unrelatedCamera]);
+
+    const finalCamera = createFakeRemoteTrack("remote-camera-final", "video");
+    const finalMicrophone = createFakeRemoteTrack("remote-mic-final", "audio");
+    const finalScreenShare = createFakeRemoteTrack("remote-screen-final", "video");
+    subscriber!.emitTrack("remote-0", finalCamera);
+    subscriber!.emitTrack("remote-0", finalCamera);
+    subscriber!.emitTrack("remote-1", finalMicrophone);
+    subscriber!.emitTrack("remote-1", finalMicrophone);
+    subscriber!.emitTrack("remote-3", finalScreenShare);
+    subscriber!.emitTrack("remote-3", finalScreenShare);
+
+    expect(nextCamera.stop).toHaveBeenCalledTimes(1);
+    expect(nextMicrophone.stop).toHaveBeenCalledTimes(1);
+    expect(nextScreenShare.stop).toHaveBeenCalledTimes(1);
+    expect(remoteStream.getVideoTracks()).toEqual([finalCamera, finalScreenShare]);
+    expect(remoteStream.getAudioTracks()).toEqual([finalMicrophone]);
+    expect(remoteStream.getTracks()).toHaveLength(3);
+    expect(remoteTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
+    expect(remoteTile?.querySelectorAll("audio.remote-media")).toHaveLength(0);
+    expect((remoteTile?.querySelector("video.remote-media") as HTMLVideoElement)).toBe(remoteVideo);
+    expect(unrelatedCamera.stop).not.toHaveBeenCalled();
+    expect(((otherTile?.querySelector("video.remote-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream).getVideoTracks()).toEqual([unrelatedCamera]);
+  });
+
+  it("reports autoplay blocking separately and retries remote microphone playback after interaction", async () => {
+    const { window, document, fetchMock, setNextSubscribePayload, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    FakePeerConnection.initialRemoteTrackKind = "audio";
+    setIncludeRemoteParticipant();
+    setNextSubscribePayload({
+      ok: true,
+      data: {
+        operationId: "remote-audio-autoplay-operation",
+        sessionDescription: { type: "offer", sdp: "sfu-remote-audio-offer" },
+        tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "microphone", publicationKey: "remote-microphone" }],
+      },
+    });
+    let rejectFirstRemotePlay = true;
+    const playMock = vi.fn(function (this: HTMLMediaElement) {
+      if (this.classList.contains("remote-media") && rejectFirstRemotePlay) {
+        rejectFirstRemotePlay = false;
+        return Promise.reject(new window.DOMException("Playback requires a user gesture.", "NotAllowedError"));
+      }
+      return Promise.resolve();
+    });
+    Object.defineProperty(window.HTMLMediaElement.prototype, "play", { value: playMock, configurable: true });
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Autoplay check";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    const remoteTile = document.querySelector('#videoStage .tile[data-user-id="remote-user"]');
+    const remoteAudio = remoteTile?.querySelector("audio.remote-media") as HTMLAudioElement | null;
+    expect(remoteAudio).not.toBeNull();
+    expect((remoteAudio?.srcObject as unknown as FakeMediaStream).getAudioTracks()).toHaveLength(1);
+    expect((document.getElementById("enableRemotePlaybackBtn") as HTMLButtonElement).style.display).toBe("inline-flex");
+    expect(document.getElementById("mediaStatus")?.textContent).toContain("user interaction");
+    expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/media/renegotiate", expect.objectContaining({ method: "POST" }));
+    expect(document.getElementById("errorBanner")?.textContent).toBe("");
+
+    document.getElementById("enableRemotePlaybackBtn")?.click();
+    await flush();
+    expect(playMock).toHaveBeenCalled();
+    expect((document.getElementById("enableRemotePlaybackBtn") as HTMLButtonElement).style.display).toBe("none");
+    expect(document.getElementById("mediaStatus")?.textContent).not.toContain("user interaction");
+  });
+
+  it("rebuilds a failed publisher once and republishes active camera and microphone without rejoining", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Publisher recovery");
+
+    const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
+    const cameraControl = document.getElementById("cameraControlBtn") as HTMLButtonElement;
+    micControl.click();
+    micControl.click();
+    await flush();
+    cameraControl.click();
+    cameraControl.click();
+    await flush();
+    const publisherPeers = () => FakePeerConnection.instances.filter((peer) => peer.getTransceivers().some((transceiver) => transceiver.direction === "sendonly"));
+    const originalPublisher = publisherPeers().at(-1);
+    expect(originalPublisher?.connectionState).toBe("connected");
+    const initialPublishCount = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST").length;
+    const joinCount = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/join") && init?.method === "POST").length;
+
+    originalPublisher!.setConnectionStates("failed", "failed");
+    originalPublisher!.onconnectionstatechange?.();
+    originalPublisher!.oniceconnectionstatechange?.();
+    await flush();
+    await flush();
+
+    const recoveryCalls = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(recoveryCalls).toEqual([expect.objectContaining({ direction: "publisher" })]);
+    const publishBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(publishBodies.length).toBeGreaterThan(initialPublishCount);
+    expect(publishBodies.at(-1).tracks.map((track: { trackName: string }) => track.trackName)).toEqual(expect.arrayContaining(["microphone", "camera"]));
+    expect(publisherPeers().at(-1)).not.toBe(originalPublisher);
+    expect(publisherPeers().at(-1)?.connectionState).toBe("connected");
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST")).toHaveLength(3);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/join") && init?.method === "POST")).toHaveLength(joinCount);
+  });
+
+  it("rebuilds a failed subscriber once and re-subscribes without duplicating tracks or membership", async () => {
+    const { window, document, fetchMock, setNextSubscribePayload, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    const subscribePayload = (sdp: string) => ({
+      ok: true,
+      data: {
+        operationId: "subscriber-recovery-" + sdp,
+        sessionDescription: { type: "offer", sdp },
+        tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "remote-camera" }],
+      },
+    });
+    setNextSubscribePayload(subscribePayload("initial-offer"));
+    await joinHostMeeting(document, "Subscriber recovery");
+
+    const subscriberPeers = () => FakePeerConnection.instances.filter((peer) => Boolean(peer.ontrack));
+    const originalSubscriber = subscriberPeers().at(-1);
+    const oldVideo = document.querySelector('#videoStage .tile[data-user-id="remote-user"] video.remote-media') as HTMLVideoElement;
+    const obsoleteTrack = (oldVideo.srcObject as unknown as FakeMediaStream).getVideoTracks()[0];
+    expect(originalSubscriber?.connectionState).toBe("connected");
+    const subscriptionsBeforeRecovery = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/subscribe") && init?.method === "POST").length;
+    const renegotiationsBeforeRecovery = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/renegotiate") && init?.method === "POST").length;
+    setNextSubscribePayload(subscribePayload("recovered-offer"));
+    const joinCount = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/join") && init?.method === "POST").length;
+
+    originalSubscriber!.setConnectionStates("failed", "failed");
+    originalSubscriber!.onconnectionstatechange?.();
+    originalSubscriber!.oniceconnectionstatechange?.();
+    await flush();
+    await flush();
+
+    const recoveryCalls = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(recoveryCalls).toEqual([expect.objectContaining({ direction: "subscriber" })]);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/subscribe") && init?.method === "POST")).toHaveLength(subscriptionsBeforeRecovery + 1);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/renegotiate") && init?.method === "POST")).toHaveLength(renegotiationsBeforeRecovery + 1);
+    expect(obsoleteTrack.stop).toHaveBeenCalled();
+    expect(subscriberPeers().at(-1)).not.toBe(originalSubscriber);
+    const recoveredTile = document.querySelector('#videoStage .tile[data-user-id="remote-user"]');
+    const recoveredVideo = recoveredTile?.querySelector("video.remote-media") as HTMLVideoElement | null;
+    expect(recoveredVideo).not.toBeNull();
+    expect((recoveredVideo?.srcObject as unknown as FakeMediaStream).getVideoTracks()).toHaveLength(1);
+    expect(recoveredTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/join") && init?.method === "POST")).toHaveLength(joinCount);
+  });
+
+  it("recovers a stale subscriber session after SFU returns 410", async () => {
+    const { window, document, fetchMock, setNextSubscribePayload, setNextSubscribeError, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    setNextSubscribeError("Cloudflare Realtime request failed. HTTP status: 410.");
+    setNextSubscribePayload({
+      ok: true,
+      data: {
+        operationId: "stale-subscriber-recovered",
+        sessionDescription: { type: "offer", sdp: "fresh-sfu-offer" },
+        tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "remote-camera" }],
+      },
+    });
+
+    await joinHostMeeting(document, "Stale subscriber recovery");
+    await flush();
+    await flush();
+
+    const recoveryCalls = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(recoveryCalls).toEqual([expect.objectContaining({ direction: "subscriber" })]);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/subscribe") && init?.method === "POST")).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/renegotiate") && init?.method === "POST")).toHaveLength(1);
+    const remoteVideo = document.querySelector('#videoStage .tile[data-user-id="remote-user"] video.remote-media') as HTMLVideoElement | null;
+    expect(remoteVideo).not.toBeNull();
+    expect((remoteVideo?.srcObject as unknown as FakeMediaStream).getVideoTracks()).toHaveLength(1);
+  });
+
+  it("waits through a brief disconnected state and cancels recovery when media reconnects", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Transient disconnect");
+    const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
+    micControl.click();
+    micControl.click();
+    await flush();
+
+    const publisher = FakePeerConnection.instances.find((peer) => peer.getTransceivers().some((transceiver) => transceiver.direction === "sendonly"));
+    expect(publisher?.connectionState).toBe("connected");
+    publisher!.setConnectionStates("disconnected", "disconnected");
+    await flush();
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")).toHaveLength(0);
+
+    publisher!.setConnectionStates("connected", "connected");
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")).toHaveLength(0);
+    expect(FakePeerConnection.instances.filter((peer) => peer.getTransceivers().some((transceiver) => transceiver.direction === "sendonly"))).toEqual([publisher]);
   });
 
   it("uses the real bottom mic/camera controls without null DOM writes and reacquires fresh live tracks", async () => {
