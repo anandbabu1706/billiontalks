@@ -1,5 +1,6 @@
 declare module "cloudflare:workers" {
   export type DurableObjectStorage = {
+    transaction: <T>(callback: (storage: DurableObjectStorage) => Promise<T>) => Promise<T>;
     get: <T>(key: string) => Promise<T | undefined> | T | undefined;
     put: (key: string, value: unknown) => Promise<void> | void;
     delete: (key: string) => Promise<boolean> | boolean | Promise<void> | void;

@@ -47,6 +47,6 @@ The following stages describe the planned product direction, not currently avail
 
 ## Project Status and Contributions
 
-BillionTalks is in early development. The technology architecture is still being designed.
+BillionTalks V0 is in development. The latest implementation checkpoint is [BT-V0-009 — Meeting Controls & Host Management Hardening](docs/checkpoints/BT-V0-009.md). Cloudflare Realtime SFU integration remains parked pending support; authenticated meeting identity remains a V0 requirement.
 
 External contributions are not yet open while the project foundation is being established.

@@ -14,9 +14,11 @@ function createResponse(payload: unknown, ok = true, status = 200) {
   return {
     ok,
     status,
-    json: async () => payload,
+    json: async () => structuredClone(payload),
   };
 }
+
+const openWindows: JSDOM["window"][] = [];
 
 async function loadRenderedPage() {
   const response = await app.fetch(new Request("http://localhost/"));
@@ -71,6 +73,7 @@ async function loadRenderedPage() {
   });
 
   const { window } = dom;
+  openWindows.push(window);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
@@ -164,6 +167,7 @@ function getParticipantNames(document: Document): string[] {
 }
 
 afterEach(() => {
+  openWindows.splice(0).forEach((window) => window.close());
   vi.restoreAllMocks();
 });
 
@@ -411,6 +415,7 @@ describe("BillionTalks browser UI regression tests", () => {
     const meeting = createApprovalMeetingState();
     const hostMeetingId = "btm_dev_1234567890";
     meeting.id = hostMeetingId;
+    meeting.hostId = "host-dev";
     meeting.accessRequests = [{
       id: "req-guest-1",
       meetingId: hostMeetingId,
@@ -616,5 +621,202 @@ describe("BillionTalks browser UI regression tests", () => {
     const stageTiles = document.querySelectorAll("#videoStage .tile").length;
     expect(stageTiles).toBeGreaterThan(0);
     expect(stageTiles).toBeGreaterThanOrEqual(listCount);
+  });
+});
+
+async function enterHostRoom() {
+  const page = await loadRenderedPage();
+  page.document.getElementById("startMeetingBtn")?.click();
+  (page.document.getElementById("meetingTitle") as HTMLInputElement).value = "Controls";
+  (page.document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+  page.document.getElementById("createMeetingButton")?.click();
+  await flush();
+  (page.document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+  page.document.getElementById("joinNowButton")?.click();
+  await flush();
+  return page;
+}
+
+function installFetch(window: JSDOM["window"], fetcher: ReturnType<typeof vi.fn>) {
+  Object.defineProperty(window, "fetch", { value: fetcher, configurable: true });
+}
+
+function hostSnapshot() {
+  return {
+    ...createApprovalMeetingState(), id: "btm_test_123",
+    participants: [
+      { id: "host-1", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED" },
+      { id: "guest-1", userId: "guest-1", displayName: "Guest A", role: "PARTICIPANT", state: "JOINED" },
+      { id: "guest-2", userId: "guest-2", displayName: "Guest B", role: "PARTICIPANT", state: "JOINED" },
+    ],
+  };
+}
+
+describe("BT-V0-009 rendered host controls", () => {
+  it("confirms removal, sends only the selected user, and preserves the rest of the room", async () => {
+    const { window, document } = await enterHostRoom();
+    const meeting = hostSnapshot();
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") meeting.participants[1].state = "REMOVED";
+      return createResponse({ ok: true, data: meeting });
+    });
+    installFetch(window, fetcher);
+    document.getElementById("refreshAdmissionsBtn")?.click();
+    await flush();
+    const confirm = vi.fn().mockReturnValue(false);
+    Object.defineProperty(window, "confirm", { value: confirm });
+    (document.querySelector('[data-remove-user-id="guest-1"]') as HTMLButtonElement).click();
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    confirm.mockReturnValue(true);
+    (document.querySelector('[data-remove-user-id="guest-1"]') as HTMLButtonElement).click();
+    await flush();
+    expect(fetcher).toHaveBeenCalledWith("/api/meetings/btm_test_123/remove", expect.objectContaining({
+      body: JSON.stringify({ actorUserId: "host-123", targetUserId: "guest-1" }),
+    }));
+    expect(document.getElementById("participantList")?.textContent).not.toContain("Guest A");
+    expect(document.getElementById("participantList")?.textContent).toContain("Guest B");
+    expect(document.querySelector('[data-remove-user-id="host-123"]')).toBeNull();
+  });
+
+  it("serializes mode changes, recovers from network errors, and shows persisted mode", async () => {
+    const { window, document } = await enterHostRoom();
+    let rejectRequest!: (error: Error) => void;
+    const fetcher = vi.fn(() => new Promise((_resolve, reject) => { rejectRequest = reject; }));
+    installFetch(window, fetcher);
+    const button = document.getElementById("applyAccessModeBtn") as HTMLButtonElement;
+    (document.getElementById("meetingAccessMode") as HTMLSelectElement).value = "LOCKED";
+    button.click(); button.click();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(button.disabled).toBe(true);
+    rejectRequest(new window.Error("Offline"));
+    await flush();
+    expect(button.disabled).toBe(false);
+    expect(document.getElementById("errorBanner")?.textContent).toContain("Offline");
+    const next = { ...hostSnapshot(), accessMode: "LOCKED" };
+    const success = vi.fn(async () => createResponse({ ok: true, data: next }));
+    installFetch(window, success);
+    button.click(); await flush();
+    expect(document.getElementById("admissionModeLabel")?.textContent).toContain("locked");
+    expect(document.getElementById("errorBanner")?.textContent).toBe("");
+  });
+
+  it("requires end confirmation and retains the room when the API refuses", async () => {
+    const { window, document } = await enterHostRoom();
+    const confirm = vi.fn().mockReturnValue(false);
+    Object.defineProperty(window, "confirm", { value: confirm });
+    const fetcher = vi.fn(async () => createResponse({ ok: false, error: "Unable to save meeting." }, false, 403));
+    installFetch(window, fetcher);
+    document.getElementById("endMeetingBtn")?.click();
+    expect(fetcher).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    document.getElementById("endMeetingBtn")?.click(); await flush();
+    expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+    expect(document.getElementById("errorBanner")?.textContent).toContain("Unable to save");
+    expect((document.getElementById("endMeetingBtn") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("ends successfully and stops camera, microphone, and screen sharing", async () => {
+    const { window, document, micStreams, cameraStreams } = await enterHostRoom();
+    Object.defineProperty(window, "confirm", { value: () => true });
+    document.getElementById("toggleMicBtn")?.click(); await flush();
+    document.getElementById("toggleCameraBtn")?.click(); await flush();
+    const screenTrack = { stop: vi.fn(), addEventListener: vi.fn() };
+    Object.defineProperty(window.navigator.mediaDevices, "getDisplayMedia", {
+      value: vi.fn(async () => ({ getTracks: () => [screenTrack] })),
+    });
+    document.getElementById("shareScreenBtn")?.click(); await flush();
+    installFetch(window, vi.fn(async () => createResponse({ ok: true, data: { ...hostSnapshot(), status: "ended" } })));
+    document.getElementById("endMeetingBtn")?.click(); await flush();
+    expect(getVisibleScreen(document, "endedScreen")).toBe(true);
+    expect(micStreams[0].getTracks()[0].stop).toHaveBeenCalled();
+    expect(cameraStreams[0].getTracks()[0].stop).toHaveBeenCalled();
+    expect(screenTrack.stop).toHaveBeenCalled();
+    expect(document.getElementById("endMeetingBtn")?.style.display).toBe("none");
+  });
+
+  it("renders participant and admission names as text without creating injected elements", async () => {
+    const { window, document } = await enterHostRoom();
+    const meeting = hostSnapshot();
+    const name = '<img src=x onerror="window.injected=true">';
+    meeting.participants[1].displayName = name;
+    meeting.accessRequests.push({ id: 'req" autofocus onfocus="alert(1)', meetingId: meeting.id, userId: "waiting", displayName: name, status: "WAITING", requestedAt: new Date().toISOString() });
+    installFetch(window, vi.fn(async () => createResponse({ ok: true, data: meeting })));
+    document.getElementById("refreshAdmissionsBtn")?.click(); await flush();
+    expect(document.querySelector("#participantList img, #videoStage img, #pendingAdmissionsList img")).toBeNull();
+    expect(document.querySelector("[autofocus]")).toBeNull();
+    expect(document.getElementById("pendingAdmissionsList")?.textContent).toContain(name);
+  });
+
+  it("automatically observes host removal and stops local capture", async () => {
+    const { window, document, cameraStreams } = await enterHostRoom();
+    document.getElementById("toggleCameraBtn")?.click(); await flush();
+    const meeting = hostSnapshot();
+    meeting.hostId = "different-host";
+    meeting.participants[0].role = "PARTICIPANT";
+    meeting.participants[0].state = "REMOVED";
+    installFetch(window, vi.fn(async () => createResponse({ ok: true, data: meeting })));
+    await new Promise(resolve => setTimeout(resolve, 3150));
+    expect(getVisibleScreen(document, "endedScreen")).toBe(true);
+    expect(document.getElementById("endedMessage")?.textContent).toContain("removed by the host");
+    expect(cameraStreams[0].getTracks()[0].stop).toHaveBeenCalled();
+    expect(document.getElementById("endMeetingBtn")?.style.display).toBe("none");
+  });
+
+  it("hides all host controls from a guest snapshot", async () => {
+    const { window, document } = await enterHostRoom();
+    const meeting = hostSnapshot(); meeting.hostId = "other-host";
+    installFetch(window, vi.fn(async () => createResponse({ ok: true, data: meeting })));
+    document.getElementById("refreshAdmissionsBtn")?.click(); await flush();
+    expect(document.getElementById("admissionPanel")?.style.display).toBe("none");
+    expect(document.getElementById("endMeetingBtn")?.style.display).toBe("none");
+    expect(document.querySelector("[data-remove-user-id]")).toBeNull();
+  });
+});
+
+describe("BT-V0-009 leave cleanup", () => {
+  it("leaves immediately during a stalled network request and stops a late camera stream", async () => {
+    const { window, document } = await enterHostRoom();
+    let resolveCamera!: (stream: any) => void;
+    const stop = vi.fn();
+    Object.defineProperty(window.navigator.mediaDevices, "getUserMedia", {
+      value: vi.fn(() => new Promise(resolve => { resolveCamera = resolve; })),
+    });
+    document.getElementById("toggleCameraBtn")?.click();
+    installFetch(window, vi.fn(() => new Promise(() => {})));
+    document.getElementById("leaveMeetingBtn")?.click();
+    expect(getVisibleScreen(document, "homeScreen")).toBe(true);
+    resolveCamera({ getTracks: () => [{ stop }], getVideoTracks: () => [{ stop }] });
+    await flush();
+    expect(stop).toHaveBeenCalledOnce();
+    expect(document.querySelector("video.local-preview")).toBeNull();
+  });
+});
+
+describe("BT-V0-009 waiting room synchronization", () => {
+  it("automatically moves an approved guest into the room without exposing host controls", async () => {
+    const { window, document } = await loadRenderedPage();
+    const meeting = hostSnapshot();
+    let guestId = "";
+    let approved = false;
+    installFetch(window, vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body)); guestId = body.userId;
+        return createResponse({ ok: true, data: { id: "waiting", userId: guestId, status: "WAITING", displayName: "Waiting guest" } });
+      }
+      return createResponse({ ok: true, data: approved ? {
+        ...meeting,
+        participants: [...meeting.participants, { id: "approved", userId: guestId, role: "PARTICIPANT", state: "JOINED", displayName: "Waiting guest" }],
+      } : meeting });
+    }));
+    (document.getElementById("meetingIdInput") as HTMLInputElement).value = meeting.id;
+    document.getElementById("resolveMeetingButton")?.click(); await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Waiting guest";
+    document.getElementById("joinNowButton")?.click(); await flush();
+    expect(getVisibleScreen(document, "prejoinScreen")).toBe(true);
+    approved = true;
+    await new Promise(resolve => setTimeout(resolve, 3150));
+    expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+    expect(document.getElementById("admissionPanel")?.style.display).toBe("none");
+    expect(document.querySelector("[data-remove-user-id]")).toBeNull();
   });
 });

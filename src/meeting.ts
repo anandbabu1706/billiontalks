@@ -17,6 +17,7 @@ export enum ParticipantState {
   JOINED = "JOINED",
   LEFT = "LEFT",
   REJECTED = "REJECTED",
+  REMOVED = "REMOVED",
 }
 
 export enum MeetingAccessMode {
@@ -54,6 +55,7 @@ export type MeetingAdmissionRequest = {
 };
 
 export type Meeting = {
+  revision?: number;
   id: string;
   title: string;
   status: MeetingStatus;
@@ -186,7 +188,7 @@ type DurableObjectStorageLike = {
 };
 
 type DurableObjectStubLike = {
-  saveMeeting: (meeting: Meeting) => Promise<void>;
+  saveMeeting: (meeting: Meeting) => Promise<number | void>;
   getMeeting: () => Promise<Meeting | undefined>;
 };
 
@@ -243,7 +245,8 @@ export class DurableMeetingRepository implements MeetingRepository {
   async saveMeeting(meeting: Meeting): Promise<void> {
     if (this.namespace) {
       const stub = this.namespace.get(this.namespace.idFromName(meeting.id));
-      await stub.saveMeeting(meeting);
+      const revision = await stub.saveMeeting(meeting);
+      if (typeof revision === "number") meeting.revision = revision;
       return;
     }
 
@@ -307,8 +310,8 @@ export class MeetingPermissions {
       return false;
     }
 
-    return meeting.hostId === actorUserId &&
-      meeting.participants.some((participant) => participant.userId === targetUserId);
+    return this.isHost(meeting, actorUserId) &&
+      meeting.participants.some((participant) => participant.userId === targetUserId && participant.role !== ParticipantRole.HOST && participant.state === ParticipantState.JOINED);
   }
 }
 
@@ -385,7 +388,6 @@ export class MeetingService {
     }
 
     meeting.participants = this.deduplicateParticipants(meeting.participants);
-    await this.repository.saveMeeting(meeting);
     return meeting;
   }
 
@@ -414,6 +416,10 @@ export class MeetingService {
         resolvedAt: new Date().toISOString(),
         reviewedByUserId: meeting.hostId,
       };
+    }
+
+    if (meeting.participants.some((participant) => participant.userId === userId && participant.state === ParticipantState.REMOVED)) {
+      throw new Error("You were removed from this meeting.");
     }
 
     if (meeting.accessMode === MeetingAccessMode.LOCKED) {
@@ -445,6 +451,7 @@ export class MeetingService {
       }
 
       if (existingRequest.status === MeetingAdmissionStatus.APPROVED) {
+        await this.joinMeeting(meetingId, { userId, displayName });
         return existingRequest;
       }
     }
@@ -482,6 +489,10 @@ export class MeetingService {
 
     if (!MeetingPermissions.canManageAdmission(meeting, actorUserId)) {
       throw new Error("Only the host may approve an admission request.");
+    }
+
+    if (meeting.accessMode === MeetingAccessMode.LOCKED) {
+      throw new Error("Meeting admission is locked.");
     }
 
     const request = meeting.accessRequests.find((entry) => entry.id === requestId);
@@ -637,6 +648,10 @@ export class MeetingService {
       return participant;
     }
 
+    if (meeting.participants.some((participant) => participant.userId === userId && participant.state === ParticipantState.REMOVED)) {
+      throw new Error("You were removed from this meeting.");
+    }
+
     if (meeting.accessMode === MeetingAccessMode.LOCKED) {
       throw new Error("Meeting admission is locked.");
     }
@@ -748,7 +763,7 @@ export class MeetingService {
       return undefined;
     }
 
-    if (participant.state === ParticipantState.LEFT) {
+    if (participant.state === ParticipantState.LEFT || participant.state === ParticipantState.REMOVED) {
       return participant;
     }
 
@@ -760,6 +775,25 @@ export class MeetingService {
     await this.repository.deleteMediaConnection(meeting.id, participant.id);
 
     return participant;
+  }
+
+  async removeParticipant(meetingId: string, actorUserId: string, targetUserId: string): Promise<Meeting> {
+    const meeting = await this.getRequiredMeeting(meetingId);
+    if (!MeetingPermissions.canKickParticipant(meeting, actorUserId, targetUserId)) {
+      throw new Error("Only the host may remove a joined guest from an active meeting.");
+    }
+    const participant = meeting.participants.find((entry) => entry.userId === targetUserId)!;
+    participant.state = ParticipantState.REMOVED;
+    participant.leftAt = new Date().toISOString();
+    for (const request of meeting.accessRequests.filter((entry) => entry.userId === targetUserId)) {
+      request.status = MeetingAdmissionStatus.REJECTED;
+      request.resolvedAt = participant.leftAt;
+      request.reviewedByUserId = actorUserId;
+    }
+    await this.repository.saveMeeting(meeting);
+    await this.mediaProvider.deleteParticipantMediaConnection(meeting.id, participant.id);
+    await this.repository.deleteMediaConnection(meeting.id, participant.id);
+    return meeting;
   }
 
   async endMeeting(meetingId: string, actorUserId: string): Promise<Meeting> {
@@ -774,6 +808,11 @@ export class MeetingService {
     }
 
     meeting.status = MeetingStatus.ENDED;
+    for (const request of meeting.accessRequests.filter((entry) => entry.status === MeetingAdmissionStatus.WAITING)) {
+      request.status = MeetingAdmissionStatus.REJECTED;
+      request.resolvedAt = new Date().toISOString();
+      request.reviewedByUserId = actorUserId;
+    }
     meeting.participants.forEach((participant) => {
       if (participant.state === ParticipantState.JOINED) {
         participant.state = ParticipantState.LEFT;
@@ -791,9 +830,7 @@ export class MeetingService {
 
   async listParticipants(meetingId: string): Promise<MeetingParticipant[]> {
     const meeting = await this.getRequiredMeeting(meetingId);
-    meeting.participants = this.deduplicateParticipants(meeting.participants);
-    await this.repository.saveMeeting(meeting);
-    return [...meeting.participants];
+    return this.deduplicateParticipants(meeting.participants);
   }
 
   private deduplicateParticipants(participants: MeetingParticipant[]): MeetingParticipant[] {
@@ -817,6 +854,9 @@ export class MeetingService {
     current: MeetingParticipant,
     candidate: MeetingParticipant,
   ): MeetingParticipant {
+    if (current.state === ParticipantState.REMOVED) return current;
+    if (candidate.state === ParticipantState.REMOVED) return candidate;
+
     if (current.state === ParticipantState.JOINED && candidate.state !== ParticipantState.JOINED) {
       return current;
     }
@@ -846,9 +886,6 @@ export class MeetingService {
     }
 
     meeting.participants = this.deduplicateParticipants(meeting.participants);
-    if (meeting.participants.length !== 0) {
-      await this.repository.saveMeeting(meeting);
-    }
 
     return meeting;
   }

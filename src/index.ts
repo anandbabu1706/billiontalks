@@ -17,8 +17,16 @@ export class MeetingStateDurableObject extends DurableObject<unknown> {
     super(ctx, env);
   }
 
-  async saveMeeting(meeting: Meeting): Promise<void> {
-    await this.ctx.storage.put("meeting", meeting);
+  async saveMeeting(meeting: Meeting): Promise<number> {
+    return this.ctx.storage.transaction(async (storage: { get: <T>(key: string) => Promise<T | undefined> | T | undefined; put: (key: string, value: unknown) => Promise<void> | void }) => {
+      const current = await storage.get<Meeting>("meeting");
+      if ((current?.revision ?? 0) !== (meeting.revision ?? 0)) {
+        throw new Error("Meeting changed. Refresh and try again.");
+      }
+      const revision = (current?.revision ?? 0) + 1;
+      await storage.put("meeting", { ...meeting, revision });
+      return revision;
+    });
   }
 
   async getMeeting(): Promise<Meeting | undefined> {
@@ -626,6 +634,13 @@ function meetingUiHtml(): string {
             <ul class="participant-list" id="participantList"></ul>
             <div id="admissionPanel" style="margin-top: 18px; display:none;">
               <div class="kicker">Admission</div>
+              <label for="meetingAccessMode">Who can join?</label>
+              <select id="meetingAccessMode">
+                <option value="HOST_APPROVAL">Host approval</option>
+                <option value="OPEN">Open meeting</option>
+                <option value="LOCKED">Locked</option>
+              </select>
+              <button type="button" id="applyAccessModeBtn" class="secondary">Apply</button>
               <div id="admissionModeLabel" class="muted" style="margin-bottom: 10px;">Host approval</div>
               <div id="pendingAdmissionsList" class="participant-list" style="margin-top: 8px;"></div>
               <div class="actions" style="margin-top: 12px;">
@@ -736,8 +751,125 @@ function meetingUiHtml(): string {
         }
       }
 
+      let hostActionPending = false;
+      let hostActionVersion = 0;
+      let meetingRefreshTimer = null;
+      let meetingRefreshPending = false;
+
+      function escapeHtml(value) {
+        const span = document.createElement('span');
+        span.textContent = String(value || '');
+        return span.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      }
+
+      function syncHostActionButtons() {
+        document.querySelectorAll('#applyAccessModeBtn, #meetingAccessMode, #endMeetingBtn, [data-admission-action], [data-remove-user-id]').forEach((button) => {
+          button.disabled = hostActionPending || button.dataset.admissionAction === 'approve' && state.meeting && state.meeting.accessMode === 'LOCKED';
+        });
+      }
+
+      function finishLocalSession(message) {
+        stopScreenShareCapture();
+        stopAllLocalMedia();
+        state.isHost = false;
+        state.admissionStatus = '';
+        document.getElementById('endedMessage').textContent = message;
+        document.getElementById('endedTitle').textContent = state.meeting && state.meeting.status === 'ended' ? 'The meeting has ended.' : 'You have left the meeting.';
+        syncMeetingRoleUi();
+        showScreen('ended');
+      }
+
+      function applyMeetingSnapshot(meeting) {
+        const changed = JSON.stringify(state.meeting) !== JSON.stringify(meeting);
+        state.meeting = meeting;
+        if (meeting.status !== 'active') {
+          finishLocalSession('The host ended this meeting.');
+          return;
+        }
+        const participant = meeting.participants.find((entry) => entry.userId === state.currentUserId);
+        if (participant && participant.state === 'REMOVED') {
+          finishLocalSession('You were removed by the host.');
+          return;
+        }
+        if (state.admissionStatus === 'WAITING') {
+          const admission = (meeting.accessRequests || []).find((entry) => entry.userId === state.currentUserId);
+          if (admission && admission.status === 'REJECTED') {
+            finishLocalSession('Your request was not approved for this meeting.');
+            return;
+          }
+          if (participant && participant.state === 'JOINED') {
+            state.admissionStatus = 'APPROVED';
+            showScreen('meeting');
+          }
+        }
+        if (changed) renderMeetingRoom();
+      }
+
+      async function refreshMeetingState() {
+        if (meetingRefreshPending || hostActionPending || !state.meetingId || !state.currentUserId) return;
+        const meetingId = state.meetingId;
+        const userId = state.currentUserId;
+        const actionVersion = hostActionVersion;
+        meetingRefreshPending = true;
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId));
+          const payload = await response.json();
+          if (!response.ok || !payload.ok || !payload.data) throw new Error(payload.error || 'Unable to refresh meeting.');
+          if (meetingId === state.meetingId && userId === state.currentUserId && actionVersion === hostActionVersion && !hostActionPending && ['meeting', 'prejoin'].includes(state.route)) applyMeetingSnapshot(payload.data);
+        } catch (error) {
+          if (meetingId === state.meetingId && ['meeting', 'prejoin'].includes(state.route)) setError('Unable to refresh meeting. Retrying automatically.');
+        } finally {
+          meetingRefreshPending = false;
+        }
+      }
+
+      function scheduleMeetingRefresh() {
+        clearTimeout(meetingRefreshTimer);
+        if (!state.currentUserId || !state.meetingId || state.meetingId === 'btm_dev_1234567890' || !(state.route === 'meeting' || state.admissionStatus === 'WAITING' && state.route === 'prejoin')) return;
+        meetingRefreshTimer = setTimeout(async () => {
+          await refreshMeetingState();
+          scheduleMeetingRefresh();
+        }, 3000);
+      }
+
+      async function runHostAction(path, body) {
+        if (hostActionPending || !state.isHost || !state.meeting || state.meeting.status !== 'active') return;
+        const meetingId = state.meetingId;
+        const userId = state.currentUserId;
+        hostActionPending = true;
+        hostActionVersion += 1;
+        syncHostActionButtons();
+        setError(null);
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + path, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to update meeting.');
+          if (meetingId !== state.meetingId || userId !== state.currentUserId || state.route !== 'meeting') return;
+          if (path === '/end' || path === '/remove') {
+            applyMeetingSnapshot(payload.data);
+          } else {
+            const refreshed = await fetch('/api/meetings/' + encodeURIComponent(meetingId));
+            const latest = await refreshed.json();
+            if (!refreshed.ok || !latest.ok || !latest.data) throw new Error('Action saved. Refresh the meeting to see the latest state.');
+            if (meetingId === state.meetingId && userId === state.currentUserId && state.route === 'meeting') applyMeetingSnapshot(latest.data);
+          }
+        } catch (error) {
+          if (meetingId === state.meetingId && userId === state.currentUserId) setError(error instanceof Error ? error.message : 'Unable to update meeting.');
+        } finally {
+          hostActionPending = false;
+          syncHostActionButtons();
+        }
+      }
+
       function showScreen(name) {
         state.route = name;
+        if (name === 'prejoin' && state.admissionStatus !== 'WAITING') {
+          document.getElementById('joinNowButton').disabled = false;
+          document.getElementById('joinNowButton').textContent = 'Join now';
+        }
+        scheduleMeetingRefresh();
         Object.entries(screens).forEach(([key, node]) => {
           if (node) {
             node.classList.toggle('visible', key === name);
@@ -933,7 +1065,10 @@ function meetingUiHtml(): string {
         renderLocalState();
       }
 
+      let localCaptureGeneration = 0;
+
       function stopAllLocalMedia() {
+        localCaptureGeneration += 1;
         stopLocalMicrophone();
         stopLocalCamera();
       }
@@ -956,9 +1091,14 @@ function meetingUiHtml(): string {
           return;
         }
 
+        const captureGeneration = localCaptureGeneration;
         try {
           localMediaState.micRequestInFlight = true;
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          if (captureGeneration !== localCaptureGeneration) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
 
           if (!stream.getAudioTracks().length) {
             throw new DOMException('No microphone device is available.', 'NotFoundError');
@@ -970,6 +1110,7 @@ function meetingUiHtml(): string {
           renderLocalState();
           setError(null);
         } catch (error) {
+          if (captureGeneration !== localCaptureGeneration) return;
           state.localDevice.micEnabled = false;
           const name = error instanceof DOMException ? error.name : '';
           if (name === 'NotAllowedError' || name === 'AbortError' || name === 'NotFoundError') {
@@ -982,7 +1123,7 @@ function meetingUiHtml(): string {
           }
           renderLocalState();
         } finally {
-          localMediaState.micRequestInFlight = false;
+          if (captureGeneration === localCaptureGeneration) localMediaState.micRequestInFlight = false;
         }
       }
 
@@ -1004,9 +1145,14 @@ function meetingUiHtml(): string {
           return;
         }
 
+        const captureGeneration = localCaptureGeneration;
         try {
           localMediaState.cameraRequestInFlight = true;
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          if (captureGeneration !== localCaptureGeneration) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
 
           if (!stream.getVideoTracks().length) {
             throw new DOMException('No camera device is available.', 'NotFoundError');
@@ -1018,6 +1164,7 @@ function meetingUiHtml(): string {
           renderLocalState();
           setError(null);
         } catch (error) {
+          if (captureGeneration !== localCaptureGeneration) return;
           state.localDevice.cameraEnabled = false;
           const name = error instanceof DOMException ? error.name : '';
           if (name === 'NotAllowedError' || name === 'AbortError' || name === 'NotFoundError') {
@@ -1030,13 +1177,13 @@ function meetingUiHtml(): string {
           }
           renderLocalState();
         } finally {
-          localMediaState.cameraRequestInFlight = false;
+          if (captureGeneration === localCaptureGeneration) localMediaState.cameraRequestInFlight = false;
         }
       }
 
       function syncMeetingRoleUi() {
         const endMeetingBtn = document.getElementById('endMeetingBtn');
-        const meetingIsHost = Boolean(state.meeting && state.currentUserId && state.meeting.hostId === state.currentUserId);
+        const meetingIsHost = Boolean(state.meeting && state.meeting.status === 'active' && state.currentUserId && state.meeting.hostId === state.currentUserId);
 
         state.isHost = meetingIsHost;
 
@@ -1118,6 +1265,7 @@ function meetingUiHtml(): string {
           return;
         }
 
+        const captureGeneration = localCaptureGeneration;
         try {
           const stream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
@@ -1128,6 +1276,10 @@ function meetingUiHtml(): string {
             throw new DOMException('No display stream was returned.', 'NotFoundError');
           }
 
+          if (captureGeneration !== localCaptureGeneration) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
           activeScreenShareStream = stream;
           state.localDevice.screenShareEnabled = true;
           showScreenSharePreview(stream);
@@ -1144,6 +1296,7 @@ function meetingUiHtml(): string {
             track.addEventListener('ended', handleStreamEnded);
           });
         } catch (error) {
+          if (captureGeneration !== localCaptureGeneration) return;
           const name = error instanceof DOMException ? error.name : '';
 
           if (name === 'NotAllowedError' || name === 'AbortError' || name === 'NotFoundError') {
@@ -1194,7 +1347,7 @@ function meetingUiHtml(): string {
         }
 
         const options = state.meeting.participants
-          .filter((participant) => participant.role === 'PARTICIPANT' && participant.state !== 'LEFT')
+          .filter((participant) => participant.role === 'PARTICIPANT' && participant.state !== 'LEFT' && participant.state !== 'REMOVED')
           .map((participant) => ({
             id: participant.id,
             label: participant.displayName || participant.userId || participant.id,
@@ -1202,7 +1355,7 @@ function meetingUiHtml(): string {
 
         const currentSelection = selectedDevParticipantId;
         select.innerHTML = options.length
-          ? '<option value="">Select a participant</option>' + options.map((option) => '<option value="' + option.id + '">' + option.label + '</option>').join('')
+          ? '<option value="">Select a participant</option>' + options.map((option) => '<option value="' + escapeHtml(option.id) + '">' + escapeHtml(option.label) + '</option>').join('')
           : '<option value="">No participants</option>';
 
         if (currentSelection && options.some((option) => option.id === currentSelection)) {
@@ -1225,8 +1378,9 @@ function meetingUiHtml(): string {
         }
 
         const meetingMode = state.meeting.accessMode || 'HOST_APPROVAL';
-        const isHost = Boolean(state.currentUserId && state.meeting.hostId === state.currentUserId);
+        const isHost = Boolean(state.meeting.status === 'active' && state.currentUserId && state.meeting.hostId === state.currentUserId);
         panel.style.display = isHost ? 'block' : 'none';
+        document.getElementById('meetingAccessMode').value = meetingMode;
 
         if (requestBtn) {
           requestBtn.style.display = isHost || meetingMode !== 'HOST_APPROVAL' || state.admissionStatus === 'WAITING' ? 'none' : 'inline-flex';
@@ -1248,7 +1402,7 @@ function meetingUiHtml(): string {
         }
 
         pendingList.innerHTML = pending.map((request) => {
-          return '<li><span>' + (request.displayName || request.userId) + '</span><span style="display:flex; gap:6px;"><button type="button" data-admission-action="approve" data-request-id="' + request.id + '" style="padding:4px 8px; border-radius:8px; background:rgba(61,220,151,0.16); color:#dfffee; border:1px solid rgba(61,220,151,0.35);">Approve</button><button type="button" data-admission-action="reject" data-request-id="' + request.id + '" style="padding:4px 8px; border-radius:8px; background:rgba(248,113,113,0.12); color:#fdd2d2; border:1px solid rgba(248,113,113,0.35);">Reject</button></span></li>';
+          return '<li><span>' + escapeHtml(request.displayName || request.userId) + '</span><span style="display:flex; gap:6px;"><button type="button" data-admission-action="approve" data-request-id="' + escapeHtml(request.id) + '" style="padding:4px 8px; border-radius:8px; background:rgba(61,220,151,0.16); color:#dfffee; border:1px solid rgba(61,220,151,0.35);">Approve</button><button type="button" data-admission-action="reject" data-request-id="' + escapeHtml(request.id) + '" style="padding:4px 8px; border-radius:8px; background:rgba(248,113,113,0.12); color:#fdd2d2; border:1px solid rgba(248,113,113,0.35);">Reject</button></span></li>';
         }).join('');
 
         pendingList.querySelectorAll('[data-admission-action]').forEach((button) => {
@@ -1259,21 +1413,7 @@ function meetingUiHtml(): string {
               return;
             }
 
-            const url = '/api/meetings/' + encodeURIComponent(state.meetingId) + '/admission/' + encodeURIComponent(requestId) + '/' + action;
-            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: state.currentUserId }) });
-            const payload = await response.json();
-
-            if (!response.ok || !payload.ok) {
-              setError(payload.error || 'Unable to update a meeting admission request.');
-              return;
-            }
-
-            const meetingResponse = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId));
-            const meetingPayload = await meetingResponse.json();
-            if (meetingResponse.ok && meetingPayload.ok && meetingPayload.data) {
-              state.meeting = meetingPayload.data;
-              renderMeetingRoom();
-            }
+            await runHostAction('/admission/' + encodeURIComponent(requestId) + '/' + action, { userId: state.currentUserId });
           });
         });
       }
@@ -1296,7 +1436,7 @@ function meetingUiHtml(): string {
 
         const participantList = document.getElementById('participantList');
         const stage = document.getElementById('videoStage');
-        const visibleParticipants = state.meeting.participants.filter((participant) => participant.state !== 'LEFT');
+        const visibleParticipants = state.meeting.participants.filter((participant) => participant.state !== 'LEFT' && participant.state !== 'REMOVED');
         const allParticipants = visibleParticipants.length ? visibleParticipants : [{
           id: 'local-user',
           userId: 'local-user',
@@ -1316,11 +1456,23 @@ function meetingUiHtml(): string {
           const roleLabel = participant.role === 'HOST' ? 'Host' : 'Guest';
 
           item.innerHTML =
-            '<span>' + displayName + '</span>' +
+            '<span>' + escapeHtml(displayName) + '</span>' +
             '<span style="display:flex; align-items:center; gap:8px; color:' + participantColor + ';">' +
               '<span class="dot" style="background:' + statusColor + '"></span>' +
               roleLabel +
             '</span>';
+          if (state.meeting.status === 'active' && state.currentUserId === state.meeting.hostId && participant.role !== 'HOST' && participant.state === 'JOINED' && participant.userId) {
+            const removeButton = document.createElement('button');
+            removeButton.textContent = 'Remove';
+            removeButton.type = 'button';
+            removeButton.dataset.removeUserId = participant.userId;
+            removeButton.setAttribute('aria-label', 'Remove ' + participant.displayName);
+            removeButton.addEventListener('click', () => {
+              if (hostActionPending || !window.confirm('Remove ' + participant.displayName + ' from this meeting?')) return;
+              void runHostAction('/remove', { actorUserId: state.currentUserId, targetUserId: participant.userId });
+            });
+            item.appendChild(removeButton);
+          }
           participantList.appendChild(item);
         });
 
@@ -1359,47 +1511,19 @@ function meetingUiHtml(): string {
           const isLocalTile = participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me';
 
           tile.innerHTML =
-            '<div class="placeholder">' + tileLabel + '</div>' +
+            '<div class="placeholder">' + escapeHtml(tileLabel) + '</div>' +
             '<div class="meta"><span class="dot"></span><span' + (isLocalTile ? ' id="localStatusLabel"' : '') + '>' + tileStatus + '</span></div>';
           stage.appendChild(tile);
         });
 
         syncMeetingRoleUi();
+        renderLocalState();
+        if (activeScreenShareStream) showScreenSharePreview(activeScreenShareStream);
+        syncHostActionButtons();
       }
 
       async function requestAdmissionForMeeting() {
-        const meetingId = state.meetingId || document.getElementById('meetingIdInput').value.trim();
-        const displayName = document.getElementById('displayNameInput').value.trim();
-
-        if (!meetingId || !displayName) {
-          setError('Please enter a display name before requesting entry.');
-          return;
-        }
-
-        try {
-          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/admission/request', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: 'user-' + Date.now(), displayName: displayName }),
-          });
-
-          const payload = await response.json();
-          if (!response.ok || !payload.ok || !payload.data) {
-            throw new Error(payload.error || 'Unable to request meeting admission.');
-          }
-
-          state.currentUserId = payload.data.userId;
-          state.displayName = displayName;
-          state.meeting = {
-            ...(state.meeting || { id: meetingId, title: 'Meeting', status: 'active', hostId: '', participants: [], accessRequests: [] }),
-            accessRequests: [...((state.meeting && Array.isArray(state.meeting.accessRequests)) ? state.meeting.accessRequests : []), payload.data],
-          };
-          renderMeetingRoom();
-          setError(null);
-          showScreen('meeting');
-        } catch (error) {
-          setError(error instanceof Error ? error.message : 'Unable to request admission.');
-        }
+        await joinMeetingNow();
       }
 
       async function createMeeting() {
@@ -1456,6 +1580,7 @@ function meetingUiHtml(): string {
           state.meeting = payload.data;
           state.currentUserId = '';
           state.isHost = false;
+          state.admissionStatus = '';
           document.getElementById('displayNameInput').value = '';
           document.getElementById('prejoinTitle').textContent = payload.data.title + ' • ' + payload.data.id;
           setError(null);
@@ -1544,60 +1669,31 @@ function meetingUiHtml(): string {
 
       async function leaveMeeting() {
         const meetingId = state.meetingId;
-        if (!meetingId) return;
-
-        const userId = state.currentUserId || 'user-' + Date.now();
-
-        try {
-          await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/leave', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: userId })
-          });
-        } catch (error) {
-          console.warn('Leave request ignored in local UI demo:', error);
-        }
-
+        const userId = state.currentUserId;
+        if (!meetingId || !userId) return;
         stopScreenShareCapture();
         stopAllLocalMedia();
         state.currentUserId = '';
+        state.admissionStatus = '';
         state.isHost = false;
         state.meeting = null;
         state.meetingId = '';
         syncMeetingRoleUi();
         showScreen('home');
+        try {
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/leave', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error('Unable to save leave status.');
+        } catch (error) {
+          if (state.route === 'home' && !state.meetingId) setError('You left locally, but your leave status could not be saved.');
+        }
       }
 
       async function endMeeting() {
-        const meetingId = state.meetingId;
-        if (!meetingId) return;
-
-        if (!state.currentUserId || !state.isHost) {
-          setError('Only the host may end the meeting.');
-          return;
-        }
-
-        try {
-          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/end', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: state.currentUserId })
-          });
-
-          const payload = await response.json();
-          if (!response.ok || !payload.ok) {
-            throw new Error(payload.error || 'Unable to end the meeting.');
-          }
-
-          stopScreenShareCapture();
-          stopAllLocalMedia();
-          state.meeting = payload.data;
-          state.isHost = false;
-          syncMeetingRoleUi();
-          showScreen('ended');
-        } catch (error) {
-          setError(error instanceof Error ? error.message : 'Unable to end the meeting.');
-        }
+        if (hostActionPending || !state.isHost || !window.confirm('End this meeting for everyone?')) return;
+        await runHostAction('/end', { userId: state.currentUserId });
       }
 
       async function copyMeetingId() {
@@ -1784,22 +1880,11 @@ function meetingUiHtml(): string {
       document.getElementById('resolveMeetingButton').addEventListener('click', resolveMeeting);
       document.getElementById('joinNowButton').addEventListener('click', joinMeetingNow);
       document.getElementById('requestAdmissionBtn').addEventListener('click', requestAdmissionForMeeting);
-      document.getElementById('refreshAdmissionsBtn').addEventListener('click', async () => {
-        if (!state.meetingId || !state.currentUserId || !state.isHost) {
-          return;
-        }
-
-        const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/admission/pending', {
-          headers: { 'X-Host-User-Id': state.currentUserId },
-        });
-        const payload = await response.json();
-        if (response.ok && payload.ok && payload.data) {
-          state.meeting = {
-            ...(state.meeting || { id: state.meetingId, title: 'Meeting', status: 'active', hostId: state.currentUserId, participants: [], accessRequests: [] }),
-            accessRequests: payload.data,
-          };
-          renderMeetingRoom();
-        }
+      document.getElementById('applyAccessModeBtn').addEventListener('click', () => {
+        void runHostAction('/access-mode', { actorUserId: state.currentUserId, accessMode: document.getElementById('meetingAccessMode').value });
+      });
+      document.getElementById('refreshAdmissionsBtn').addEventListener('click', () => {
+        void refreshMeetingState();
       });
       document.getElementById('backToHomeFromPrejoin').addEventListener('click', () => showScreen('home'));
       document.getElementById('toggleMicBtn').addEventListener('click', () => {
@@ -1835,6 +1920,7 @@ function meetingUiHtml(): string {
         stopScreenShareCapture();
         stopAllLocalMedia();
         state.currentUserId = '';
+        state.admissionStatus = '';
         state.isHost = false;
         state.meetingId = '';
         state.meeting = null;
@@ -2090,6 +2176,20 @@ export default {
           },
           403,
         );
+      }
+    }
+
+    const removalMatch = /^\/api\/meetings\/([^/]+)\/remove$/.exec(url.pathname);
+    if (removalMatch && request.method === "POST") {
+      const body = await parseJsonBody<{ actorUserId?: string; targetUserId?: string }>(request);
+      if (!body || typeof body.actorUserId !== "string" || typeof body.targetUserId !== "string" || !body.actorUserId.trim() || !body.targetUserId.trim()) {
+        return jsonResponse({ ok: false, error: "actorUserId and targetUserId are required." }, 400);
+      }
+      try {
+        const meeting = await getMeetingService(env).removeParticipant(removalMatch[1], body.actorUserId, body.targetUserId);
+        return jsonResponse({ ok: true, data: meeting });
+      } catch (error) {
+        return jsonResponse({ ok: false, error: error instanceof Error ? error.message : "Unable to remove participant." }, 403);
       }
     }
 
