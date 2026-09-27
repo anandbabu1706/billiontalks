@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
+import { DurableObject } from "cloudflare:workers";
 import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import app from "../src/index";
+import app, { MeetingStateDurableObject } from "../src/index";
 
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -167,6 +168,27 @@ afterEach(() => {
 });
 
 describe("BillionTalks browser UI regression tests", () => {
+  it("uses Cloudflare's DurableObject runtime base required for RPC", () => {
+    expect(MeetingStateDurableObject.prototype instanceof DurableObject).toBe(true);
+  });
+
+  it("keeps prototype labels out of the product flow while leaving dev tools clearly local-only", async () => {
+    const { document } = await loadRenderedPage();
+
+    expect(document.body.textContent).not.toContain("V0 Meeting UI");
+    expect(document.body.textContent).not.toContain("Local UI state");
+    expect(document.body.textContent).not.toContain("Cloudflare media provider");
+    expect(document.body.textContent).not.toContain("SFU");
+
+    const toggle = document.getElementById("toggleDevPanelBtn") as HTMLButtonElement;
+    toggle.click();
+    await flush();
+
+    expect(document.getElementById("devPanel")?.classList.contains("visible")).toBe(true);
+    expect(document.getElementById("devPanel")?.textContent).toContain("Developer tools");
+    expect(document.getElementById("devPanel")?.textContent).toContain("Local-only");
+  });
+
   it("opens the create flow and joins the room from the actual rendered UI", async () => {
     const { document } = await loadRenderedPage();
 

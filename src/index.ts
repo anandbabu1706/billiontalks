@@ -1,3 +1,4 @@
+import { DurableObject, type DurableObjectState } from "cloudflare:workers";
 import { validateRealtimeEnv, type RealtimeEnv } from "./config";
 import {
   CloudflareMediaProvider,
@@ -11,42 +12,17 @@ import {
 } from "./meeting";
 import { CloudflareRealtimeConnectionClient } from "./realtime";
 
-type DurableObjectStateLike = {
-  storage: {
-    get: <T>(key: string) => Promise<T | undefined>;
-    put: (key: string, value: unknown) => Promise<void>;
-  };
-};
-
-const DurableObjectBase: new (...args: any[]) => object =
-  (globalThis as typeof globalThis & { DurableObject?: new (...args: any[]) => object }).DurableObject ??
-  class {
-    constructor() {}
-  };
-
-export class MeetingStateDurableObject extends DurableObjectBase {
-  constructor(ctx: DurableObjectStateLike, env: unknown) {
+export class MeetingStateDurableObject extends DurableObject<unknown> {
+  constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env);
   }
 
   async saveMeeting(meeting: Meeting): Promise<void> {
-    const ctx = (this as any).ctx as { storage?: { put: (key: string, value: unknown) => Promise<void> } } | undefined;
-
-    if (!ctx?.storage) {
-      return;
-    }
-
-    await ctx.storage.put("meeting", meeting);
+    await this.ctx.storage.put("meeting", meeting);
   }
 
   async getMeeting(): Promise<Meeting | undefined> {
-    const ctx = (this as any).ctx as { storage?: { get: <T>(key: string) => Promise<T | undefined> } } | undefined;
-
-    if (!ctx?.storage) {
-      return undefined;
-    }
-
-    return (await ctx.storage.get<Meeting>("meeting")) ?? undefined;
+    return (await this.ctx.storage.get<Meeting>("meeting")) ?? undefined;
   }
 }
 
@@ -83,7 +59,7 @@ function meetingUiHtml(): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BillionTalks V0</title>
+    <title>BillionTalks</title>
     <style>
       :root {
         --bg: #0b1020;
@@ -487,15 +463,15 @@ function meetingUiHtml(): string {
       <div class="topbar">
         <div class="brand">BillionTalks</div>
         <div style="display:flex; align-items:center; gap:10px;">
-          <button class="dev-toggle" id="toggleDevPanelBtn" type="button">Dev tools</button>
-          <div class="status-pill" id="statusPill">V0 Meeting UI</div>
+          <button class="dev-toggle" id="toggleDevPanelBtn" type="button">Developer tools</button>
+          <div class="status-pill" id="statusPill">Meeting</div>
         </div>
       </div>
 
-      <div class="dev-panel" id="devPanel" aria-label="Development testing panel">
+      <div class="dev-panel" id="devPanel" aria-label="Developer tools panel">
         <div class="dev-panel-header">
-          <span>Development testing</span>
-          <span class="muted" style="font-size:10px; letter-spacing:0.08em;">Local UI only</span>
+          <span>Developer tools</span>
+          <span class="muted" style="font-size:10px; letter-spacing:0.08em;">Local-only</span>
         </div>
         <div class="dev-panel-content">
           <div class="dev-grid">
@@ -521,19 +497,19 @@ function meetingUiHtml(): string {
 
       <section id="homeScreen" class="screen visible">
         <div class="home-card">
-          <div class="kicker">Meeting foundation</div>
+          <div class="kicker">Welcome</div>
           <div class="hero">
             <div>
               <h1>Start or join a meeting</h1>
-              <p class="muted">Create a new BillionTalks room or join by Meeting ID. This interface stays separate from the Cloudflare media provider and only uses the BT meeting API layer.</p>
+              <p class="muted">Create a room for your team or join with a Meeting ID to continue the conversation.</p>
               <div class="actions">
                 <button class="primary" id="startMeetingBtn">Start Meeting</button>
                 <button class="secondary" id="joinMeetingBtn">Join Meeting</button>
               </div>
             </div>
             <div class="info-box">
-              <h3>Local UI state</h3>
-              <p class="muted">Microphone and camera toggles are local device controls only until the real SFU connection is available.</p>
+              <h3>Ready to connect</h3>
+              <p class="muted">Your mic and camera are ready before you join, and your room keeps your meeting state updated as people enter or rejoin.</p>
               <div class="device-status">
                 <span class="chip ok">Mic ready</span>
                 <span class="chip ok">Camera ready</span>
@@ -708,16 +684,55 @@ function meetingUiHtml(): string {
       const statusPill = document.getElementById('statusPill');
       const errorBanner = document.getElementById('errorBanner');
 
+      function formatUiMessage(message) {
+        const value = String(message || '');
+        if (!value) {
+          return '';
+        }
+
+        const lower = value.toLowerCase();
+        if (lower.includes('waiting for host approval')) {
+          return 'Waiting for host approval.';
+        }
+        if (lower.includes('rejected')) {
+          return 'Your request was not approved for this meeting.';
+        }
+        if (lower.includes('locked')) {
+          return 'This meeting is currently locked.';
+        }
+        if (lower.includes('not active') || lower.includes('meeting has ended') || lower.includes('ended the room') || lower.includes('ended')) {
+          return 'This meeting has ended.';
+        }
+        if (lower.includes('meeting not found')) {
+          return 'This meeting could not be found.';
+        }
+
+        return value;
+      }
+
       function setError(message) {
-        state.error = message;
-        if (message) {
+        const normalizedMessage = formatUiMessage(message);
+        state.error = normalizedMessage;
+        if (normalizedMessage) {
           if (errorBanner) {
-            errorBanner.textContent = message;
+            errorBanner.textContent = normalizedMessage;
             errorBanner.className = 'error';
           }
         } else if (errorBanner) {
           errorBanner.textContent = '';
           errorBanner.className = '';
+        }
+      }
+
+      function getAccessModeLabel(mode) {
+        switch (mode) {
+          case 'OPEN':
+            return 'Open meeting';
+          case 'LOCKED':
+            return 'Meeting locked';
+          case 'HOST_APPROVAL':
+          default:
+            return 'Host approval required';
         }
       }
 
@@ -733,11 +748,11 @@ function meetingUiHtml(): string {
           if (name === 'meeting') {
             statusPill.textContent = 'In meeting';
           } else if (name === 'prejoin') {
-            statusPill.textContent = 'Pre-join';
+            statusPill.textContent = 'Ready to join';
           } else if (name === 'home' || name === 'create' || name === 'join') {
-            statusPill.textContent = 'V0 Meeting UI';
+            statusPill.textContent = 'Meeting';
           } else if (name === 'ended') {
-            statusPill.textContent = 'Ended';
+            statusPill.textContent = 'Meeting ended';
           }
         }
       }
@@ -1218,7 +1233,7 @@ function meetingUiHtml(): string {
         }
 
         if (modeLabel) {
-          modeLabel.textContent = 'Access: ' + meetingMode;
+          modeLabel.textContent = getAccessModeLabel(meetingMode);
         }
 
         if (!isHost || !pendingList) {
@@ -1298,12 +1313,13 @@ function meetingUiHtml(): string {
           const participantColor = participant.state === 'JOINED' ? '#9ae6b4' : '#d1d5db';
           const statusColor = participant.state === 'JOINED' ? '#3ddc97' : '#94a3b8';
           const displayName = participant.displayName === state.displayName ? 'You' : participant.displayName;
+          const roleLabel = participant.role === 'HOST' ? 'Host' : 'Guest';
 
           item.innerHTML =
             '<span>' + displayName + '</span>' +
             '<span style="display:flex; align-items:center; gap:8px; color:' + participantColor + ';">' +
               '<span class="dot" style="background:' + statusColor + '"></span>' +
-              participant.role +
+              roleLabel +
             '</span>';
           participantList.appendChild(item);
         });
@@ -1712,8 +1728,8 @@ function meetingUiHtml(): string {
           };
           state.meetingId = state.meeting.id;
           showScreen('ended');
-          document.getElementById('endedTitle').textContent = 'Development testing ended';
-          document.getElementById('endedMessage').textContent = 'This is a local UI simulation only — no real meeting was connected.';
+          document.getElementById('endedTitle').textContent = 'This meeting has ended.';
+          document.getElementById('endedMessage').textContent = 'The room is closed for new joins. Start a new room or ask the host to invite you again.';
           return;
         }
 
