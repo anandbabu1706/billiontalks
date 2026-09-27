@@ -315,6 +315,75 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("meetingScreen")?.classList.contains("visible")).toBe(false);
   });
 
+  it("allows the creator to join a HOST_APPROVAL room immediately as host and not as WAITING", async () => {
+    const { document } = await loadRenderedPage();
+
+    const meeting = createApprovalMeetingState();
+    const fetchWithCreatorHost = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url === "/api/meetings" && method === "POST") {
+        return createResponse({ ok: true, data: { ...meeting, id: "btm_creator_123", title: "Creator room" } });
+      }
+
+      if (url === "/api/meetings/btm_creator_123" && method === "GET") {
+        return createResponse({ ok: true, data: { ...meeting, id: "btm_creator_123", title: "Creator room" } });
+      }
+
+      if (url === "/api/meetings/btm_creator_123/join" && method === "POST") {
+        return createResponse({
+          ok: true,
+          data: {
+            id: "participant-host-creator",
+            meetingId: "btm_creator_123",
+            userId: "host-123",
+            displayName: "Alex",
+            role: "HOST",
+            state: "JOINED",
+            joinedAt: new Date().toISOString(),
+          },
+        });
+      }
+
+      if (url === "/api/meetings/btm_creator_123/admission/request" && method === "POST") {
+        return createResponse({ ok: true, data: { status: "WAITING" } });
+      }
+
+      return createResponse({ ok: true, data: null });
+    });
+
+    const browserWindow = document.defaultView as Window & typeof globalThis;
+    Object.defineProperty(browserWindow, "fetch", { value: fetchWithCreatorHost, configurable: true });
+    Object.defineProperty(globalThis, "fetch", { value: fetchWithCreatorHost, configurable: true });
+
+    document.getElementById("startMeetingBtn")?.click();
+    const meetingTitleInput = document.getElementById("meetingTitle") as HTMLInputElement;
+    const hostNameInput = document.getElementById("hostName") as HTMLInputElement;
+    meetingTitleInput.value = "Creator room";
+    hostNameInput.value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+
+    expect(getVisibleScreen(document, "prejoinScreen")).toBe(true);
+
+    const displayNameInput = document.getElementById("displayNameInput") as HTMLInputElement;
+    displayNameInput.value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    expect(fetchWithCreatorHost).toHaveBeenCalledWith(
+      "/api/meetings/btm_creator_123/join",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchWithCreatorHost).not.toHaveBeenCalledWith(
+      "/api/meetings/btm_creator_123/admission/request",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+    expect(document.getElementById("meetingTitleText")?.textContent).toContain("Creator room");
+  });
+
   it("host sees pending guests and can approve or reject them from the admission queue", async () => {
     const { document, fetchMock } = await loadRenderedPage();
     const meeting = createApprovalMeetingState();

@@ -307,6 +307,20 @@ export class MeetingService {
     const userId = normalizeRequiredString(input.userId, "Participant userId");
     const displayName = normalizeRequiredString(input.displayName, "Participant displayName");
 
+    if (meeting.hostId === userId) {
+      await this.joinMeeting(meetingId, { userId, displayName });
+      return {
+        id: `admission-${meetingId}-${userId}`,
+        meetingId,
+        userId,
+        displayName,
+        status: MeetingAdmissionStatus.APPROVED,
+        requestedAt: new Date().toISOString(),
+        resolvedAt: new Date().toISOString(),
+        reviewedByUserId: meeting.hostId,
+      };
+    }
+
     if (meeting.accessMode === MeetingAccessMode.LOCKED) {
       throw new Error("Meeting admission is locked.");
     }
@@ -481,6 +495,51 @@ export class MeetingService {
 
     const userId = normalizeRequiredString(input.userId, "Participant userId");
     const displayName = normalizeRequiredString(input.displayName, "Participant displayName");
+
+    if (meeting.hostId === userId) {
+      const existingParticipant = meeting.participants.find(
+        (participant) => participant.userId === userId,
+      );
+
+      if (existingParticipant) {
+        existingParticipant.role = ParticipantRole.HOST;
+        if (existingParticipant.state === ParticipantState.LEFT) {
+          existingParticipant.state = ParticipantState.JOINED;
+          existingParticipant.leftAt = undefined;
+        }
+        existingParticipant.displayName = displayName;
+        this.repository.saveMeeting(meeting);
+        return existingParticipant;
+      }
+
+      const participant: MeetingParticipant = {
+        id: generateParticipantId(meetingId, userId),
+        meetingId,
+        userId,
+        displayName,
+        role: ParticipantRole.HOST,
+        state: ParticipantState.JOINED,
+        joinedAt: new Date().toISOString(),
+      };
+
+      const result = await this.mediaProvider.createParticipantMediaConnection(
+        meeting.id,
+        participant.id,
+      );
+
+      meeting.participants.push(participant);
+      this.repository.saveMeeting(meeting);
+      this.repository.setMediaConnection({
+        id: `${meeting.id}:${participant.id}`,
+        meetingId: meeting.id,
+        participantId: participant.id,
+        provider: result.provider,
+        providerSessionId: result.providerSessionId,
+        createdAt: new Date().toISOString(),
+      });
+
+      return participant;
+    }
 
     if (meeting.accessMode === MeetingAccessMode.LOCKED) {
       throw new Error("Meeting admission is locked.");

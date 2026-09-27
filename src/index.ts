@@ -1360,7 +1360,6 @@ function meetingUiHtml(): string {
           state.meetingId = payload.data.id;
           state.currentUserId = payload.data.hostId;
           state.displayName = hostName;
-          state.isHost = true;
           state.meeting = payload.data;
           document.getElementById('displayNameInput').value = hostName;
           document.getElementById('prejoinTitle').textContent = payload.data.title + ' • ' + payload.data.id;
@@ -1409,12 +1408,13 @@ function meetingUiHtml(): string {
         }
 
         const meetingId = state.meetingId || document.getElementById('meetingIdInput').value.trim();
-        const userId = 'user-' + Date.now();
+        const currentUserIsHost = Boolean(state.meeting && state.currentUserId && state.meeting.hostId === state.currentUserId);
+        const userId = currentUserIsHost ? state.currentUserId : 'user-' + Date.now();
 
         try {
-          const meetingEndpoint = state.meeting && state.meeting.accessMode === 'HOST_APPROVAL'
-            ? '/api/meetings/' + encodeURIComponent(meetingId) + '/admission/request'
-            : '/api/meetings/' + encodeURIComponent(meetingId) + '/join';
+          const meetingEndpoint = currentUserIsHost || (state.meeting && state.meeting.accessMode !== 'HOST_APPROVAL')
+            ? '/api/meetings/' + encodeURIComponent(meetingId) + '/join'
+            : '/api/meetings/' + encodeURIComponent(meetingId) + '/admission/request';
 
           const response = await fetch(meetingEndpoint, {
             method: 'POST',
@@ -1466,6 +1466,7 @@ function meetingUiHtml(): string {
             ...state.meeting,
             participants: nextParticipants,
           };
+          syncMeetingRoleUi();
 
           renderMeetingRoom();
           setError(null);
@@ -2056,6 +2057,14 @@ export default {
       try {
         const service = getMeetingService(env);
         const meeting = service.getMeeting(meetingMatch[1]);
+
+        if (meeting && meeting.hostId === body.userId) {
+          const participant = await service.joinMeeting(meetingMatch[1], {
+            userId: body.userId,
+            displayName: body.displayName,
+          });
+          return jsonResponse({ ok: true, data: participant });
+        }
 
         if (meeting && meeting.accessMode === "HOST_APPROVAL") {
           const requestResult = await service.requestAdmission(meetingMatch[1], {

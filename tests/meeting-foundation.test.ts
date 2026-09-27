@@ -150,22 +150,51 @@ describe("MeetingService lifecycle", () => {
     expect(service.listPendingAdmissions(meeting.id, "host")).toHaveLength(1);
   });
 
-  it("allows the host to approve a waiting participant and makes them active", async () => {
+  it("lets the meeting creator join as host immediately and keeps guests waiting for approval", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
-    const meeting = await service.createMeeting({ title: "Approval review", hostUserId: "host" });
+    const meeting = await service.createMeeting({ title: "Approval review", hostUserId: "host-creator" });
 
-    const waiting = await service.requestAdmission(meeting.id, {
-      userId: "guest-1",
-      displayName: "Guest One",
+    expect(meeting.accessMode).toBe("HOST_APPROVAL");
+    expect(meeting.hostId).toBe("host-creator");
+    expect(meeting.participants.find((participant) => participant.userId === "host-creator")?.role).toBe(
+      ParticipantRole.HOST,
+    );
+    expect(meeting.participants.find((participant) => participant.userId === "host-creator")?.state).toBe(
+      ParticipantState.JOINED,
+    );
+
+    await expect(
+      service.joinMeeting(meeting.id, { userId: "host-creator", displayName: "Host Creator" }),
+    ).resolves.toMatchObject({
+      userId: "host-creator",
+      role: ParticipantRole.HOST,
+      state: ParticipantState.JOINED,
     });
 
-    const approved = await service.approveAdmission(meeting.id, "host", waiting.id);
+    await expect(
+      service.joinMeeting(meeting.id, { userId: "guest-1", displayName: "Guest One" }),
+    ).rejects.toThrow("Admission request submitted and waiting for host approval.");
 
+    expect(service.getMeeting(meeting.id)?.participants.some((participant) => participant.userId === "guest-1")).toBe(false);
+    expect(service.getMeeting(meeting.id)?.accessRequests.some((request) => request.userId === "guest-1")).toBe(true);
+    expect(service.getMeeting(meeting.id)?.accessRequests.find((request) => request.userId === "guest-1")?.status).toBe(
+      "WAITING",
+    );
+    expect(service.listPendingAdmissions(meeting.id, "host-creator")).toHaveLength(1);
+
+    const waiting = service.listPendingAdmissions(meeting.id, "host-creator")[0];
+    const approved = await service.approveAdmission(meeting.id, "host-creator", waiting.id);
     expect(approved.status).toBe("APPROVED");
-    expect(service.listParticipants(meeting.id).some((participant) => participant.userId === "guest-1")).toBe(true);
-    expect(
-      service.listParticipants(meeting.id).find((participant) => participant.userId === "guest-1")?.state,
-    ).toBe(ParticipantState.JOINED);
+    expect(service.listParticipants(meeting.id).find((participant) => participant.userId === "guest-1")).toMatchObject({
+      role: ParticipantRole.PARTICIPANT,
+      state: ParticipantState.JOINED,
+    });
+    expect(service.listPendingAdmissions(meeting.id, "host-creator")).toHaveLength(0);
+
+    await expect(
+      service.requestAdmission(meeting.id, { userId: "host-creator", displayName: "Host Creator" }),
+    ).resolves.toMatchObject({ status: "APPROVED", userId: "host-creator" });
+    expect(service.getMeeting(meeting.id)?.accessRequests.some((request) => request.userId === "host-creator")).toBe(false);
   });
 
   it("allows the host to reject a waiting participant and keeps them out of the active room", async () => {
