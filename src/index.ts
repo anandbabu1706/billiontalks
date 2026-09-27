@@ -12,6 +12,92 @@ import {
 } from "./meeting";
 import { CloudflareRealtimeConnectionClient } from "./realtime";
 
+const SESSION_COOKIE_NAME = "bt_session_v0";
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+type V0Session = {
+  sessionId: string;
+  userId: string;
+  displayName: string;
+  createdAt: string;
+  lastSeenAt: string;
+};
+
+const sessionStore = new Map<string, V0Session>();
+
+function generateSessionUserId(): string {
+  return `session_${crypto.randomUUID().slice(0, 12)}`;
+}
+
+function parseCookieHeader(rawCookieHeader: string | null): Map<string, string> {
+  const cookies = new Map<string, string>();
+
+  if (!rawCookieHeader) {
+    return cookies;
+  }
+
+  for (const entry of rawCookieHeader.split(";")) {
+    const [rawName, ...rawValueParts] = entry.trim().split("=");
+    if (!rawName || !rawValueParts.length) {
+      continue;
+    }
+
+    const name = rawName.trim();
+    const value = rawValueParts.join("=").trim();
+    cookies.set(name, decodeURIComponent(value));
+  }
+
+  return cookies;
+}
+
+function getSessionIdFromRequest(request: Request): string | null {
+  return parseCookieHeader(request.headers.get("Cookie") ?? request.headers.get("cookie")).get(SESSION_COOKIE_NAME) ?? null;
+}
+
+function buildSessionCookieHeader(sessionId: string, request: Request): string {
+  const url = new URL(request.url);
+  const isSecureContext = url.protocol === "https:" || url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  const secureSuffix = isSecureContext ? "; Secure" : "";
+  return `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; SameSite=Lax${secureSuffix}; Max-Age=${SESSION_TTL_SECONDS}`;
+}
+
+function withSessionCookie(response: Response, request: Request, session: V0Session): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Set-Cookie", buildSessionCookieHeader(session.sessionId, request));
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+async function getOrCreateSession(request: Request, displayName?: string): Promise<{ session: V0Session; isNew: boolean }> {
+  const sessionId = getSessionIdFromRequest(request);
+
+  if (sessionId && sessionStore.has(sessionId)) {
+    const existing = sessionStore.get(sessionId)!;
+    existing.lastSeenAt = new Date().toISOString();
+
+    if (displayName && displayName.trim()) {
+      existing.displayName = displayName.trim();
+    }
+
+    return { session: existing, isNew: false };
+  }
+
+  const createSession: V0Session = {
+    sessionId: crypto.randomUUID(),
+    userId: generateSessionUserId(),
+    displayName: displayName?.trim() || "Guest",
+    createdAt: new Date().toISOString(),
+    lastSeenAt: new Date().toISOString(),
+  };
+
+  sessionStore.set(createSession.sessionId, createSession);
+  return { session: createSession, isNew: true };
+}
+
 export class MeetingStateDurableObject extends DurableObject<unknown> {
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env);
@@ -43,6 +129,18 @@ export function resolveMeetingRepository(env: Partial<RealtimeEnv> = {}): Meetin
     throw new Error(
       "MEETING_STORE Durable Object binding is required. Configure wrangler.jsonc and deploy with the MeetingStateDurableObject binding before using persisted meetings.",
     );
+  }
+
+  if (
+    typeof env.MEETING_STORE === "object" &&
+    env.MEETING_STORE !== null &&
+    "saveMeeting" in env.MEETING_STORE &&
+    "getMeeting" in env.MEETING_STORE &&
+    "setMediaConnection" in env.MEETING_STORE &&
+    "getMediaConnection" in env.MEETING_STORE &&
+    "deleteMediaConnection" in env.MEETING_STORE
+  ) {
+    return env.MEETING_STORE as MeetingRepository;
   }
 
   return new DurableMeetingRepository(env.MEETING_STORE as any);
@@ -1941,11 +2039,32 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
-      return new Response(meetingUiHtml(), {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-        },
-      });
+      const { session } = await getOrCreateSession(request);
+      return withSessionCookie(
+        new Response(meetingUiHtml(), {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+          },
+        }),
+        request,
+        session,
+      );
+    }
+
+    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/session") {
+      const { session } = await getOrCreateSession(request);
+      return withSessionCookie(
+        jsonResponse({
+          ok: true,
+          data: {
+            sessionId: session.sessionId,
+            userId: session.userId,
+            displayName: session.displayName,
+          },
+        }),
+        request,
+        session,
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
@@ -2012,39 +2131,49 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/api/meetings") {
-      const body = await parseJsonBody<{ title?: string; hostUserId?: string; accessMode?: string }>(request);
+      const body = await parseJsonBody<{ title?: string; hostUserId?: string; hostDisplayName?: string; displayName?: string; accessMode?: string }>(request);
 
-      if (!body || !body.title || !body.hostUserId) {
+      if (!body || !body.title) {
         return jsonResponse(
           {
             ok: false,
-            error: "Meeting title and hostUserId are required.",
+            error: "Meeting title is required.",
           },
           400,
         );
       }
 
+      const { session } = await getOrCreateSession(request, body.displayName || body.hostDisplayName);
+
       try {
         const meeting = await getMeetingService(env).createMeeting({
           title: body.title,
-          hostUserId: body.hostUserId,
+          hostUserId: session.userId,
           accessMode: body.accessMode,
         });
 
-        return jsonResponse(
-          {
-            ok: true,
-            data: meeting,
-          },
-          201,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: true,
+              data: meeting,
+            },
+            201,
+          ),
+          request,
+          session,
         );
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to create meeting.",
-          },
-          500,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to create meeting.",
+            },
+            500,
+          ),
+          request,
+          session,
         );
       }
     }
@@ -2055,31 +2184,40 @@ export default {
 
     if (meetingAdmissionRequestMatch && request.method === "POST") {
       const body = await parseJsonBody<{ userId?: string; displayName?: string }>(request);
+      const { session } = await getOrCreateSession(request, body?.displayName);
 
-      if (!body || !body.userId || !body.displayName) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "userId and displayName are required to request meeting admission.",
-          },
-          400,
+      if (!body || !body.displayName) {
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: "displayName is required to request meeting admission.",
+            },
+            400,
+          ),
+          request,
+          session,
         );
       }
 
       try {
         const requestResult = await getMeetingService(env).requestAdmission(meetingAdmissionRequestMatch[1], {
-          userId: body.userId,
+          userId: session.userId,
           displayName: body.displayName,
         });
 
-        return jsonResponse({ ok: true, data: requestResult });
+        return withSessionCookie(jsonResponse({ ok: true, data: requestResult }), request, session);
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to request meeting admission.",
-          },
-          400,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to request meeting admission.",
+            },
+            400,
+          ),
+          request,
+          session,
         );
       }
     }
@@ -2089,22 +2227,23 @@ export default {
     );
 
     if (meetingPendingAdmissionsMatch && request.method === "GET") {
-      const actorUserId = request.headers.get("x-host-user-id") || request.headers.get("X-Host-User-Id");
-
-      if (!actorUserId) {
-        return jsonResponse({ ok: false, error: "Host userId is required to list pending admissions." }, 403);
-      }
+      const { session } = await getOrCreateSession(request);
+      const actorUserId = session.userId;
 
       try {
         const pending = await getMeetingService(env).listPendingAdmissions(meetingPendingAdmissionsMatch[1], actorUserId);
-        return jsonResponse({ ok: true, data: pending });
+        return withSessionCookie(jsonResponse({ ok: true, data: pending }), request, session);
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to list pending admissions.",
-          },
-          403,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to list pending admissions.",
+            },
+            403,
+          ),
+          request,
+          session,
         );
       }
     }
@@ -2115,32 +2254,28 @@ export default {
 
     if (meetingAdmissionDecisionMatch && request.method === "POST") {
       const body = await parseJsonBody<{ userId?: string }>(request);
-
-      if (!body || !body.userId) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "userId is required to decide an admission request.",
-          },
-          400,
-        );
-      }
+      const { session } = await getOrCreateSession(request);
 
       try {
         const service = getMeetingService(env);
+        const actorUserId = session.userId;
         const admission =
           meetingAdmissionDecisionMatch[3] === "approve"
-            ? await service.approveAdmission(meetingAdmissionDecisionMatch[1], body.userId, meetingAdmissionDecisionMatch[2])
-            : await service.rejectAdmission(meetingAdmissionDecisionMatch[1], body.userId, meetingAdmissionDecisionMatch[2]);
+            ? await service.approveAdmission(meetingAdmissionDecisionMatch[1], actorUserId, meetingAdmissionDecisionMatch[2])
+            : await service.rejectAdmission(meetingAdmissionDecisionMatch[1], actorUserId, meetingAdmissionDecisionMatch[2]);
 
-        return jsonResponse({ ok: true, data: admission });
+        return withSessionCookie(jsonResponse({ ok: true, data: admission }), request, session);
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to process meeting admission.",
-          },
-          403,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to process meeting admission.",
+            },
+            403,
+          ),
+          request,
+          session,
         );
       }
     }
@@ -2149,32 +2284,41 @@ export default {
 
     if (meetingAccessModeMatch && request.method === "POST") {
       const body = await parseJsonBody<{ actorUserId?: string; accessMode?: string }>(request);
+      const { session } = await getOrCreateSession(request);
 
-      if (!body || !body.actorUserId || !body.accessMode) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "actorUserId and accessMode are required to change meeting access.",
-          },
-          400,
+      if (!body || !body.accessMode) {
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: "accessMode is required to change meeting access.",
+            },
+            400,
+          ),
+          request,
+          session,
         );
       }
 
       try {
         const accessMode = await getMeetingService(env).changeAccessMode(
           meetingAccessModeMatch[1],
-          body.actorUserId,
+          session.userId,
           body.accessMode,
         );
 
-        return jsonResponse({ ok: true, data: { accessMode } });
+        return withSessionCookie(jsonResponse({ ok: true, data: { accessMode } }), request, session);
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to change meeting access mode.",
-          },
-          403,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to change meeting access mode.",
+            },
+            403,
+          ),
+          request,
+          session,
         );
       }
     }
@@ -2209,107 +2353,105 @@ export default {
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "join") {
       const body = await parseJsonBody<{ userId?: string; displayName?: string }>(request);
+      const { session } = await getOrCreateSession(request, body?.displayName);
 
-      if (!body || !body.userId || !body.displayName) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "userId and displayName are required to join a meeting.",
-          },
-          400,
+      if (!body || !body.displayName) {
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: "displayName is required to join a meeting.",
+            },
+            400,
+          ),
+          request,
+          session,
         );
       }
 
       try {
         const service = getMeetingService(env);
         const meeting = await service.getMeeting(meetingMatch[1]);
+        const authenticatedUserId = session.userId;
 
-        if (meeting && meeting.hostId === body.userId) {
+        if (meeting && meeting.hostId === authenticatedUserId) {
           const participant = await service.joinMeeting(meetingMatch[1], {
-            userId: body.userId,
+            userId: authenticatedUserId,
             displayName: body.displayName,
           });
-          return jsonResponse({ ok: true, data: participant });
+          return withSessionCookie(jsonResponse({ ok: true, data: participant }), request, session);
         }
 
         if (meeting && meeting.accessMode === "HOST_APPROVAL") {
           const requestResult = await service.requestAdmission(meetingMatch[1], {
-            userId: body.userId,
+            userId: authenticatedUserId,
             displayName: body.displayName,
           });
-          return jsonResponse({ ok: true, data: requestResult });
+          return withSessionCookie(jsonResponse({ ok: true, data: requestResult }), request, session);
         }
 
         const participant = await service.joinMeeting(meetingMatch[1], {
-          userId: body.userId,
+          userId: authenticatedUserId,
           displayName: body.displayName,
         });
 
-        return jsonResponse({ ok: true, data: participant });
+        return withSessionCookie(jsonResponse({ ok: true, data: participant }), request, session);
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to join meeting.",
-          },
-          400,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to join meeting.",
+            },
+            400,
+          ),
+          request,
+          session,
         );
       }
     }
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "leave") {
-      const body = await parseJsonBody<{ userId?: string }>(request);
-
-      if (!body || !body.userId) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "userId is required to leave a meeting.",
-          },
-          400,
-        );
-      }
+      const { session } = await getOrCreateSession(request);
 
       try {
-        const participant = await getMeetingService(env).leaveMeeting(meetingMatch[1], body.userId);
+        const participant = await getMeetingService(env).leaveMeeting(meetingMatch[1], session.userId);
 
         return participant
-          ? jsonResponse({ ok: true, data: participant })
-          : jsonResponse({ ok: false, error: "Participant not found." }, 404);
+          ? withSessionCookie(jsonResponse({ ok: true, data: participant }), request, session)
+          : withSessionCookie(jsonResponse({ ok: false, error: "Participant not found." }, 404), request, session);
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to leave meeting.",
-          },
-          400,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to leave meeting.",
+            },
+            400,
+          ),
+          request,
+          session,
         );
       }
     }
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "end") {
-      const body = await parseJsonBody<{ userId?: string }>(request);
-
-      if (!body || !body.userId) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "userId is required to end the meeting.",
-          },
-          400,
-        );
-      }
+      const { session } = await getOrCreateSession(request);
 
       try {
-        const meeting = await getMeetingService(env).endMeeting(meetingMatch[1], body.userId);
-        return jsonResponse({ ok: true, data: meeting });
+        const meeting = await getMeetingService(env).endMeeting(meetingMatch[1], session.userId);
+        return withSessionCookie(jsonResponse({ ok: true, data: meeting }), request, session);
       } catch (error) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Unable to end meeting.",
-          },
-          403,
+        return withSessionCookie(
+          jsonResponse(
+            {
+              ok: false,
+              error: error instanceof Error ? error.message : "Unable to end meeting.",
+            },
+            403,
+          ),
+          request,
+          session,
         );
       }
     }

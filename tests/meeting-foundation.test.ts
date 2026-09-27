@@ -10,7 +10,7 @@ import {
   ParticipantRole,
   ParticipantState,
 } from "../src/meeting";
-import { resolveMeetingRepository } from "../src/index";
+import app, { resolveMeetingRepository } from "../src/index";
 
 class StubMediaProvider implements MediaProvider {
   public created: Array<{ meetingId: string; participantId: string }> = [];
@@ -30,7 +30,102 @@ class StubMediaProvider implements MediaProvider {
   }
 }
 
+function getCookieValue(setCookieHeader: string | null, name: string): string | null {
+  if (!setCookieHeader) {
+    return null;
+  }
+
+  const match = setCookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function makeRequestWithSession(url: string, init: RequestInit = {}, sessionCookie: string | null): Promise<Response> {
+  const headers = new Headers(init.headers ?? {});
+  if (sessionCookie) {
+    headers.set("Cookie", sessionCookie);
+  }
+
+  return app.fetch(new Request(`http://localhost${url}`, { ...init, headers }), {
+    MEETING_STORE: new InMemoryMeetingRepository() as any,
+  });
+}
+
 describe("MeetingService lifecycle", () => {
+  it("creates a server-issued session and keeps the same identity across repeated requests", async () => {
+    const sessionResponse = await app.fetch(new Request("http://localhost/api/session", { method: "POST" }), {
+      MEETING_STORE: new InMemoryMeetingRepository() as any,
+    });
+    const payload = await sessionResponse.json();
+    const cookieValue = getCookieValue(sessionResponse.headers.get("Set-Cookie"), "bt_session_v0");
+
+    expect(payload.ok).toBe(true);
+    expect(cookieValue).toBeTruthy();
+    expect(payload.data.userId).toMatch(/^session_/);
+
+    const repeatResponse = await app.fetch(new Request("http://localhost/api/session", {
+      method: "POST",
+      headers: { Cookie: `bt_session_v0=${cookieValue}` },
+    }), {
+      MEETING_STORE: new InMemoryMeetingRepository() as any,
+    });
+    const repeatPayload = await repeatResponse.json();
+
+    expect(repeatPayload.ok).toBe(true);
+    expect(repeatPayload.data.userId).toBe(payload.data.userId);
+  });
+
+  it("rejects host and participant spoofing when a session-backed identity is present", async () => {
+    const repository = new InMemoryMeetingRepository();
+
+    const hostSessionResponse = await app.fetch(new Request("http://localhost/api/session", { method: "POST" }), {
+      MEETING_STORE: repository as any,
+    });
+    const hostCookie = getCookieValue(hostSessionResponse.headers.get("Set-Cookie"), "bt_session_v0");
+    const hostSession = await hostSessionResponse.json();
+
+    const createMeetingResponse = await app.fetch(new Request("http://localhost/api/meetings", {
+      method: "POST",
+      headers: { Cookie: `bt_session_v0=${hostCookie}` },
+      body: JSON.stringify({ title: "Secure room", accessMode: "OPEN" }),
+    }), {
+      MEETING_STORE: repository as any,
+    });
+    const createdMeeting = await createMeetingResponse.json();
+
+    expect(createMeetingResponse.status).toBe(201);
+    expect(createdMeeting.data.hostId).toBe(hostSession.data.userId);
+
+    const guestSessionResponse = await app.fetch(new Request("http://localhost/api/session", { method: "POST" }), {
+      MEETING_STORE: repository as any,
+    });
+    const guestCookie = getCookieValue(guestSessionResponse.headers.get("Set-Cookie"), "bt_session_v0");
+    const guestUser = (await guestSessionResponse.json()).data.userId;
+
+    const spoofedAccessResponse = await app.fetch(new Request(`http://localhost/api/meetings/${createdMeeting.data.id}/access-mode`, {
+      method: "POST",
+      headers: { Cookie: `bt_session_v0=${guestCookie}` },
+      body: JSON.stringify({ actorUserId: "spoofed-host", accessMode: "OPEN" }),
+    }), {
+      MEETING_STORE: repository as any,
+    });
+
+    expect(spoofedAccessResponse.status).toBe(403);
+
+    const joinResponse = await app.fetch(new Request(`http://localhost/api/meetings/${createdMeeting.data.id}/join`, {
+      method: "POST",
+      headers: { Cookie: `bt_session_v0=${guestCookie}` },
+      body: JSON.stringify({ userId: hostSession.data.userId, displayName: "Host impersonator" }),
+    }), {
+      MEETING_STORE: repository as any,
+    });
+    const joinPayload = await joinResponse.json();
+
+    expect(joinResponse.status).toBe(200);
+    expect(joinPayload.data.userId).toBe(guestUser);
+    expect(joinPayload.data.displayName).toBe("Host impersonator");
+    expect(joinPayload.data.userId).not.toBe(hostSession.data.userId);
+  });
+
   it("creates a meeting with a generated BT meeting ID and host participant", async () => {
     const service = new MeetingService(new InMemoryMeetingRepository(), new StubMediaProvider());
 
