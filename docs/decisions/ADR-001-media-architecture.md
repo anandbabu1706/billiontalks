@@ -4,6 +4,8 @@
 
 **Proposed — PoC Validation Required**
 
+BT-V0-015 manual acceptance validated the share-link/prejoin flow, host approval and role restrictions, host/participant coexistence, an established real media connection, screen sharing, and a browser-based recording path to private R2. This is not sufficient evidence for every PoC criterion below. Explicit two-way microphone/camera validation, reconnection validation, and media usage/cost observability remain outstanding; the status therefore remains Proposed.
+
 ## Context
 
 BillionTalks V0 requires a working communication platform with audio, video, screen sharing, participant management, and recording. Its media infrastructure must remain separate from the BillionTalks application and intelligence layers, with a path to V1 transcription and AI meeting intelligence.
@@ -63,7 +65,9 @@ All of the following must succeed before this ADR can change to Accepted:
 9. Media usage/cost can be observed sufficiently for future cost control.
 10. No critical architectural blocker is found for future transcription/AI integration.
 
-Validation of a technically viable recording path satisfies the recording PoC criterion only; recording remains a required capability for V0 delivery. This ADR does not claim that the PoC has passed.
+Validation of a technically viable recording path satisfies the recording PoC criterion only; recording remains a required capability for V0 delivery. BT-V0-015 uses host-browser composition and MediaRecorder upload to private R2; the host tab must remain active throughout capture. This validates a recording path, not server-side SFU recording. The V0 recording architecture and its limits are recorded in the [BT-V0-015 checkpoint](../checkpoints/BT-V0-015.md).
+
+The PoC is not yet accepted. In addition to the outstanding checks noted in Status, each criterion above must have recorded evidence before this ADR changes to Accepted.
 
 ## Alternatives Retained for Fallback Evaluation
 

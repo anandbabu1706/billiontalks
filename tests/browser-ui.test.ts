@@ -60,11 +60,33 @@ class FakePeerConnection {
 
 class FakeMediaStream {
   private tracks: any[] = [];
+  constructor(tracks: any[] = []) { this.tracks = [...tracks]; }
   addTrack(track: any) { this.tracks.push(track); }
   removeTrack(track: any) { this.tracks = this.tracks.filter((entry) => entry !== track); }
   getTracks() { return this.tracks; }
   getVideoTracks() { return this.tracks.filter((track) => track.kind === "video"); }
   getAudioTracks() { return this.tracks.filter((track) => track.kind === "audio"); }
+}
+
+class FakeMediaRecorder {
+  static isTypeSupported() { return true; }
+  public state = "inactive";
+  private listeners = new Map<string, Array<(event: any) => void>>();
+
+  constructor(_stream: unknown, _options?: unknown) {}
+  addEventListener(type: string, listener: (event: any) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+  start() { this.state = "recording"; }
+  stop() {
+    if (this.state === "inactive") return;
+    this.state = "inactive";
+    const data = new Blob([new Uint8Array([1, 2, 3, 4])], { type: "video/webm" });
+    this.listeners.get("dataavailable")?.forEach((listener) => listener({ data }));
+    this.listeners.get("stop")?.forEach((listener) => listener({}));
+  }
+  pause() { this.state = "paused"; }
+  resume() { this.state = "recording"; }
 }
 
 const openWindows: JSDOM["window"][] = [];
@@ -85,11 +107,11 @@ function createSessionNamespace() {
   };
 }
 
-async function loadRenderedPage() {
+async function loadRenderedPage(pageUrl = "http://localhost/") {
   let nextSubscribePayload: unknown = null;
   let subscribePayloadUsed = false;
   let includeRemoteParticipant = false;
-  const response = await app.fetch(new Request("http://localhost/"), {
+  const response = await app.fetch(new Request(pageUrl), {
     SESSION_STORE: createSessionNamespace(),
   });
   const html = await response.text();
@@ -98,7 +120,7 @@ async function loadRenderedPage() {
   const dom = new JSDOM(html, {
     runScripts: "dangerously",
     pretendToBeVisual: true,
-    url: "http://localhost/",
+    url: pageUrl,
     beforeParse(window) {
       let micCallIndex = 0;
       let cameraCallIndex = 0;
@@ -133,6 +155,28 @@ async function loadRenderedPage() {
           }),
         },
         configurable: true,
+      });
+
+      Object.defineProperty(window, "Blob", { value: Blob, configurable: true });
+      Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+      Object.defineProperty(window, "MediaRecorder", { value: FakeMediaRecorder, configurable: true });
+      Object.defineProperty(window.HTMLCanvasElement.prototype, "getContext", {
+        configurable: true,
+        value: () => ({
+          fillRect() {},
+          fillText() {},
+          drawImage() {},
+          set fillStyle(_value: string) {},
+          set font(_value: string) {},
+        }),
+      });
+      Object.defineProperty(window.HTMLCanvasElement.prototype, "captureStream", {
+        configurable: true,
+        value: () => new FakeMediaStream([{
+          kind: "video",
+          readyState: "live",
+          stop() { this.readyState = "ended"; },
+        }]),
       });
 
       Object.defineProperty(window.HTMLMediaElement.prototype, "play", {
@@ -419,6 +463,36 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("meetingTitleText")?.textContent).toContain("Sprint review");
   });
 
+  it("opens a meeting invite URL into the existing prejoin flow", async () => {
+    const { document, fetchMock } = await loadRenderedPage("http://localhost/?meeting=btm_test_123");
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123");
+    expect(getVisibleScreen(document, "prejoinScreen")).toBe(true);
+  });
+
+  it("copies a shareable meeting URL from the room controls", async () => {
+    const { document } = await loadRenderedPage();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(document.defaultView!.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Invite room";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+    document.getElementById("copyMeetingIdBtn")?.click();
+    await flush();
+
+    expect(writeText).toHaveBeenCalledWith("http://localhost/?meeting=btm_test_123");
+  });
+
   it("loads the meeting chat panel and submits a message from the room", async () => {
     const { document, fetchMock } = await loadRenderedPage();
 
@@ -464,13 +538,16 @@ describe("BillionTalks browser UI regression tests", () => {
     document.getElementById("startRecordingBtn")?.click();
     await flush();
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/start", expect.objectContaining({ method: "POST" }));
-    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording is active");
-    expect(document.getElementById("recordingStatus")?.textContent).toContain("Media capture is not connected yet");
+    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording meeting media");
 
     document.getElementById("stopRecordingBtn")?.click();
     await flush();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/meetings/btm_test_123/recording/rec-test-1/parts/1",
+      expect.objectContaining({ method: "POST", headers: expect.objectContaining({ "X-Recording-Final-Part": "true" }) }),
+    );
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/stop", expect.objectContaining({ method: "POST" }));
-    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording stopped");
+    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording saved to private storage");
   });
 
   it("publishes existing microphone and camera captures through SFU signaling and closes them when toggled off", async () => {

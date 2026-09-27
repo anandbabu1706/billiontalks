@@ -77,25 +77,68 @@ function createDurableObjectNamespace(backingStorage = new Map<string, Map<strin
   };
 }
 
+function createRecordingBucketFixture() {
+  const uploads = new Map<string, { key: string; parts: Map<number, { partNumber: number; etag: string; size: number }> }>();
+  const objects = new Map<string, { size: number; contentType: string }>();
+  const makeUpload = (key: string, uploadId: string) => ({
+    uploadId,
+    uploadPart: async (partNumber: number, value: ArrayBuffer) => {
+      const upload = uploads.get(uploadId);
+      if (!upload || upload.key !== key) throw new Error("Upload not found.");
+      const part = { partNumber, etag: `etag-${partNumber}`, size: value.byteLength };
+      upload.parts.set(partNumber, part);
+      return part;
+    },
+    complete: async (parts: Array<{ partNumber: number; etag: string }>) => {
+      const upload = uploads.get(uploadId);
+      if (!upload || parts.some((part, index) => upload.parts.get(part.partNumber)?.etag !== part.etag || part.partNumber !== index + 1)) {
+        throw new Error("Multipart completion validation failed.");
+      }
+      const size = parts.reduce((total, part) => total + upload.parts.get(part.partNumber)!.size, 0);
+      objects.set(key, { size, contentType: "video/webm" });
+      uploads.delete(uploadId);
+      return { size };
+    },
+    abort: async () => { uploads.delete(uploadId); },
+  });
+  const bucket = {
+    createMultipartUpload: async (key: string) => {
+      const uploadId = crypto.randomUUID();
+      uploads.set(uploadId, { key, parts: new Map() });
+      return makeUpload(key, uploadId);
+    },
+    resumeMultipartUpload: (key: string, uploadId: string) => makeUpload(key, uploadId),
+  };
+  return { bucket, uploads, objects };
+}
+
 function createChatApiFixture(namespace = createDurableObjectNamespace()) {
+  const recordingBucket = createRecordingBucketFixture();
   const env = {
     MEETING_STORE: namespace as any,
     REALTIME_SFU_APP_ID: "test-sfu-app-id",
     REALTIME_SFU_BEARER_TOKEN: "test-sfu-app-secret",
+    RECORDINGS_BUCKET: recordingBucket.bucket as any,
   };
-  const request = (path: string, method = "GET", cookie?: string, body?: unknown) => {
-    const headers = new Headers();
+  const rawRequest = (path: string, method = "GET", cookie?: string, body?: BodyInit, contentType = "application/json", extraHeaders?: HeadersInit) => {
+    const headers = new Headers(extraHeaders ?? {});
     if (cookie) headers.set("Cookie", cookie);
-    if (body !== undefined) headers.set("Content-Type", "application/json");
+    if (body !== undefined) headers.set("Content-Type", contentType);
     return app.fetch(new Request(`http://localhost${path}`, {
       method,
       headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body }),
     }), env);
   };
+  const request = (path: string, method = "GET", cookie?: string, body?: unknown) =>
+    rawRequest(path, method, cookie, body === undefined ? undefined : JSON.stringify(body));
 
   return {
     request,
+    rawRequest(path: string, method = "GET", cookie?: string, body?: BodyInit, contentType = "application/json", extraHeaders?: HeadersInit) {
+      return rawRequest(path, method, cookie, body, contentType, extraHeaders);
+    },
+    recordingObjects: recordingBucket.objects,
     async createSession() {
       const response = await request("/api/session", "POST");
       const payload = await response.json();
@@ -114,6 +157,18 @@ function createChatApiFixture(namespace = createDurableObjectNamespace()) {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error);
       return payload.data as { id: string; hostId: string };
+    },
+    async uploadRecordingPart(meetingId: string, recordingId: string, cookie: string, bytes: Uint8Array, partNumber = 1, finalPart = true) {
+      const body = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(body).set(bytes);
+      return rawRequest(
+        `/api/meetings/${meetingId}/recording/${recordingId}/parts/${partNumber}`,
+        "POST",
+        cookie,
+        body,
+        "application/octet-stream",
+        { "X-Recording-Final-Part": String(finalPart) },
+      );
     },
   };
 }
@@ -521,6 +576,8 @@ describe("MeetingService lifecycle", () => {
     const meeting = await api.createOpenMeeting(host.cookie, "Recording stop room");
     const started = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
     const startedPayload = await started.json();
+    const partResponse = await api.uploadRecordingPart(meeting.id, startedPayload.data.recordingId, host.cookie, new Uint8Array([1, 2, 3, 4]));
+    expect(partResponse.status).toBe(200);
     const stopped = await api.request(`/api/meetings/${meeting.id}/recording/stop`, "POST", host.cookie);
     const stoppedPayload = await stopped.json();
     const stored = backingStorage.get(meeting.id)?.get("recordings") as Array<Record<string, unknown>>;
@@ -531,9 +588,27 @@ describe("MeetingService lifecycle", () => {
       meetingId: meeting.id,
       initiatedByUserId: host.userId,
       status: "STOPPED",
+      sizeBytes: 4,
     });
     expect(stoppedPayload.data.stoppedAt).toBeTruthy();
+    expect(stoppedPayload.data).not.toHaveProperty("storageRef");
+    const internalRecording = stored[1] as { storageRef: { objectKey: string } };
+    expect(api.recordingObjects.get(internalRecording.storageRef.objectKey)).toEqual({ size: 4, contentType: "video/webm" });
     expect(stored[1]).toMatchObject({ recordingId: startedPayload.data.recordingId, status: "STOPPED" });
+  });
+
+  it("marks recording FAILED and aborts private multipart state when the host reports capture failure", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Capture failure room");
+    const started = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const recording = (await started.json()).data;
+    const failed = await api.request(`/api/meetings/${meeting.id}/recording/${recording.recordingId}/fail`, "POST", host.cookie, { failureCode: "CAPTURE_FAILED" });
+    const failedPayload = await failed.json();
+
+    expect(failed.status).toBe(200);
+    expect(failedPayload.data).toMatchObject({ status: "FAILED", failureCode: "CAPTURE_FAILED" });
+    expect(failedPayload.data).not.toHaveProperty("storageRef");
   });
 
   it("rejects starting a recording after the meeting has ended", async () => {

@@ -94,6 +94,18 @@ export type MeetingRecordingMetadata = {
     provider: "r2";
     objectKey: string;
   };
+  storageUpload?: {
+    uploadId: string;
+    parts: Array<{ partNumber: number; etag: string; size: number }>;
+  };
+  sizeBytes?: number;
+  failureCode?: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED";
+};
+
+export type RecordingUploadedPart = {
+  partNumber: number;
+  etag: string;
+  size: number;
 };
 
 export type MeetingHistoryEntry = {
@@ -298,6 +310,10 @@ export interface MeetingRepository {
   listMeetingHistoryReferences(userId: string): Promise<string[]>;
   getRecordingMetadata(meetingId: string): Promise<MeetingRecordingMetadata[]>;
   startRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
+  attachRecordingUpload(meetingId: string, recordingId: string, actorUserId: string, uploadId: string): Promise<MeetingRecordingMetadata>;
+  recordRecordingPart(meetingId: string, recordingId: string, actorUserId: string, part: RecordingUploadedPart): Promise<void>;
+  finalizeRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
+  failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata>;
   stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
   listChatMessages(meetingId: string): Promise<MeetingChatMessage[]> | MeetingChatMessage[];
   appendChatMessage(meetingId: string, senderUserId: string, content: string): Promise<MeetingChatMessage>;
@@ -321,6 +337,10 @@ type DurableObjectStubLike = {
   listMeetingHistoryReferences: (userId: string) => Promise<string[]>;
   getRecordingMetadata: () => Promise<MeetingRecordingMetadata[]>;
   startRecording: (actorUserId: string) => Promise<MeetingRecordingMetadata>;
+  attachRecordingUpload: (recordingId: string, actorUserId: string, uploadId: string) => Promise<MeetingRecordingMetadata>;
+  recordRecordingPart: (recordingId: string, actorUserId: string, part: RecordingUploadedPart) => Promise<void>;
+  finalizeRecording: (recordingId: string, actorUserId: string) => Promise<MeetingRecordingMetadata>;
+  failRecording: (recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED") => Promise<MeetingRecordingMetadata>;
   stopRecording: (actorUserId: string) => Promise<MeetingRecordingMetadata>;
   listChatMessages: () => Promise<MeetingChatMessage[]>;
   appendChatMessage: (senderUserId: string, content: string) => Promise<MeetingChatMessage>;
@@ -378,16 +398,60 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     return structuredClone(updated);
   }
 
-  async stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+  async attachRecordingUpload(meetingId: string, recordingId: string, actorUserId: string, uploadId: string): Promise<MeetingRecordingMetadata> {
     const meeting = this.meetings.get(meetingId);
     assertRecordingHost(meeting, actorUserId);
     const recordings = this.recordingMetadata.get(meetingId) ?? [];
-    const currentIndex = recordings.findIndex((recording) => recording.status === MeetingRecordingStatus.RECORDING);
-    if (currentIndex < 0) throw new Error("No active recording to stop.");
-    const current = recordings[currentIndex];
-    const updated = { ...current, status: MeetingRecordingStatus.STOPPED, stoppedAt: new Date().toISOString() };
-    this.recordingMetadata.set(meetingId, recordings.map((recording, index) => index === currentIndex ? updated : recording));
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording) throw new Error("Active recording not found.");
+    const updated = { ...recording, storageUpload: { uploadId, parts: [] } };
+    this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
     return structuredClone(updated);
+  }
+
+  async recordRecordingPart(meetingId: string, recordingId: string, actorUserId: string, part: { partNumber: number; etag: string; size: number }): Promise<void> {
+    const meeting = this.meetings.get(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording?.storageUpload) throw new Error("Active recording upload not found.");
+    if (part.partNumber !== recording.storageUpload.parts.length + 1) throw new Error("Recording parts must be uploaded in order.");
+    const updated = { ...recording, storageUpload: { ...recording.storageUpload, parts: [...recording.storageUpload.parts, part] } };
+    this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+  }
+
+  async finalizeRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+    const meeting = this.meetings.get(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording?.storageUpload?.parts.length) throw new Error("Recording has no retained media parts.");
+    const updated: MeetingRecordingMetadata = {
+      ...recording,
+      status: MeetingRecordingStatus.STOPPED,
+      stoppedAt: new Date().toISOString(),
+      sizeBytes: recording.storageUpload.parts.reduce((total, part) => total + part.size, 0),
+      storageUpload: undefined,
+    };
+    this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    return structuredClone(updated);
+  }
+
+  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata> {
+    const meeting = this.meetings.get(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording) throw new Error("Active recording not found.");
+    const updated: MeetingRecordingMetadata = { ...recording, status: MeetingRecordingStatus.FAILED, stoppedAt: new Date().toISOString(), failureCode };
+    this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    return structuredClone(updated);
+  }
+
+  async stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+    const recording = (this.recordingMetadata.get(meetingId) ?? []).find((entry) => entry.status === MeetingRecordingStatus.RECORDING);
+    if (!recording?.recordingId) throw new Error("No active recording to stop.");
+    return this.finalizeRecording(meetingId, recording.recordingId, actorUserId);
   }
 
   async listChatMessages(meetingId: string): Promise<MeetingChatMessage[]> {
@@ -525,20 +589,72 @@ export class DurableMeetingRepository implements MeetingRepository {
     return updated;
   }
 
+  async attachRecordingUpload(meetingId: string, recordingId: string, actorUserId: string, uploadId: string): Promise<MeetingRecordingMetadata> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).attachRecordingUpload(recordingId, actorUserId, uploadId);
+    const meeting = await this.getMeeting(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = await this.getRecordingMetadata(meetingId);
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording) throw new Error("Active recording not found.");
+    const updated = { ...recording, storageUpload: { uploadId, parts: [] } };
+    await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    return updated;
+  }
+
+  async recordRecordingPart(meetingId: string, recordingId: string, actorUserId: string, part: RecordingUploadedPart): Promise<void> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).recordRecordingPart(recordingId, actorUserId, part);
+    const meeting = await this.getMeeting(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = await this.getRecordingMetadata(meetingId);
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording?.storageUpload) throw new Error("Active recording upload not found.");
+    if (part.partNumber !== recording.storageUpload.parts.length + 1) throw new Error("Recording parts must be uploaded in order.");
+    const updated = { ...recording, storageUpload: { ...recording.storageUpload, parts: [...recording.storageUpload.parts, part] } };
+    await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+  }
+
+  async finalizeRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).finalizeRecording(recordingId, actorUserId);
+    const meeting = await this.getMeeting(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = await this.getRecordingMetadata(meetingId);
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording?.storageUpload?.parts.length) throw new Error("Recording has no retained media parts.");
+    const updated: MeetingRecordingMetadata = {
+      ...recording,
+      status: MeetingRecordingStatus.STOPPED,
+      stoppedAt: new Date().toISOString(),
+      sizeBytes: recording.storageUpload.parts.reduce((total, part) => total + part.size, 0),
+      storageUpload: undefined,
+    };
+    await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    return updated;
+  }
+
+  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).failRecording(recordingId, actorUserId, failureCode);
+    const meeting = await this.getMeeting(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = await this.getRecordingMetadata(meetingId);
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
+    if (!recording) throw new Error("Active recording not found.");
+    const updated: MeetingRecordingMetadata = { ...recording, status: MeetingRecordingStatus.FAILED, stoppedAt: new Date().toISOString(), failureCode };
+    await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    return updated;
+  }
+
   async stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
     if (this.namespace) {
       return this.namespace.get(this.namespace.idFromName(meetingId)).stopRecording(actorUserId);
     }
-    const meeting = await this.getMeeting(meetingId);
-    assertRecordingHost(meeting, actorUserId);
-    const recordings = await this.getRecordingMetadata(meetingId);
-    const currentIndex = recordings.findIndex((recording) => recording.status === MeetingRecordingStatus.RECORDING);
-    if (currentIndex < 0) throw new Error("No active recording to stop.");
-    const updated = { ...recordings[currentIndex], status: MeetingRecordingStatus.STOPPED, stoppedAt: new Date().toISOString() };
-    const nextRecordings = recordings.map((recording, index) => index === currentIndex ? updated : recording);
-    await this.storage?.put(`recordings:${meetingId}`, nextRecordings);
-    this.recordingMetadata.set(meetingId, nextRecordings);
-    return updated;
+    const recording = (await this.getRecordingMetadata(meetingId)).find((entry) => entry.status === MeetingRecordingStatus.RECORDING);
+    if (!recording?.recordingId) throw new Error("No active recording to stop.");
+    return this.finalizeRecording(meetingId, recording.recordingId, actorUserId);
+  }
+
+  private async writeRecordingMetadata(meetingId: string, recordings: MeetingRecordingMetadata[]): Promise<void> {
+    if (this.storage) await this.storage.put(`recordings:${meetingId}`, recordings);
+    this.recordingMetadata.set(meetingId, recordings);
   }
 
   async listChatMessages(meetingId: string): Promise<MeetingChatMessage[]> {
@@ -1186,6 +1302,22 @@ export class MeetingService {
 
   async stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
     return this.repository.stopRecording(meetingId, actorUserId);
+  }
+
+  async attachRecordingUpload(meetingId: string, recordingId: string, actorUserId: string, uploadId: string): Promise<MeetingRecordingMetadata> {
+    return this.repository.attachRecordingUpload(meetingId, recordingId, actorUserId, uploadId);
+  }
+
+  async recordRecordingPart(meetingId: string, recordingId: string, actorUserId: string, part: RecordingUploadedPart): Promise<void> {
+    return this.repository.recordRecordingPart(meetingId, recordingId, actorUserId, part);
+  }
+
+  async finalizeRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+    return this.repository.finalizeRecording(meetingId, recordingId, actorUserId);
+  }
+
+  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata> {
+    return this.repository.failRecording(meetingId, recordingId, actorUserId, failureCode);
   }
 
   private deduplicateParticipants(participants: MeetingParticipant[]): MeetingParticipant[] {
