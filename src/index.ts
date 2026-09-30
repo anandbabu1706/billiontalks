@@ -1,6 +1,16 @@
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
 import { validateRealtimeEnv, type RealtimeEnv } from "./config";
 import {
+  handleAccountLogin,
+  handleAccountLogout,
+  handleAccountMe,
+  handleAccountRegistration,
+  handleForgotPassword,
+  handleEmailVerification,
+  handleResetPassword,
+} from "./account/api";
+import type { D1AccountDatabase } from "./account/repository";
+import {
   buildRecordingObjectKey,
   DurableMeetingRepository,
   InMemoryMeetingRepository,
@@ -43,7 +53,7 @@ type V0SessionStoreStub = {
   deleteSession: (sessionId: string) => Promise<void>;
 };
 
-type WorkerEnv = Partial<RealtimeEnv> & { SESSION_STORE?: unknown };
+type WorkerEnv = Partial<RealtimeEnv> & { SESSION_STORE?: unknown; ACCOUNT_DB?: D1AccountDatabase };
 
 type RecordingMultipartUpload = {
   uploadId: string;
@@ -3654,6 +3664,31 @@ function meetingUiHtml(): string {
 export default {
   async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/api/accounts/register") {
+      return handleAccountRegistration(request, env.ACCOUNT_DB);
+    }
+    if (request.method === "POST" && url.pathname === "/api/accounts/login") {
+      return handleAccountLogin(request, env.ACCOUNT_DB);
+    }
+    if (request.method === "POST" && url.pathname === "/api/accounts/forgot-password") {
+      return handleForgotPassword(request, env.ACCOUNT_DB);
+    }
+    if (request.method === "POST" && url.pathname === "/api/accounts/reset-password") {
+      return handleResetPassword(request, env.ACCOUNT_DB);
+    }
+    if (request.method === "GET" && url.pathname === "/api/accounts/me") {
+      return handleAccountMe(request, env.ACCOUNT_DB);
+    }
+    if (request.method === "POST" && url.pathname === "/api/accounts/logout") {
+      return handleAccountLogout(request, env.ACCOUNT_DB);
+    }
+    if (
+      request.method === "POST" &&
+      (url.pathname === "/api/accounts/verify-email" || url.pathname === "/api/accounts/resend-verification")
+    ) {
+      return handleEmailVerification(request, env.ACCOUNT_DB);
+    }
 
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
       const { session } = await getOrCreateSession(request, env);

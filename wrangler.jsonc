@@ -3,6 +3,13 @@
   "name": "billiontalks-realtime-backend",
   "main": "src/index.ts",
   "compatibility_date": "2025-07-18",
+  "d1_databases": [
+    {
+      "binding": "ACCOUNT_DB",
+      "database_name": "billiontalks-accounts",
+      "database_id": "0c0c10f2-437e-459e-86fb-360d7e2a36b5"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
