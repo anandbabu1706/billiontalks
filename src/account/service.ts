@@ -1,4 +1,4 @@
-import type { Account, AccountId, CreateAccountInput } from "./domain";
+import type { Account, AccountId, AccountProfileUpdate, CreateAccountInput } from "./domain";
 import type { PreparedEmailVerificationToken } from "./email-verification";
 import { hashPassword } from "./password";
 import type { AccountRepository } from "./repository";
@@ -67,5 +67,37 @@ export class AccountService {
 
   findByMobileNumber(mobileNumber: string): Promise<Account | null> {
     return this.repository.findByMobileNumber(normalizeMobileNumber(mobileNumber));
+  }
+
+  async updateProfile(
+    account: Account,
+    input: {
+      fullName?: string;
+      countryCode?: string;
+      mobileNumber?: string;
+      marketingConsent?: boolean;
+    },
+  ): Promise<Account> {
+    const mobileNumber = input.mobileNumber === undefined
+      ? account.mobileNumber
+      : normalizeMobileNumber(input.mobileNumber);
+    const mobileChanged = mobileNumber !== account.mobileNumber;
+    const now = this.clock().toISOString();
+    const update: AccountProfileUpdate = {
+      fullName: input.fullName === undefined ? account.fullName : normalizeFullName(input.fullName),
+      countryCode: input.countryCode === undefined ? account.countryCode : normalizeCountryCode(input.countryCode),
+      mobileNumber,
+      mobileVerifiedAt: mobileChanged ? null : account.mobileVerifiedAt,
+      marketingConsent: input.marketingConsent === undefined ? account.marketingConsent : input.marketingConsent,
+      marketingConsentAt: input.marketingConsent === undefined
+        ? account.marketingConsentAt
+        : input.marketingConsent ? now : null,
+      updatedAt: now,
+    };
+    await this.repository.updateProfile(account.id, update);
+    return {
+      ...account,
+      ...update,
+    };
   }
 }

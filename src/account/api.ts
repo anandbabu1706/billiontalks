@@ -18,6 +18,13 @@ type RegistrationBody = {
   marketingConsent?: boolean;
 };
 
+type ProfilePatchBody = {
+  fullName?: string;
+  country?: string;
+  mobileNumber?: string;
+  marketingConsent?: boolean;
+};
+
 function isRegistrationBody(value: unknown): value is RegistrationBody {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -305,5 +312,59 @@ export async function handleResetPassword(request: Request, database?: D1Account
       return jsonResponse({ ok: false, error: error.message }, 400);
     }
     return jsonResponse({ ok: false, error: "Password reset failed." }, 500);
+  }
+}
+
+function isProfilePatchBody(value: unknown): value is ProfilePatchBody {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const body = value as Record<string, unknown>;
+  const keys = Object.keys(body);
+  if (!keys.length || keys.some((key) => !["fullName", "country", "mobileNumber", "marketingConsent"].includes(key))) {
+    return false;
+  }
+  return (
+    (body.fullName === undefined || typeof body.fullName === "string") &&
+    (body.country === undefined || typeof body.country === "string") &&
+    (body.mobileNumber === undefined || typeof body.mobileNumber === "string") &&
+    (body.marketingConsent === undefined || typeof body.marketingConsent === "boolean")
+  );
+}
+
+export async function handleAccountProfileUpdate(request: Request, database?: D1AccountDatabase): Promise<Response> {
+  if (!database) return jsonResponse({ ok: false, error: "Account service is temporarily unavailable." }, 503);
+
+  try {
+    const accounts = new D1AccountRepository(database);
+    const account = await new AccountAuthenticationService(accounts).resolve(request);
+    if (!account) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+    if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) {
+      return jsonResponse({ ok: false, error: "A JSON profile body is required." }, 415);
+    }
+    const { body, tooLarge } = await readBoundedBody(request);
+    if (tooLarge) return jsonResponse({ ok: false, error: "Profile request is too large." }, 413);
+    let value: unknown;
+    try {
+      value = JSON.parse(body);
+    } catch {
+      return jsonResponse({ ok: false, error: "Profile request is invalid." }, 400);
+    }
+    if (!isProfilePatchBody(value)) return jsonResponse({ ok: false, error: "Profile request is invalid." }, 400);
+
+    const profile = await new AccountService(accounts).updateProfile(account, {
+      fullName: value.fullName,
+      countryCode: value.country,
+      mobileNumber: value.mobileNumber,
+      marketingConsent: value.marketingConsent,
+    });
+    return jsonResponse({ ok: true, data: { account: profile } }, 200);
+  } catch (error) {
+    if (error instanceof AccountValidationError) {
+      return jsonResponse({ ok: false, error: error.message }, 400);
+    }
+    if (error instanceof AccountIdentityConflictError) {
+      return jsonResponse({ ok: false, error: "An account with these details already exists." }, 409);
+    }
+    return jsonResponse({ ok: false, error: "Profile update failed." }, 500);
   }
 }

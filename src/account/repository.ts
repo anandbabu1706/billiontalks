@@ -1,4 +1,4 @@
-import type { Account } from "./domain";
+import type { Account, AccountProfileUpdate } from "./domain";
 import type { EmailVerificationTokenRecord } from "./email-verification";
 
 export class AccountIdentityConflictError extends Error {
@@ -12,6 +12,7 @@ export interface AccountRepository {
   create(account: Account, passwordHash: string, verificationToken?: EmailVerificationTokenRecord): Promise<void>;
   findByEmail(normalizedEmail: string): Promise<Account | null>;
   findByMobileNumber(e164Number: string): Promise<Account | null>;
+  updateProfile(accountId: Account["id"], update: AccountProfileUpdate): Promise<void>;
 }
 
 export interface AccountLoginRepository {
@@ -152,6 +153,32 @@ export class D1AccountRepository implements AccountRepository, AccountLoginRepos
        FROM accounts WHERE mobile_e164 = ?`,
     ).bind(e164Number).first<AccountRow>();
     return row ? mapAccount(row) : null;
+  }
+
+  async updateProfile(accountId: Account["id"], update: AccountProfileUpdate): Promise<void> {
+    try {
+      const result = await this.database.prepare(
+        `UPDATE accounts SET
+          full_name = ?, country_code = ?, mobile_e164 = ?, mobile_verified_at = ?,
+          marketing_consent = ?, marketing_consent_at = ?, updated_at = ?
+         WHERE id = ?`,
+      ).bind(
+        update.fullName,
+        update.countryCode,
+        update.mobileNumber,
+        update.mobileVerifiedAt,
+        Number(update.marketingConsent),
+        update.marketingConsentAt,
+        update.updatedAt,
+        accountId,
+      ).run() as { meta?: { changes?: number } };
+      if (result.meta?.changes !== 1) throw new Error("Account profile update did not affect an account.");
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed: accounts\.(email_normalized|mobile_e164)/u.test(error.message)) {
+        throw new AccountIdentityConflictError();
+      }
+      throw error;
+    }
   }
 
   async findLoginCredential(normalizedEmail: string): Promise<{ account: Account; passwordHash: string } | null> {

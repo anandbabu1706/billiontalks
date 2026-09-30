@@ -4,6 +4,7 @@ import {
   handleAccountLogin,
   handleAccountLogout,
   handleAccountMe,
+  handleAccountProfileUpdate,
   handleAccountRegistration,
   handleForgotPassword,
   handleEmailVerification,
@@ -3679,6 +3680,9 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/api/accounts/me") {
       return handleAccountMe(request, env.ACCOUNT_DB);
+    }
+    if (request.method === "PATCH" && url.pathname === "/api/accounts/me") {
+      return handleAccountProfileUpdate(request, env.ACCOUNT_DB);
     }
     if (request.method === "POST" && url.pathname === "/api/accounts/logout") {
       return handleAccountLogout(request, env.ACCOUNT_DB);

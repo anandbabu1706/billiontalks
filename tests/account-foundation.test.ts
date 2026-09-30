@@ -230,7 +230,7 @@ function createAccountDatabaseFixture() {
             token.consumed_operation_id = operationId;
             changes = 1;
           }
-        } else if (query.includes("UPDATE accounts")) {
+        } else if (query.includes("UPDATE accounts") && query.includes("SET email_verified_at = COALESCE")) {
           const [verifiedAt, updatedAt, tokenHash, operationId, consumedAt] = values as [string, string, string, string, string];
           const token = [...tokens.values()].find((row) =>
             row.token_hash === tokenHash && row.consumed_operation_id === operationId && row.consumed_at === consumedAt,
@@ -285,6 +285,28 @@ function createAccountDatabaseFixture() {
             session.revoked_at ??= revokedAt;
             changes = 1;
           }
+        } else if (query.includes("UPDATE accounts SET") && query.includes("full_name = ?")) {
+          const [fullName, countryCode, mobileNumber, mobileVerifiedAt, marketingConsent, marketingConsentAt, updatedAt, accountId] = values as [string, string, string, string | null, number, string | null, string, string];
+          const account = accounts.get(accountId);
+          if (!account) {
+            results.push({ meta: { changes: 0 } });
+            continue;
+          }
+          if (mobiles.has(mobileNumber) && account.mobile_e164 !== mobileNumber) {
+            throw new Error("UNIQUE constraint failed: accounts.mobile_e164");
+          }
+          mobiles.delete(account.mobile_e164 as string);
+          mobiles.add(mobileNumber);
+          Object.assign(account, {
+            full_name: fullName,
+            country_code: countryCode,
+            mobile_e164: mobileNumber,
+            mobile_verified_at: mobileVerifiedAt,
+            marketing_consent: marketingConsent,
+            marketing_consent_at: marketingConsentAt,
+            updated_at: updatedAt,
+          });
+          changes = 1;
         } else {
           throw new Error(`Unexpected account SQL: ${query}`);
         }
@@ -383,6 +405,24 @@ function meRequest(cookie?: string): Request {
   });
 }
 
+function profilePatchRequest(body: Record<string, unknown>, cookie?: string): Request {
+  return new Request("https://localhost/api/accounts/me", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+async function authenticatedProfileFixture() {
+  const fixture = createAccountDatabaseFixture();
+  const account = seedVerifiedAccount(fixture);
+  const login = await app.fetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
+  return { fixture, account, cookie: accountCookie(login) };
+}
+
 function logoutRequest(cookie?: string): Request {
   return new Request("https://localhost/api/accounts/logout", {
     method: "POST",
@@ -457,6 +497,7 @@ describe("account service", () => {
       create,
       findByEmail: async () => null,
       findByMobileNumber: async () => null,
+      updateProfile: async () => {},
     };
     const service = new AccountService(
       repository,
@@ -500,6 +541,7 @@ describe("account service", () => {
       create: async () => { throw new AccountIdentityConflictError(); },
       findByEmail: async () => null,
       findByMobileNumber: async () => null,
+      updateProfile: async () => {},
     };
     const service = new AccountService(repository, async () => "test-hash");
     const input = {
@@ -876,6 +918,114 @@ describe("account login and session APIs", () => {
     now = new Date(now.getTime() + 15 * 60 * 1000 + 1);
     await expect(authentication.login("missing@example.com", "wrong password", "203.0.113.20")).resolves.toBeNull();
     expect([...fixture.loginRateLimits.values()].every((record) => record.attempt_count === 1)).toBe(true);
+  });
+});
+
+describe("account profile APIs", () => {
+  it("fetches the authenticated public profile", async () => {
+    const { fixture, account, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(meRequest(cookie), { ACCOUNT_DB: fixture.database });
+    const payload = await response.json() as { data: { account: Account } };
+
+    expect(response.status).toBe(200);
+    expect(payload.data.account).toMatchObject({ id: account.id, email: account.email, fullName: account.fullName });
+    expect(JSON.stringify(payload)).not.toMatch(/password|credential|token|session|rate/iu);
+  });
+
+  it("updates full name", async () => {
+    const { fixture, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest({ fullName: "  Jane Q. Doe  " }, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(200);
+    expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).full_name).toBe("Jane Q. Doe");
+  });
+
+  it("updates country using normalized input", async () => {
+    const { fixture, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest({ country: " ca " }, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(200);
+    expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).country_code).toBe("CA");
+  });
+
+  it("updates mobile using normalized input", async () => {
+    const { fixture, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest({ mobileNumber: "+1 (415) 555-0101" }, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(200);
+    expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).mobile_e164).toBe("+14155550101");
+  });
+
+  it("rejects duplicate normalized mobile numbers safely", async () => {
+    const { fixture, cookie, account } = await authenticatedProfileFixture();
+    const second = await app.fetch(registrationRequest(validRegistration({
+      email: "other@example.com",
+      mobileNumber: "+44 20 7183 8750",
+    })), { ACCOUNT_DB: fixture.database });
+    expect(second.status).toBe(201);
+
+    const response = await app.fetch(profilePatchRequest({ mobileNumber: "+442071838750" }, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(409);
+    expect((fixture.accounts.get(account.id) as Record<string, unknown>).mobile_e164).toBe(account.mobileNumber);
+  });
+
+  it("clears mobile verification when the mobile number changes", async () => {
+    const { fixture, cookie } = await authenticatedProfileFixture();
+    (fixture.accounts.get("acct_login_test") as Record<string, unknown>).mobile_verified_at = "2026-09-30T12:00:00.000Z";
+    const response = await app.fetch(profilePatchRequest({ mobileNumber: "+14155550101" }, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(200);
+    expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).mobile_verified_at).toBeNull();
+  });
+
+  it("updates marketing consent explicitly", async () => {
+    const { fixture, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest({ marketingConsent: true }, cookie), { ACCOUNT_DB: fixture.database });
+    const payload = await response.json() as { data: { account: Account } };
+    expect(response.status).toBe(200);
+    expect(payload.data.account.marketingConsent).toBe(true);
+    expect(payload.data.account.marketingConsentAt).not.toBeNull();
+  });
+
+  it("preserves unspecified fields during a partial update", async () => {
+    const { fixture, account, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest({ fullName: "Updated Name" }, cookie), { ACCOUNT_DB: fixture.database });
+    const updated = fixture.accounts.get(account.id) as Record<string, unknown>;
+    expect(response.status).toBe(200);
+    expect(updated.full_name).toBe("Updated Name");
+    expect(updated.country_code).toBe(account.countryCode);
+    expect(updated.mobile_e164).toBe(account.mobileNumber);
+    expect(updated.marketing_consent).toBe(Number(account.marketingConsent));
+  });
+
+  it.each([
+    ["empty full name", { fullName: "   " }],
+    ["invalid country", { country: "ZZ" }],
+    ["invalid mobile", { mobileNumber: "4155550100" }],
+  ])("rejects %s", async (_caseName, body) => {
+    const { fixture, account, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest(body, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(400);
+    expect(fixture.accounts.get(account.id)).toMatchObject({
+      full_name: account.fullName,
+      country_code: account.countryCode,
+      mobile_e164: account.mobileNumber,
+    });
+  });
+
+  it("rejects an unauthenticated profile update", async () => {
+    const fixture = createAccountDatabaseFixture();
+    const response = await app.fetch(profilePatchRequest({ fullName: "Nope" }), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(401);
+  });
+
+  it("does not allow email changes through the profile patch", async () => {
+    const { fixture, account, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest({ email: "changed@example.com" }, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(400);
+    expect((fixture.accounts.get(account.id) as Record<string, unknown>).email_normalized).toBe(account.email);
+  });
+
+  it("rejects non-boolean marketing consent", async () => {
+    const { fixture, cookie } = await authenticatedProfileFixture();
+    const response = await app.fetch(profilePatchRequest({ marketingConsent: "yes" }, cookie), { ACCOUNT_DB: fixture.database });
+    expect(response.status).toBe(400);
   });
 });
 

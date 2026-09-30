@@ -33,3 +33,13 @@ export type CreateAccountInput = {
   termsVersion: string;
   marketingConsent?: boolean;
 };
+
+export type AccountProfileUpdate = {
+  fullName: string;
+  countryCode: string;
+  mobileNumber: string;
+  mobileVerifiedAt: string | null;
+  marketingConsent: boolean;
+  marketingConsentAt: string | null;
+  updatedAt: string;
+};
