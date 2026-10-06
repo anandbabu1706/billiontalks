@@ -212,7 +212,12 @@ function createSfuFetchMock() {
         tracks: body.tracks.map((track: { mid: string; trackName: string }) => ({ mid: track.mid, trackName: track.trackName, status: "active" })),
       });
     }
-    if (url.endsWith("/tracks/close")) return Response.json({ tracks: body.tracks.map((track: { mid: string }) => ({ mid: track.mid, status: "closed" })) });
+    if (url.endsWith("/tracks/close")) {
+      const closed = body.tracks.map((track: { mid: string }) => ({ mid: track.mid, status: "closed" }));
+      if (body.force === false && body.sessionDescription) return Response.json({ sessionDescription: { type: "answer", sdp: "sfu-close-answer" }, tracks: closed });
+      if (body.force === false) return Response.json({ sessionDescription: { type: "offer", sdp: "sfu-close-offer" }, requiresImmediateRenegotiation: true, tracks: closed });
+      return Response.json({ tracks: closed });
+    }
     if (url.endsWith("/renegotiate")) return Response.json({ ok: true });
     return Response.json({ ok: true });
   });
@@ -1069,6 +1074,13 @@ describe("MeetingService lifecycle", () => {
       expect((await closed.json()).data.closed).toEqual(["microphone"]);
       const offSubscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-off-on-subscriber" });
       expect((await offSubscribe.json()).data.tracks).toEqual([]);
+      const offPayload = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-off-on-subscriber" })).json();
+      expect(offPayload.data.removed).toEqual([expect.objectContaining({ trackName: "microphone" })]);
+      expect((await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", host.cookie, {
+        connectionId: "host-mic-off-on-subscriber",
+        operationId: offPayload.data.operationId,
+        sessionDescription: { type: "answer", sdp: "host-mic-removal-answer" },
+      })).status).toBe(200);
 
       expect((await publish("1", "mic-on-fresh-offer")).status).toBe(200);
       expect((await ready()).status).toBe(200);
@@ -1079,6 +1091,71 @@ describe("MeetingService lifecycle", () => {
       ]);
       expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote")).toHaveLength(2);
       expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/close")).length).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("negotiates screen-share start/stop/restart on one subscriber session without forced closes or touching mic/camera", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const connectionId = "participant-share-publisher";
+      const hostConnection = "host-share-subscriber";
+      const publish = async (trackName: string, mid: string) => {
+        expect((await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", participant.cookie, {
+          connectionId,
+          sessionDescription: { type: "offer", sdp: `offer-${trackName}-${mid}` },
+          tracks: [{ trackName, mid }],
+        })).status).toBe(200);
+        expect((await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", participant.cookie, { connectionId, trackNames: [trackName] })).status).toBe(200);
+      };
+      const subscribe = async () => (await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: hostConnection })).json()).data;
+      const answer = async (operationId: string) => expect((await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", host.cookie, {
+        connectionId: hostConnection,
+        operationId,
+        sessionDescription: { type: "answer", sdp: "host-answer" },
+      })).status).toBe(200);
+      const stopShare = async () => {
+        const closed = await api.request(`/api/meetings/${meeting.id}/media/tracks/close`, "POST", participant.cookie, {
+          connectionId,
+          trackNames: ["screen-video"],
+          sessionDescription: { type: "offer", sdp: "participant-close-offer" },
+        });
+        expect(closed.status).toBe(200);
+        expect((await closed.json()).data.sessionDescription).toEqual({ type: "answer", sdp: "sfu-close-answer" });
+      };
+
+      await publish("microphone", "0");
+      await publish("camera", "1");
+      const initial = await subscribe();
+      expect(initial.tracks.map((track: { trackName: string }) => track.trackName)).toEqual(["microphone", "camera"]);
+      await answer(initial.operationId);
+
+      for (const mid of ["2", "3"]) {
+        await publish("screen-video", mid);
+        const started = await subscribe();
+        expect(started.tracks.map((track: { trackName: string }) => track.trackName)).toEqual(["screen-video"]);
+        expect(started.removed ?? []).toEqual([]);
+        await answer(started.operationId);
+
+        await stopShare();
+        const stopped = await subscribe();
+        expect(stopped.tracks).toEqual([]);
+        expect(stopped.removed.map((track: { trackName: string }) => track.trackName)).toEqual(["screen-video"]);
+        expect(stopped.sessionDescription.type).toBe("offer");
+        await answer(stopped.operationId);
+        expect((await subscribe()).operationId).toBeNull();
+      }
+
+      const closeCalls = sfu.calls.filter((call) => call.url.endsWith("/tracks/close"));
+      expect(closeCalls).toHaveLength(4);
+      expect(closeCalls.every((call) => call.body.force === false)).toBe(true);
+      expect(closeCalls.filter((call) => call.body.sessionDescription).map((call) => call.body.tracks)).toEqual([[{ mid: "2" }], [{ mid: "3" }]]);
+      expect(sfu.calls.filter((call) => call.url.endsWith("/sessions/new"))).toHaveLength(2);
+      const state = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: hostConnection })).json();
+      expect(state.data.operationId).toBeNull();
     } finally {
       vi.unstubAllGlobals();
     }

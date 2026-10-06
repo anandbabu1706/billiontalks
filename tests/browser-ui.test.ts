@@ -21,6 +21,7 @@ function createResponse(payload: unknown, ok = true, status = 200) {
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   static initialRemoteTrackKind: "audio" | "video" = "video";
+  static negotiationViolations: string[] = [];
   public connectionState = "new";
   public iceConnectionState = "new";
   public iceGatheringState = "complete";
@@ -46,7 +47,10 @@ class FakePeerConnection {
   }
 
   getTransceivers() { return this.transceivers; }
-  async createOffer() { return { type: "offer", sdp: "browser-offer-sdp" }; }
+  async createOffer() {
+    if (this.signalingState !== "stable") FakePeerConnection.negotiationViolations.push(`createOffer while ${this.signalingState}`);
+    return { type: "offer", sdp: "browser-offer-sdp" };
+  }
   async createAnswer() { return { type: "answer", sdp: "browser-answer-sdp" }; }
   emitTrack(mid: string, track: any) { this.ontrack?.({ transceiver: { mid }, track }); }
   setConnectionStates(connectionState: string, iceConnectionState: string) {
@@ -55,12 +59,17 @@ class FakePeerConnection {
     this.onconnectionstatechange?.();
     this.oniceconnectionstatechange?.();
   }
-  async setLocalDescription(description: any) { this.localDescription = description; this.signalingState = description.type === "offer" ? "have-local-offer" : "stable"; }
+  async setLocalDescription(description: any) {
+    if (description.type === "rollback") { this.signalingState = "stable"; return; }
+    this.localDescription = description;
+    this.signalingState = description.type === "offer" ? "have-local-offer" : "stable";
+  }
   async setRemoteDescription(description: any) {
+    if (description.type === "offer" && this.signalingState !== "stable") FakePeerConnection.negotiationViolations.push(`remote offer while ${this.signalingState}`);
     this.remoteDescription = description;
     this.signalingState = "stable";
     this.setConnectionStates("connected", "connected");
-    if (description.type === "offer" && this.ontrack) {
+    if (description.type === "offer" && this.ontrack && !/removal|screen/.test(String(description.sdp))) {
       this.emitTrack("remote-0", createFakeRemoteTrack("remote-initial-track", FakePeerConnection.initialRemoteTrackKind));
     }
   }
@@ -138,7 +147,12 @@ function createSessionNamespace() {
 async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenShare = true) {
   let nextSubscribePayload: unknown = null;
   let subscribePayloadUsed = false;
+  const subscribeQueue: unknown[] = [];
   let nextSubscribeError: string | null = null;
+  let registrationResponse = createResponse({
+    ok: true,
+    data: { account: { email: "jane@example.com" }, emailVerificationRequired: true },
+  }, true, 201);
   let includeRemoteParticipant = false;
   let additionalRemoteParticipant: { id: string; userId: string; displayName: string; role: string; state: string } | null = null;
   const remoteParticipants = () => [
@@ -254,12 +268,13 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
         subscribePayloadUsed = true;
         return createResponse(nextSubscribePayload);
       }
+      if (subscribeQueue.length) return createResponse(subscribeQueue.shift());
       return createResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } });
     }
 
     if (url.endsWith("/media/tracks/close") && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}"));
-      return createResponse({ ok: true, data: { closed: body.trackNames ?? [] } });
+      return createResponse({ ok: true, data: { closed: body.trackNames ?? [], sessionDescription: body.sessionDescription ? { type: "answer", sdp: "sfu-close-answer" } : null } });
     }
 
     if (url.endsWith("/media/close") && method === "POST") {
@@ -279,6 +294,10 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
           latestRecordingStatus: "STOPPED",
         }],
       });
+    }
+
+    if (url === "/api/accounts/register" && method === "POST") {
+      return registrationResponse;
     }
 
     if (url.endsWith("/recording/start")) {
@@ -402,7 +421,9 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     micStreams: createdMicStreams,
     cameraStreams: createdCameraStreams,
     setNextSubscribePayload(payload: unknown) { nextSubscribePayload = payload; subscribePayloadUsed = false; },
+    queueSubscribePayload(payload: unknown) { subscribeQueue.push(payload); },
     setNextSubscribeError(message: string) { nextSubscribeError = message; },
+    setRegistrationResponse(payload: unknown, ok = true, status = 201) { registrationResponse = createResponse(payload, ok, status); },
     setIncludeRemoteParticipant() { includeRemoteParticipant = true; },
     setAdditionalRemoteParticipant(userId: string, displayName: string) {
       additionalRemoteParticipant = { id: "participant-" + userId, userId, displayName, role: "PARTICIPANT", state: "JOINED" };
@@ -439,6 +460,40 @@ function getParticipantNames(document: Document): string[] {
   return Array.from(document.querySelectorAll("#participantList li")).map((item) => item.textContent ?? "");
 }
 
+function openRegistration(document: Document): void {
+  document.getElementById("openRegistrationBtn")?.click();
+  expect(getVisibleScreen(document, "registerScreen")).toBe(true);
+}
+
+function fillRegistrationForm(document: Document, overrides: Record<string, string | boolean> = {}): void {
+  const values = {
+    fullName: "Jane Doe",
+    email: "jane@example.com",
+    country: "US",
+    mobileNumber: "+1 415 555 0100",
+    password: "a long passphrase",
+    confirmPassword: "a long passphrase",
+    terms: true,
+    marketingConsent: false,
+    ...overrides,
+  };
+  (document.getElementById("registrationFullName") as HTMLInputElement).value = String(values.fullName);
+  (document.getElementById("registrationEmail") as HTMLInputElement).value = String(values.email);
+  (document.getElementById("registrationCountry") as HTMLSelectElement).value = String(values.country);
+  (document.getElementById("registrationMobile") as HTMLInputElement).value = String(values.mobileNumber);
+  (document.getElementById("registrationPassword") as HTMLInputElement).value = String(values.password);
+  (document.getElementById("registrationConfirmPassword") as HTMLInputElement).value = String(values.confirmPassword);
+  (document.getElementById("registrationTerms") as HTMLInputElement).checked = Boolean(values.terms);
+  (document.getElementById("registrationMarketing") as HTMLInputElement).checked = Boolean(values.marketingConsent);
+}
+
+function registrationCalls(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.filter(([input, init]) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    return url === "/api/accounts/register" && (init?.method ?? "GET").toUpperCase() === "POST";
+  });
+}
+
 async function joinHostMeeting(document: Document, title: string): Promise<void> {
   document.getElementById("startMeetingBtn")?.click();
   (document.getElementById("meetingTitle") as HTMLInputElement).value = title;
@@ -453,11 +508,104 @@ async function joinHostMeeting(document: Document, title: string): Promise<void>
 afterEach(() => {
   openWindows.splice(0).forEach((window) => window.close());
   FakePeerConnection.instances.length = 0;
+  FakePeerConnection.negotiationViolations.length = 0;
   FakePeerConnection.initialRemoteTrackKind = "video";
   vi.restoreAllMocks();
 });
 
 describe("BillionTalks browser UI regression tests", () => {
+  it("renders the registration screen with all locked fields", async () => {
+    const { document } = await loadRenderedPage();
+    openRegistration(document);
+
+    for (const id of [
+      "registrationFullName",
+      "registrationEmail",
+      "registrationCountry",
+      "registrationMobile",
+      "registrationPassword",
+      "registrationConfirmPassword",
+      "registrationTerms",
+      "registrationMarketing",
+      "registrationSubmit",
+    ]) {
+      expect(document.getElementById(id)).not.toBeNull();
+    }
+    expect(document.getElementById("registrationFullName")?.getAttribute("required")).toBe("");
+    expect(document.getElementById("registrationTerms")?.getAttribute("required")).toBe("");
+    expect(document.getElementById("registrationCountry")?.querySelectorAll("option").length).toBeGreaterThan(200);
+    expect(document.body.textContent).toContain("Email verification is required after registration");
+  });
+
+  it("shows required-field, password, confirm-password, and Terms validation", async () => {
+    const { document, fetchMock } = await loadRenderedPage();
+    openRegistration(document);
+    document.getElementById("registrationSubmit")?.click();
+    await flush();
+
+    expect(document.getElementById("registrationFullNameError")?.textContent).toContain("full name");
+    expect(document.getElementById("registrationTermsError")?.textContent).toContain("Accept");
+    expect(registrationCalls(fetchMock)).toHaveLength(0);
+
+    fillRegistrationForm(document, { password: "short", confirmPassword: "different", terms: false });
+    document.getElementById("registrationSubmit")?.click();
+    await flush();
+    expect(document.getElementById("registrationPasswordError")?.textContent).toContain("8 characters");
+    expect(document.getElementById("registrationConfirmPasswordError")?.textContent).toContain("match");
+    expect(document.getElementById("registrationTermsError")?.textContent).toContain("Accept");
+    expect(registrationCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("submits the API contract and shows the verification-required success state", async () => {
+    const { document, fetchMock } = await loadRenderedPage();
+    openRegistration(document);
+    fillRegistrationForm(document, { marketingConsent: true });
+    document.getElementById("registrationSubmit")?.click();
+    await flush();
+
+    const calls = registrationCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    const [, init] = calls[0];
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      fullName: "Jane Doe",
+      email: "jane@example.com",
+      country: "US",
+      mobileNumber: "+1 415 555 0100",
+      password: "a long passphrase",
+      acceptedTerms: true,
+      marketingConsent: true,
+    });
+    expect(document.getElementById("registrationFormPanel")?.hasAttribute("hidden")).toBe(true);
+    expect(document.getElementById("registrationSuccessPanel")?.hasAttribute("hidden")).toBe(false);
+    expect(document.body.textContent).toContain("Check your email to verify your account");
+    expect(document.body.textContent).not.toContain("emailVerificationToken");
+  });
+
+  it("displays API errors safely and prevents duplicate submissions", async () => {
+    const { document, fetchMock, setRegistrationResponse } = await loadRenderedPage();
+    setRegistrationResponse({ ok: false, error: "An account with these details could not be registered." }, false, 409);
+    openRegistration(document);
+    fillRegistrationForm(document);
+    const submit = document.getElementById("registrationSubmit") as HTMLButtonElement;
+    submit.click();
+    submit.click();
+    await flush();
+
+    expect(registrationCalls(fetchMock)).toHaveLength(1);
+    expect(document.getElementById("registrationError")?.textContent).toContain("could not be registered");
+    expect(document.getElementById("registrationSuccessPanel")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("keeps the primary control present in the mobile layout", async () => {
+    const { document } = await loadRenderedPage();
+    openRegistration(document);
+    expect(document.querySelector("style")?.textContent).toContain("@media (max-width: 720px)");
+    expect(document.getElementById("registrationSubmit")?.textContent).toContain("Create account");
+    expect(document.getElementById("registrationSubmit")?.getBoundingClientRect).toBeDefined();
+  });
+
   it("uses Cloudflare's DurableObject runtime base required for RPC", () => {
     expect(MeetingStateDurableObject.prototype instanceof DurableObject).toBe(true);
   });
@@ -754,6 +902,169 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(cameraStreams[0]?.getVideoTracks()[0]?.readyState).toBe("live");
   });
 
+  async function setupPublisherWithMedia(shareCount: number) {
+    const page = await loadRenderedPage();
+    const { window, document } = page;
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const screenTracks = Array.from({ length: shareCount }, (_unused, index) => {
+      const track: any = {
+        id: "lifecycle-screen-" + index,
+        kind: "video",
+        readyState: "live",
+        stop: vi.fn(() => { track.readyState = "ended"; }),
+        addEventListener: vi.fn(),
+      };
+      return track;
+    });
+    let captureIndex = 0;
+    Object.defineProperty(window.navigator.mediaDevices, "getDisplayMedia", {
+      value: vi.fn(async () => {
+        const track = screenTracks[captureIndex++];
+        return { getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [] };
+      }),
+      configurable: true,
+    });
+    await joinHostMeeting(document, "Share lifecycle");
+    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
+    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
+    await flush();
+    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
+    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
+    await flush();
+    return { ...page, screenTracks };
+  }
+
+  function bodiesFor(fetchMock: ReturnType<typeof vi.fn>, suffix: string) {
+    return fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith(suffix) && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+  }
+
+  const publisherPeers = () => FakePeerConnection.instances.filter((peer) => !peer.ontrack && peer.getTransceivers().length);
+
+  it("keeps one publisher PeerConnection with stable m-line order across repeated screen-share start/stop", async () => {
+    const { document, fetchMock, screenTracks, micStreams, cameraStreams } = await setupPublisherWithMedia(3);
+    const names = (body: any) => body.tracks.map((track: { trackName: string }) => track.trackName);
+    expect(bodiesFor(fetchMock, "/media/publish").flatMap(names)).toEqual(["microphone", "camera"]);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      document.getElementById("shareScreenBtn")?.click();
+      await flush();
+      document.getElementById("shareScreenBtn")?.click();
+      await flush();
+    }
+
+    const publishers = publisherPeers();
+    expect(publishers).toHaveLength(1);
+    const transceivers = publishers[0].getTransceivers();
+    expect(transceivers.map((entry) => entry.sender.track.id)).toEqual([
+      "audio-track-1", "video-track-1", "lifecycle-screen-0", "lifecycle-screen-1", "lifecycle-screen-2",
+    ]);
+    expect(transceivers.map((entry) => entry.mid)).toEqual(["0", "1", "2", "3", "4"]);
+    expect(bodiesFor(fetchMock, "/media/publish").flatMap(names)).toEqual(["microphone", "camera", "screen-video", "screen-video", "screen-video"]);
+    expect(transceivers.slice(0, 2).every((entry) => !entry.stop.mock.calls.length)).toBe(true);
+    expect(transceivers.slice(2).every((entry) => entry.stop.mock.calls.length === 1)).toBe(true);
+
+    const closes = bodiesFor(fetchMock, "/media/tracks/close");
+    expect(closes.map((body) => body.trackNames)).toEqual([["screen-video"], ["screen-video"], ["screen-video"]]);
+    expect(closes.every((body) => body.sessionDescription?.type === "offer")).toBe(true);
+    expect(publishers[0].remoteDescription).toEqual({ type: "answer", sdp: "sfu-close-answer" });
+    expect(publishers[0].signalingState).toBe("stable");
+    expect(FakePeerConnection.negotiationViolations).toEqual([]);
+    expect(bodiesFor(fetchMock, "/media/recover")).toHaveLength(0);
+    screenTracks.forEach((track) => expect(track.stop).toHaveBeenCalled());
+    expect(micStreams[0].getAudioTracks()[0].readyState).toBe("live");
+    expect(cameraStreams[0].getVideoTracks()[0].readyState).toBe("live");
+  });
+
+  it("serializes overlapping share start/stop publisher negotiations", async () => {
+    const { document } = await setupPublisherWithMedia(2);
+    const share = document.getElementById("shareScreenBtn") as HTMLButtonElement;
+    share.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    share.click();
+    share.click();
+    await flush();
+    await flush();
+    expect(FakePeerConnection.negotiationViolations).toEqual([]);
+    expect(publisherPeers()).toHaveLength(1);
+    expect(publisherPeers()[0].signalingState).toBe("stable");
+  });
+
+  it("recovers the publisher after a screen-share lifecycle without republishing the stopped share", async () => {
+    const { document, fetchMock, screenTracks } = await setupPublisherWithMedia(2);
+    const share = document.getElementById("shareScreenBtn") as HTMLButtonElement;
+    share.click();
+    await flush();
+    share.click();
+    await flush();
+
+    const failed = publisherPeers()[0];
+    failed.setConnectionStates("failed", "failed");
+    await flush();
+    await flush();
+    expect(bodiesFor(fetchMock, "/media/recover")).toEqual([expect.objectContaining({ direction: "publisher" })]);
+    const recoveryPublish = bodiesFor(fetchMock, "/media/publish").at(-1);
+    expect(recoveryPublish.tracks.map((track: { trackName: string }) => track.trackName)).toEqual(["microphone", "camera"]);
+    expect(recoveryPublish.tracks.map((track: { mid: string }) => track.mid)).toEqual(["0", "1"]);
+
+    share.click();
+    await flush();
+    const recovered = publisherPeers().at(-1)!;
+    expect(recovered).not.toBe(failed);
+    expect(recovered.getTransceivers().map((entry) => entry.sender.track.id)).toEqual(["audio-track-1", "video-track-1", screenTracks[1].id]);
+    expect(FakePeerConnection.negotiationViolations).toEqual([]);
+  });
+
+  it("keeps remote camera and microphone live while remote screen share starts, stops, and restarts as a distinct stream", async () => {
+    const { window, document, fetchMock, setNextSubscribePayload, queueSubscribePayload, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    setIncludeRemoteParticipant();
+    const remote = { publisherUserId: "remote-user", publisherDisplayName: "Remote Guest" };
+    const camera = { ...remote, mid: "remote-0", trackName: "camera", publicationKey: "remote-camera" };
+    const microphone = { ...remote, mid: "remote-1", trackName: "microphone", publicationKey: "remote-microphone" };
+    const screen = { ...remote, mid: "remote-2", trackName: "screen-video", publicationKey: "remote-screen" };
+    setNextSubscribePayload({ ok: true, data: { operationId: "op-1", sessionDescription: { type: "offer", sdp: "offer-initial" }, tracks: [camera, microphone] } });
+    await joinHostMeeting(document, "Remote share");
+
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+    const microphoneTrack = createFakeRemoteTrack("remote-mic", "audio");
+    subscriber.emitTrack("remote-1", microphoneTrack);
+    const tile = () => document.querySelector('#videoStage .tile[data-user-id="remote-user"]')!;
+    const cameraStream = (tile().querySelector("video.remote-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream;
+    const cameraTrack = cameraStream.getVideoTracks()[0];
+    expect(cameraStream.getAudioTracks()).toEqual([microphoneTrack]);
+    expect(tile().querySelector("video.remote-screen-media")).toBeNull();
+
+    queueSubscribePayload({ ok: true, data: { operationId: "op-a", sessionDescription: { type: "offer", sdp: "offer-screen-a" }, tracks: [screen] } });
+    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
+    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
+    await flush();
+    const firstScreen = createFakeRemoteTrack("remote-screen-a", "video");
+    subscriber.emitTrack("remote-2", firstScreen);
+    const screenElement = tile().querySelector("video.remote-screen-media") as HTMLVideoElement;
+    expect((screenElement.srcObject as unknown as FakeMediaStream).getVideoTracks()).toEqual([firstScreen]);
+    expect(cameraStream.getVideoTracks()).toEqual([cameraTrack]);
+
+    queueSubscribePayload({ ok: true, data: { operationId: "op-remove", sessionDescription: { type: "offer", sdp: "offer-removal" }, tracks: [], removed: [screen] } });
+    queueSubscribePayload({ ok: true, data: { operationId: "op-restart", sessionDescription: { type: "offer", sdp: "offer-screen-restart" }, tracks: [screen] } });
+    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
+    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
+    await flush();
+    await flush();
+    expect(firstScreen.stop).toHaveBeenCalled();
+    const restartedScreen = createFakeRemoteTrack("remote-screen-restart", "video");
+    subscriber.emitTrack("remote-2", restartedScreen);
+    expect(cameraTrack.stop).not.toHaveBeenCalled();
+    expect(microphoneTrack.stop).not.toHaveBeenCalled();
+    expect(cameraStream.getTracks()).toEqual([cameraTrack, microphoneTrack]);
+    expect(((tile().querySelector("video.remote-screen-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream).getVideoTracks()).toEqual([restartedScreen]);
+
+    expect(bodiesFor(fetchMock, "/media/renegotiate").map((body) => body.operationId)).toEqual(["op-1", "op-a", "op-remove", "op-restart"]);
+    expect(FakePeerConnection.instances.filter((peer) => peer.ontrack)).toHaveLength(1);
+    expect(FakePeerConnection.negotiationViolations).toEqual([]);
+  });
+
   it("disables screen share and explains capability when getDisplayMedia is unavailable", async () => {
     const { window, document, fetchMock } = await loadRenderedPage("http://localhost/", false);
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
@@ -856,9 +1167,11 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(firstCamera.stop).toHaveBeenCalledTimes(1);
     expect(firstMicrophone.stop).toHaveBeenCalledTimes(1);
     expect(firstScreenShare.stop).toHaveBeenCalledTimes(1);
-    expect(remoteStream.getVideoTracks()).toEqual([nextCamera, nextScreenShare]);
+    const screenStream = (remoteTile?.querySelector("video.remote-screen-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream;
+    expect(remoteStream.getVideoTracks()).toEqual([nextCamera]);
+    expect(screenStream.getVideoTracks()).toEqual([nextScreenShare]);
     expect(remoteStream.getAudioTracks()).toEqual([nextMicrophone]);
-    expect(remoteStream.getTracks()).toHaveLength(3);
+    expect(remoteStream.getTracks()).toHaveLength(2);
     expect(remoteTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
     expect(remoteTile?.querySelectorAll("audio.remote-media")).toHaveLength(0);
     expect(otherTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
@@ -877,9 +1190,10 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(nextCamera.stop).toHaveBeenCalledTimes(1);
     expect(nextMicrophone.stop).toHaveBeenCalledTimes(1);
     expect(nextScreenShare.stop).toHaveBeenCalledTimes(1);
-    expect(remoteStream.getVideoTracks()).toEqual([finalCamera, finalScreenShare]);
+    expect(remoteStream.getVideoTracks()).toEqual([finalCamera]);
+    expect(screenStream.getVideoTracks()).toEqual([finalScreenShare]);
     expect(remoteStream.getAudioTracks()).toEqual([finalMicrophone]);
-    expect(remoteStream.getTracks()).toHaveLength(3);
+    expect(remoteStream.getTracks()).toHaveLength(2);
     expect(remoteTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
     expect(remoteTile?.querySelectorAll("audio.remote-media")).toHaveLength(0);
     expect((remoteTile?.querySelector("video.remote-media") as HTMLVideoElement)).toBe(remoteVideo);

@@ -52,6 +52,7 @@ export type RealtimeParticipantMediaState = {
     operationId: string;
     sessionDescription: RealtimeSessionDescription;
     tracks: RealtimeSubscribedTrack[];
+    removed?: RealtimeSubscribedTrack[];
   };
 };
 
@@ -109,10 +110,16 @@ export class CloudflareRealtimeConnectionClient {
     return this.request("PUT", `/sessions/${encodeURIComponent(sessionId)}/renegotiate`, { sessionDescription });
   }
 
-  closeTracks(sessionId: string, mids: string[]): Promise<RealtimeTrackOperationResult> {
+  // Forced close drops m-lines on the SFU side without a negotiation; only use it when the whole session is being discarded.
+  closeTracks(
+    sessionId: string,
+    mids: string[],
+    options: { force?: boolean; sessionDescription?: RealtimeSessionDescription } = {},
+  ): Promise<RealtimeTrackOperationResult> {
     return this.request("PUT", `/sessions/${encodeURIComponent(sessionId)}/tracks/close`, {
       tracks: mids.map((mid) => ({ mid })),
-      force: true,
+      force: options.force ?? true,
+      ...(options.sessionDescription ? { sessionDescription: options.sessionDescription } : {}),
     });
   }
 

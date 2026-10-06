@@ -1108,6 +1108,216 @@ function meetingUiHtml(): string {
         border-color: rgba(61, 220, 151, 0.5);
         color: var(--success);
       }
+      .registration-shell {
+        max-width: 1080px;
+        margin: 28px auto 0;
+        display: grid;
+        grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1.22fr);
+        overflow: hidden;
+        border: 1px solid #d7e2f0;
+        border-radius: 24px;
+        background: #f8fbff;
+        color: #12213d;
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+      }
+      .registration-aside {
+        padding: 42px 34px;
+        background: radial-gradient(circle at 15% 10%, rgba(93, 142, 255, 0.34), transparent 42%), #0b1b3a;
+        color: #e8f0ff;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 650px;
+      }
+      .registration-mark {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+      }
+      .registration-mark::before {
+        content: "BT";
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        border-radius: 10px;
+        background: #3f72e8;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+      }
+      .registration-aside h1 {
+        max-width: 310px;
+        margin: 70px 0 16px;
+        color: #ffffff;
+        font-size: clamp(30px, 4vw, 46px);
+        line-height: 1.05;
+      }
+      .registration-aside p {
+        max-width: 320px;
+        color: #b9c9e8;
+        line-height: 1.65;
+      }
+      .registration-note {
+        padding-top: 22px;
+        border-top: 1px solid rgba(185, 201, 232, 0.22);
+        color: #b9c9e8;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .registration-form-panel {
+        padding: 42px 44px;
+        background: #f8fbff;
+      }
+      .registration-form-panel h2 {
+        margin-bottom: 8px;
+        color: #12213d;
+        font-size: 28px;
+      }
+      .registration-subtitle {
+        margin-bottom: 26px;
+        color: #5b6b85;
+        line-height: 1.55;
+      }
+      .registration-form-panel .error {
+        color: #8f2841;
+        background: #fff2f4;
+        border-color: #e8afbb;
+      }
+      .registration-form {
+        display: grid;
+        gap: 16px;
+      }
+      .registration-fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .registration-field {
+        min-width: 0;
+      }
+      .registration-field-wide {
+        grid-column: 1 / -1;
+      }
+      .registration-form-panel label {
+        display: block;
+        margin-bottom: 7px;
+        color: #263955;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .registration-form-panel input,
+      .registration-form-panel select {
+        width: 100%;
+        min-height: 46px;
+        padding: 11px 13px;
+        border: 1px solid #c8d5e6;
+        border-radius: 10px;
+        outline: none;
+        background: #ffffff;
+        color: #12213d;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      .registration-form-panel input:focus,
+      .registration-form-panel select:focus {
+        border-color: #3f72e8;
+        box-shadow: 0 0 0 3px rgba(63, 114, 232, 0.18);
+      }
+      .registration-form-panel input[aria-invalid="true"],
+      .registration-form-panel select[aria-invalid="true"] {
+        border-color: #c2415d;
+      }
+      .password-control {
+        position: relative;
+      }
+      .password-control input {
+        padding-right: 68px;
+      }
+      .password-toggle {
+        position: absolute;
+        right: 8px;
+        bottom: 7px;
+        min-height: 32px;
+        padding: 5px 8px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: #2f5fc4;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .password-toggle:hover { transform: none; background: #edf3ff; }
+      .field-error {
+        min-height: 17px;
+        margin: 5px 0 0;
+        color: #a52e4a;
+        font-size: 12px;
+      }
+      .registration-checks {
+        display: grid;
+        gap: 11px;
+        margin-top: 2px;
+      }
+      .registration-check {
+        display: flex !important;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 0 !important;
+        color: #4b5c75 !important;
+        font-size: 13px !important;
+        font-weight: 500 !important;
+        line-height: 1.45;
+      }
+      .registration-check input {
+        flex: 0 0 auto;
+        width: 18px;
+        min-height: 18px;
+        margin-top: 1px;
+        accent-color: #3f72e8;
+      }
+      .registration-check a,
+      .registration-back,
+      .registration-signin a {
+        color: #2f5fc4;
+        font-weight: 700;
+      }
+      .registration-submit {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 4px;
+        background: #2459c5;
+        color: #ffffff;
+        font-weight: 800;
+      }
+      .registration-submit:hover { background: #1d4cab; }
+      .registration-submit:disabled { cursor: wait; opacity: 0.65; transform: none; }
+      .registration-signin {
+        margin: 18px 0 0;
+        color: #5b6b85;
+        text-align: center;
+        font-size: 13px;
+      }
+      .registration-back {
+        display: inline-block;
+        margin-top: 18px;
+        color: #5b6b85;
+        font-size: 13px;
+        text-decoration: none;
+      }
+      .registration-back:hover { color: #2f5fc4; }
+      .registration-success {
+        padding: 24px;
+        border: 1px solid #b9d9ca;
+        border-radius: 14px;
+        background: #f1fbf5;
+        color: #1d5737;
+      }
+      .registration-success h3 { color: #174b31; }
+      .registration-success p { line-height: 1.55; }
       @media (max-width: 980px) {
         .hero, .meeting-shell {
           grid-template-columns: 1fr;
@@ -1119,6 +1329,16 @@ function meetingUiHtml(): string {
         .video-stage {
           grid-template-columns: 1fr;
         }
+      }
+      @media (max-width: 720px) {
+        .app-shell { padding: 16px; }
+        .registration-shell { display: block; margin-top: 12px; border-radius: 18px; }
+        .registration-aside { min-height: auto; padding: 26px 22px; }
+        .registration-aside h1 { margin: 42px 0 12px; font-size: 34px; }
+        .registration-note { margin-top: 28px; }
+        .registration-form-panel { padding: 28px 22px; }
+        .registration-fields { grid-template-columns: 1fr; gap: 12px; }
+        .registration-field-wide { grid-column: auto; }
       }
     </style>
   </head>
@@ -1169,6 +1389,7 @@ function meetingUiHtml(): string {
               <div class="actions">
                 <button class="primary" id="startMeetingBtn">Start Meeting</button>
                 <button class="secondary" id="joinMeetingBtn">Join Meeting</button>
+                <button class="ghost" id="openRegistrationBtn" type="button">Create an account</button>
               </div>
             </div>
             <div class="info-box">
@@ -1187,6 +1408,89 @@ function meetingUiHtml(): string {
             </div>
             <ol id="meetingHistoryList" class="history-list"></ol>
           </section>
+        </div>
+      </section>
+
+      <section id="registerScreen" class="screen">
+        <div class="registration-shell">
+          <aside class="registration-aside">
+            <div>
+              <div class="registration-mark">BillionTalks</div>
+              <h1>Make room for better conversations.</h1>
+              <p>Create your account to host thoughtful meetings, bring people together, and keep every conversation moving.</p>
+            </div>
+            <div class="registration-note">Email verification is required after registration. You will not be signed in automatically.</div>
+          </aside>
+          <div class="registration-form-panel">
+            <div id="registrationFormPanel">
+              <div class="kicker" style="color:#2f5fc4;">Join BillionTalks</div>
+              <h2>Create your BillionTalks account</h2>
+              <p class="registration-subtitle">Set up your account in a few steps. Your mobile number helps keep your account details complete.</p>
+              <div id="registrationError" class="error" role="alert" aria-live="polite" style="display:none;"></div>
+              <form id="registrationForm" class="registration-form" novalidate>
+                <div class="registration-fields">
+                  <div class="registration-field registration-field-wide">
+                    <label for="registrationFullName">Full name</label>
+                    <input id="registrationFullName" name="fullName" type="text" autocomplete="name" maxlength="200" required aria-required="true" />
+                    <p id="registrationFullNameError" class="field-error" aria-live="polite"></p>
+                  </div>
+                  <div class="registration-field">
+                    <label for="registrationEmail">Email</label>
+                    <input id="registrationEmail" name="email" type="email" autocomplete="email" required aria-required="true" />
+                    <p id="registrationEmailError" class="field-error" aria-live="polite"></p>
+                  </div>
+                  <div class="registration-field">
+                    <label for="registrationCountry">Country</label>
+                    <select id="registrationCountry" name="country" autocomplete="country" required aria-required="true">
+                      <option value="">Select country</option>
+                    </select>
+                    <p id="registrationCountryError" class="field-error" aria-live="polite"></p>
+                  </div>
+                  <div class="registration-field registration-field-wide">
+                    <label for="registrationMobile">Mobile number with country code</label>
+                    <input id="registrationMobile" name="mobileNumber" type="tel" autocomplete="tel" inputmode="tel" placeholder="+1 415 555 0100" required aria-required="true" />
+                    <p id="registrationMobileError" class="field-error" aria-live="polite"></p>
+                  </div>
+                  <div class="registration-field">
+                    <label for="registrationPassword">Password</label>
+                    <div class="password-control">
+                      <input id="registrationPassword" name="password" type="password" autocomplete="new-password" minlength="8" required aria-required="true" />
+                      <button class="password-toggle" type="button" data-password-target="registrationPassword">Show</button>
+                    </div>
+                    <p id="registrationPasswordError" class="field-error" aria-live="polite"></p>
+                  </div>
+                  <div class="registration-field">
+                    <label for="registrationConfirmPassword">Confirm password</label>
+                    <div class="password-control">
+                      <input id="registrationConfirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required aria-required="true" />
+                      <button class="password-toggle" type="button" data-password-target="registrationConfirmPassword">Show</button>
+                    </div>
+                    <p id="registrationConfirmPasswordError" class="field-error" aria-live="polite"></p>
+                  </div>
+                </div>
+                <div class="registration-checks">
+                  <label class="registration-check" for="registrationTerms">
+                    <input id="registrationTerms" name="terms" type="checkbox" required aria-required="true" />
+                    <span>I agree to the <a href="#terms">Terms of Service</a> and <a href="#privacy">Privacy Policy</a>.</span>
+                  </label>
+                  <p id="registrationTermsError" class="field-error" aria-live="polite"></p>
+                  <label class="registration-check" for="registrationMarketing">
+                    <input id="registrationMarketing" name="marketingConsent" type="checkbox" />
+                    <span>Send me occasional BillionTalks product updates.</span>
+                  </label>
+                </div>
+                <button id="registrationSubmit" class="registration-submit" type="submit">Create account</button>
+              </form>
+              <p class="registration-signin">Already have an account? <a href="#sign-in" id="registrationSignInLink">Sign in</a></p>
+              <a class="registration-back" href="#home" id="backToHomeFromRegistration">Back to meetings</a>
+            </div>
+            <div id="registrationSuccessPanel" class="registration-success" hidden role="status" aria-live="polite">
+              <div class="kicker" style="color:#27784b;">Almost there</div>
+              <h3>Check your email to verify your account.</h3>
+              <p>We sent a verification message to <strong id="registrationSuccessEmail"></strong>. Follow the link there before signing in.</p>
+              <button class="secondary" id="registrationSuccessBack" type="button">Return to meetings</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1379,6 +1683,7 @@ function meetingUiHtml(): string {
         home: document.getElementById('homeScreen'),
         create: document.getElementById('createScreen'),
         join: document.getElementById('joinScreen'),
+        register: document.getElementById('registerScreen'),
         prejoin: document.getElementById('prejoinScreen'),
         meeting: document.getElementById('meetingScreen'),
         ended: document.getElementById('endedScreen'),
@@ -1386,6 +1691,129 @@ function meetingUiHtml(): string {
 
       const statusPill = document.getElementById('statusPill');
       const errorBanner = document.getElementById('errorBanner');
+      let registrationSubmitPending = false;
+
+      const registrationCountryCodes = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');
+
+      function populateRegistrationCountries() {
+        const select = document.getElementById('registrationCountry');
+        if (!select || select.options.length > 1) return;
+        let names;
+        try {
+          names = new Intl.DisplayNames(['en'], { type: 'region' });
+        } catch {
+          names = null;
+        }
+        registrationCountryCodes
+          .map((code) => ({ code, name: names?.of(code) || code }))
+          .sort((left, right) => left.name.localeCompare(right.name))
+          .forEach(({ code, name }) => {
+            const option = document.createElement('option');
+            option.value = code;
+            option.textContent = name;
+            select.appendChild(option);
+          });
+      }
+
+      function setRegistrationFieldError(fieldId, message) {
+        const field = document.getElementById(fieldId);
+        const error = document.getElementById(fieldId + 'Error');
+        if (field) field.setAttribute('aria-invalid', message ? 'true' : 'false');
+        if (error) error.textContent = message || '';
+      }
+
+      function setRegistrationError(message) {
+        const error = document.getElementById('registrationError');
+        if (!error) return;
+        error.textContent = message || '';
+        error.style.display = message ? 'block' : 'none';
+      }
+
+      function resetRegistrationForm() {
+        const form = document.getElementById('registrationForm');
+        const formPanel = document.getElementById('registrationFormPanel');
+        const successPanel = document.getElementById('registrationSuccessPanel');
+        if (form instanceof HTMLFormElement) form.reset();
+        if (formPanel) formPanel.hidden = false;
+        if (successPanel) successPanel.hidden = true;
+        ['registrationFullName', 'registrationEmail', 'registrationCountry', 'registrationMobile', 'registrationPassword', 'registrationConfirmPassword', 'registrationTerms'].forEach((fieldId) => setRegistrationFieldError(fieldId, ''));
+        setRegistrationError(null);
+        registrationSubmitPending = false;
+        const submit = document.getElementById('registrationSubmit');
+        if (submit instanceof HTMLButtonElement) {
+          submit.disabled = false;
+          submit.textContent = 'Create account';
+        }
+      }
+
+      function validateRegistrationForm() {
+        const getValue = (id) => document.getElementById(id)?.value || '';
+        const fullName = getValue('registrationFullName').trim();
+        const email = getValue('registrationEmail').trim();
+        const country = getValue('registrationCountry');
+        const mobileNumber = getValue('registrationMobile').trim();
+        const password = getValue('registrationPassword');
+        const confirmPassword = getValue('registrationConfirmPassword');
+        const termsAccepted = document.getElementById('registrationTerms')?.checked === true;
+        const marketingConsent = document.getElementById('registrationMarketing')?.checked === true;
+        const mobileCompact = mobileNumber.replace(/[\\s().-]/gu, '');
+        let valid = true;
+
+        const fieldErrors = {
+          registrationFullName: !fullName ? 'Enter your full name.' : '',
+          registrationEmail: !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/u.test(email) ? 'Enter a valid email address.' : '',
+          registrationCountry: !country ? 'Select your country.' : '',
+          registrationMobile: !/^\\+[1-9]\\d{1,14}$/u.test(mobileCompact) ? 'Use an international number with country code.' : '',
+          registrationPassword: Array.from(password).length < 8 ? 'Use at least 8 characters.' : '',
+          registrationConfirmPassword: password !== confirmPassword ? 'Passwords do not match.' : '',
+          registrationTerms: !termsAccepted ? 'Accept the Terms and Privacy Policy to continue.' : '',
+        };
+        Object.entries(fieldErrors).forEach(([fieldId, message]) => {
+          setRegistrationFieldError(fieldId, message);
+          if (message) valid = false;
+        });
+        if (!valid) {
+          const firstInvalid = Object.entries(fieldErrors).find(([, message]) => message)?.[0];
+          document.getElementById(firstInvalid)?.focus();
+          return null;
+        }
+        return { fullName, email, country, mobileNumber, password, acceptedTerms: true, marketingConsent };
+      }
+
+      async function submitRegistration(event) {
+        event.preventDefault();
+        if (registrationSubmitPending) return;
+        setRegistrationError(null);
+        const registration = validateRegistrationForm();
+        if (!registration) return;
+        registrationSubmitPending = true;
+        const submit = document.getElementById('registrationSubmit');
+        if (submit instanceof HTMLButtonElement) {
+          submit.disabled = true;
+          submit.textContent = 'Creating account...';
+        }
+        try {
+          const response = await fetch('/api/accounts/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(registration),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch { /* Use the generic fallback below. */ }
+          if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'We could not create your account. Please try again.');
+          document.getElementById('registrationFormPanel').hidden = true;
+          document.getElementById('registrationSuccessPanel').hidden = false;
+          document.getElementById('registrationSuccessEmail').textContent = registration.email;
+        } catch (error) {
+          setRegistrationError(error instanceof Error ? error.message : 'We could not create your account. Please try again.');
+        } finally {
+          registrationSubmitPending = false;
+          if (submit instanceof HTMLButtonElement && !document.getElementById('registrationFormPanel')?.hidden) {
+            submit.disabled = false;
+            submit.textContent = 'Create account';
+          }
+        }
+      }
 
       function formatUiMessage(message) {
         const value = String(message || '');
@@ -1658,6 +2086,7 @@ function meetingUiHtml(): string {
             remotes.forEach(([remoteUserId, remote]) => {
               remote.tracks.clear();
               remote.stream.getTracks().forEach((track) => track.stop());
+              remote.screenStream.getTracks().forEach((track) => track.stop());
               removeRemoteMediaElements(remoteUserId);
             });
             remotePlaybackBlocked = false;
@@ -1750,10 +2179,11 @@ function meetingUiHtml(): string {
 
       function publishCurrentLocalTracks() {
         if (mediaRecoveryInProgress || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve();
-        const tracks = currentLocalTrackPublications();
-        if (!tracks.length) return Promise.resolve();
         return enqueueMediaOperation('publisher', async () => {
           if (mediaRecoveryInProgress) return;
+          // Snapshot inside the queue so a queued publish never uses a stale view of what is being captured.
+          const tracks = currentLocalTrackPublications();
+          if (!tracks.length) return;
           const peer = ensurePublisherPeerConnection();
           if (!peer) {
             updateMediaStatus('WebRTC is unavailable in this browser');
@@ -1798,6 +2228,9 @@ function meetingUiHtml(): string {
             updateMediaStatus('Publishing media');
             void refreshSfuSubscriptions();
           } catch (error) {
+            if (peer.signalingState === 'have-local-offer') {
+              try { await peer.setLocalDescription({ type: 'rollback' }); } catch { /* peer already closed */ }
+            }
             added.forEach((entry) => {
               try { entry.transceiver.stop(); } catch { /* already stopped */ }
             });
@@ -1816,20 +2249,34 @@ function meetingUiHtml(): string {
           if (mediaRecoveryInProgress) return;
           const closing = trackNames.filter((trackName) => publishedLocalTracks.has(trackName));
           if (!closing.length) return;
+          const peer = publisherPeerConnection;
+          let offer = null;
           try {
+            // Stopping the transceivers and negotiating immediately keeps the browser's and the server's m-line lists identical.
+            if (peer && peer.signalingState === 'stable' && peer.connectionState !== 'closed') {
+              for (const trackName of closing) {
+                try { publishedLocalTracks.get(trackName)?.transceiver.stop(); } catch { /* already stopped */ }
+              }
+              await peer.setLocalDescription(await peer.createOffer());
+              await waitForIceGatheringComplete(peer);
+              offer = peer.localDescription;
+            }
             const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/tracks/close', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ connectionId: state.mediaConnectionId, trackNames: closing }),
+              body: JSON.stringify({ connectionId: state.mediaConnectionId, trackNames: closing, ...(offer ? { sessionDescription: offer } : {}) }),
             });
             const payload = await response.json();
             if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to stop published media.');
-            for (const trackName of closing) {
-              const entry = publishedLocalTracks.get(trackName);
-              try { entry?.transceiver.stop(); } catch { /* already stopped */ }
-              publishedLocalTracks.delete(trackName);
+            if (offer && peer.signalingState === 'have-local-offer') {
+              if (payload.data && payload.data.sessionDescription) await peer.setRemoteDescription(payload.data.sessionDescription);
+              else await peer.setLocalDescription({ type: 'rollback' });
             }
+            for (const trackName of closing) publishedLocalTracks.delete(trackName);
           } catch (error) {
+            if (peer && peer.signalingState === 'have-local-offer') {
+              try { await peer.setLocalDescription({ type: 'rollback' }); } catch { /* peer already closed */ }
+            }
             const message = error instanceof Error ? error.message : 'Unable to stop published media';
             updateMediaStatus(message);
             if (isStaleSfuSessionError(error)) void requestMediaRecovery('publisher', message);
@@ -1840,7 +2287,7 @@ function meetingUiHtml(): string {
       function removeRemoteMediaElements(userId) {
         const stage = document.getElementById('videoStage');
         const tile = stage && Array.from(stage.querySelectorAll('.tile')).find((entry) => entry.dataset.userId === userId);
-        tile?.querySelectorAll('.remote-media').forEach((element) => {
+        tile?.querySelectorAll('.remote-media, .remote-screen-media').forEach((element) => {
           element.srcObject = null;
           element.remove();
         });
@@ -1851,10 +2298,12 @@ function meetingUiHtml(): string {
         if (!publication) return;
         let remote = remoteStreams.get(publication.publisherUserId);
         if (!remote) {
-          remote = { displayName: publication.publisherDisplayName, stream: new MediaStream(), tracks: new Map() };
+          remote = { displayName: publication.publisherDisplayName, stream: new MediaStream(), screenStream: new MediaStream(), tracks: new Map() };
           remoteStreams.set(publication.publisherUserId, remote);
         }
         remote.displayName = publication.publisherDisplayName;
+        // Screen content gets its own stream so a <video> never has to choose between camera and screen tracks.
+        const targetStream = /^screen-/.test(publication.trackName || '') ? remote.screenStream : remote.stream;
         const previousTrack = remote.tracks.get(publication.publicationKey);
         if (previousTrack === event.track) return;
         for (const [existingKey, existingTrack] of remote.tracks) {
@@ -1862,15 +2311,15 @@ function meetingUiHtml(): string {
             remote.tracks.delete(existingKey);
           }
         }
-        if (previousTrack) remote.stream.removeTrack(previousTrack);
-        if (!remote.stream.getTracks().includes(event.track)) remote.stream.addTrack(event.track);
+        if (previousTrack) targetStream.removeTrack(previousTrack);
+        if (!targetStream.getTracks().includes(event.track)) targetStream.addTrack(event.track);
         remote.tracks.set(publication.publicationKey, event.track);
         if (previousTrack && previousTrack.readyState !== 'ended') {
           try { previousTrack.stop(); } catch { /* obsolete remote track */ }
         }
         event.track.addEventListener?.('ended', () => {
           if (remote.tracks.get(publication.publicationKey) !== event.track) return;
-          remote.stream.removeTrack(event.track);
+          targetStream.removeTrack(event.track);
           remote.tracks.delete(publication.publicationKey);
           if (!remote.tracks.size) {
             if (remoteStreams.get(publication.publisherUserId) === remote) remoteStreams.delete(publication.publisherUserId);
@@ -1892,6 +2341,7 @@ function meetingUiHtml(): string {
             remote.tracks.clear();
             remoteStreams.delete(userId);
             remote.stream.getTracks().forEach((track) => track.stop());
+            remote.screenStream.getTracks().forEach((track) => track.stop());
             removeRemoteMediaElements(userId);
             for (const [mid, publication] of remoteTrackByMid) {
               if (publication.publisherUserId === userId) remoteTrackByMid.delete(mid);
@@ -1919,19 +2369,40 @@ function meetingUiHtml(): string {
             tile.appendChild(element);
           }
           element.srcObject = remote.stream;
+          const screenActive = remote.screenStream.getTracks().some((track) => track.readyState !== 'ended');
+          let screenElement = tile.querySelector('video.remote-screen-media');
+          if (screenActive && !screenElement) {
+            screenElement = document.createElement('video');
+            screenElement.className = 'remote-screen-media';
+            screenElement.autoplay = true;
+            screenElement.playsInline = true;
+            screenElement.muted = false;
+            screenElement.style.width = '100%';
+            screenElement.style.height = '100%';
+            screenElement.style.objectFit = 'contain';
+            tile.appendChild(screenElement);
+          } else if (!screenActive && screenElement) {
+            screenElement.srcObject = null;
+            screenElement.remove();
+            screenElement = null;
+          }
+          if (screenElement) screenElement.srcObject = remote.screenStream;
+          if (hasVideo) element.style.display = screenActive ? 'none' : '';
           const placeholder = tile.querySelector('.placeholder');
-          if (placeholder) placeholder.style.display = hasVideo ? 'none' : 'block';
-          void element.play().catch(() => {
+          if (placeholder) placeholder.style.display = hasVideo || screenActive ? 'none' : 'block';
+          const playbackBlocked = () => {
             remotePlaybackBlocked = true;
             updateMediaStatus(state.mediaStatus || 'Receiving media');
             const playbackButton = document.getElementById('enableRemotePlaybackBtn');
             if (playbackButton) playbackButton.style.display = 'inline-flex';
-          });
+          };
+          if (screenElement) void screenElement.play().catch(playbackBlocked);
+          void element.play().catch(playbackBlocked);
         }
       }
 
       async function enableRemotePlayback() {
-        const elements = Array.from(document.querySelectorAll('#videoStage .remote-media'));
+        const elements = Array.from(document.querySelectorAll('#videoStage .remote-media, #videoStage .remote-screen-media'));
         let playbackFailed = false;
         for (const element of elements) {
           try {
@@ -1945,6 +2416,24 @@ function meetingUiHtml(): string {
         const playbackButton = document.getElementById('enableRemotePlaybackBtn');
         if (playbackButton) playbackButton.style.display = 'none';
         updateMediaStatus(state.mediaStatus || 'Receiving media');
+      }
+
+      function removeRemotePublications(removed) {
+        for (const publication of removed) {
+          if (remoteTrackByMid.get(publication.mid)?.publicationKey === publication.publicationKey) remoteTrackByMid.delete(publication.mid);
+          const remote = remoteStreams.get(publication.publisherUserId);
+          const track = remote?.tracks.get(publication.publicationKey);
+          if (!remote || !track) continue;
+          remote.tracks.delete(publication.publicationKey);
+          remote.stream.removeTrack(track);
+          remote.screenStream.removeTrack(track);
+          try { track.stop(); } catch { /* already ended */ }
+          if (!remote.tracks.size) {
+            remoteStreams.delete(publication.publisherUserId);
+            removeRemoteMediaElements(publication.publisherUserId);
+          }
+        }
+        renderRemoteMediaStreams();
       }
 
       function refreshSfuSubscriptions() {
@@ -1962,8 +2451,11 @@ function meetingUiHtml(): string {
             const payload = await response.json();
             if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to subscribe to media.');
             const data = payload.data;
-            if (!data || !data.sessionDescription || !data.operationId || !Array.isArray(data.tracks) || !data.tracks.length) return;
+            if (!data || !data.sessionDescription || !data.operationId || !Array.isArray(data.tracks)) return;
+            const removed = Array.isArray(data.removed) ? data.removed : [];
+            if (!data.tracks.length && !removed.length) return;
             for (const track of data.tracks) remoteTrackByMid.set(track.mid, track);
+            if (peer.signalingState !== 'stable') await peer.setLocalDescription({ type: 'rollback' });
             await peer.setRemoteDescription(data.sessionDescription);
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
@@ -1979,6 +2471,10 @@ function meetingUiHtml(): string {
             });
             const renegotiatedPayload = await renegotiated.json();
             if (!renegotiated.ok || !renegotiatedPayload.ok) throw new Error(renegotiatedPayload.error || 'Unable to complete media negotiation.');
+            if (removed.length) {
+              removeRemotePublications(removed);
+              void refreshSfuSubscriptions();
+            }
             updateMediaStatus('Receiving media');
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to receive media';
@@ -2271,7 +2767,7 @@ function meetingUiHtml(): string {
         const audioTracks = [];
         const audioSources = [];
         const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-        const audioInputs = [localMediaState.micStream, activeScreenShareStream, ...Array.from(remoteStreams.values()).map((remote) => remote.stream)];
+        const audioInputs = [localMediaState.micStream, activeScreenShareStream, ...Array.from(remoteStreams.values()).flatMap((remote) => [remote.stream, remote.screenStream])];
         const liveAudioTracks = audioInputs.filter(Boolean).flatMap((stream) => stream.getAudioTracks())
           .filter((track) => track.readyState !== 'ended');
         let audioContext = null;
@@ -2570,6 +3066,8 @@ function meetingUiHtml(): string {
             statusPill.textContent = 'Ready to join';
           } else if (name === 'home' || name === 'create' || name === 'join') {
             statusPill.textContent = 'Meeting';
+          } else if (name === 'register') {
+            statusPill.textContent = 'Create account';
           } else if (name === 'ended') {
             statusPill.textContent = 'Meeting ended';
           }
@@ -3589,6 +4087,27 @@ function meetingUiHtml(): string {
         showScreen('join');
       });
 
+      document.getElementById('openRegistrationBtn').addEventListener('click', () => {
+        setError(null);
+        resetRegistrationForm();
+        showScreen('register');
+      });
+      document.getElementById('registrationForm').addEventListener('submit', (event) => { void submitRegistration(event); });
+      document.getElementById('backToHomeFromRegistration').addEventListener('click', (event) => {
+        event.preventDefault();
+        showScreen('home');
+      });
+      document.getElementById('registrationSuccessBack').addEventListener('click', () => showScreen('home'));
+      document.querySelectorAll('[data-password-target]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const target = document.getElementById(button.dataset.passwordTarget);
+          if (!(target instanceof HTMLInputElement)) return;
+          const visible = target.type === 'text';
+          target.type = visible ? 'password' : 'text';
+          button.textContent = visible ? 'Show' : 'Hide';
+        });
+      });
+
       document.getElementById('createMeetingButton').addEventListener('click', createMeeting);
       document.getElementById('backToHomeFromCreate').addEventListener('click', () => showScreen('home'));
       document.getElementById('backToHomeFromJoin').addEventListener('click', () => showScreen('home'));
@@ -3648,6 +4167,7 @@ function meetingUiHtml(): string {
         showScreen('home');
       });
 
+      populateRegistrationCountries();
       renderLocalState();
       const sharedMeetingId = new URLSearchParams(window.location.search).get('meeting');
       if (sharedMeetingId) {
@@ -4122,6 +4642,7 @@ export default {
               operationId: ownState.pendingSubscriptions.operationId,
               sessionDescription: ownState.pendingSubscriptions.sessionDescription,
               tracks: ownState.pendingSubscriptions.tracks,
+              removed: ownState.pendingSubscriptions.removed ?? [],
             },
           }), request, session);
         }
@@ -4161,7 +4682,20 @@ export default {
         const staleTracks = ownState.subscribedTracks.filter((track) => !desiredKeys.has(track.publicationKey));
         if (staleTracks.length) {
           if (ownState.subscriberSessionId) {
-            await client.closeTracks(ownState.subscriberSessionId, staleTracks.map((track) => track.mid));
+            // Non-forced close keeps the media server's m-line order in step with the browser: the removal is delivered as an offer the client must answer.
+            const closed = await client.closeTracks(ownState.subscriberSessionId, staleTracks.map((track) => track.mid), { force: false });
+            if (validateMediaSessionDescription(closed.sessionDescription) && closed.sessionDescription.type === "offer") {
+              const operationId = crypto.randomUUID();
+              ownState = {
+                ...ownState,
+                pendingSubscriptions: { operationId, sessionDescription: closed.sessionDescription, tracks: [], removed: staleTracks },
+              };
+              await rpc.saveSfuParticipantState(ownState);
+              return withSessionCookie(jsonResponse({
+                ok: true,
+                data: { operationId, sessionDescription: closed.sessionDescription, tracks: [], removed: staleTracks },
+              }), request, session);
+            }
           }
           ownState = {
             ...ownState,
@@ -4237,10 +4771,14 @@ export default {
           throw new Error("Media negotiation is no longer current. Reconnect and try again.");
         }
         const client = getCloudflareRealtimeClient(env);
+        const removedKeys = new Set((state.pendingSubscriptions.removed ?? []).map((track) => track.publicationKey));
         await client.renegotiate(state.subscriberSessionId!, body.sessionDescription);
         await rpc.saveSfuParticipantState({
           ...state,
-          subscribedTracks: [...state.subscribedTracks, ...state.pendingSubscriptions.tracks],
+          subscribedTracks: [
+            ...state.subscribedTracks.filter((track) => !removedKeys.has(track.publicationKey)),
+            ...state.pendingSubscriptions.tracks,
+          ],
           pendingSubscriptions: undefined,
         });
         return withSessionCookie(jsonResponse({ ok: true, data: { connected: true } }), request, session);
@@ -4252,9 +4790,10 @@ export default {
     const mediaTrackCloseMatch = /^\/api\/meetings\/([^/]+)\/media\/tracks\/close$/.exec(url.pathname);
 
     if (mediaTrackCloseMatch && request.method === "POST") {
-      const body = await parseJsonBody<{ connectionId?: string; trackNames?: string[] }>(request);
+      const body = await parseJsonBody<{ connectionId?: string; trackNames?: string[]; sessionDescription?: unknown }>(request);
       const { session } = await getOrCreateSession(request, env);
-      if (!body || !validateMediaConnectionId(body.connectionId) || !Array.isArray(body.trackNames) || body.trackNames.some((name) => typeof name !== "string")) {
+      if (!body || !validateMediaConnectionId(body.connectionId) || !Array.isArray(body.trackNames) || body.trackNames.some((name) => typeof name !== "string") ||
+        (body.sessionDescription !== undefined && (!validateMediaSessionDescription(body.sessionDescription) || body.sessionDescription.type !== "offer"))) {
         return withSessionCookie(jsonResponse({ ok: false, error: "A valid connection and track names are required." }, 400), request, session);
       }
       try {
@@ -4266,13 +4805,18 @@ export default {
           ...state.publishedTracks,
           ...(state.pendingPublishedTracks ?? []),
         ].filter((track) => body.trackNames!.includes(track.trackName));
-        if (closing.length && state.publisherSessionId) await getCloudflareRealtimeClient(env).closeTracks(state.publisherSessionId, closing.map((track) => track.mid));
+        let answer: unknown;
+        if (closing.length && state.publisherSessionId) {
+          const offer = body.sessionDescription as { type: "offer" | "answer"; sdp: string } | undefined;
+          const closed = await getCloudflareRealtimeClient(env).closeTracks(state.publisherSessionId, closing.map((track) => track.mid), offer ? { force: false, sessionDescription: offer } : {});
+          if (offer && validateMediaSessionDescription(closed.sessionDescription) && closed.sessionDescription.type === "answer") answer = closed.sessionDescription;
+        }
         await rpc.saveSfuParticipantState({
           ...state,
           publishedTracks: state.publishedTracks.filter((track) => !body.trackNames!.includes(track.trackName)),
           pendingPublishedTracks: (state.pendingPublishedTracks ?? []).filter((track) => !body.trackNames!.includes(track.trackName)),
         });
-        return withSessionCookie(jsonResponse({ ok: true, data: { closed: closing.map((track) => track.trackName) } }), request, session);
+        return withSessionCookie(jsonResponse({ ok: true, data: { closed: closing.map((track) => track.trackName), sessionDescription: answer ?? null } }), request, session);
       } catch (error) {
         return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
       }
