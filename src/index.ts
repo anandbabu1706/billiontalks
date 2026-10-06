@@ -54,7 +54,7 @@ type V0SessionStoreStub = {
   deleteSession: (sessionId: string) => Promise<void>;
 };
 
-type WorkerEnv = Partial<RealtimeEnv> & { SESSION_STORE?: unknown; ACCOUNT_DB?: D1AccountDatabase };
+type WorkerEnv = Partial<RealtimeEnv> & { SESSION_STORE?: unknown; ACCOUNT_DB?: D1AccountDatabase; DEV_TOOLS_ENABLED?: string };
 
 type RecordingMultipartUpload = {
   uploadId: string;
@@ -582,7 +582,18 @@ function parseJsonBody<T>(request: Request): Promise<T | null> {
   return request.json().catch(() => null) as Promise<T | null>;
 }
 
-function meetingUiHtml(): string {
+function meetingUiHtml(devToolsEnabled = false): string {
+  const page = meetingUiTemplate().replace("__DEV_TOOLS_FLAG__", devToolsEnabled ? "true" : "false");
+  return devToolsEnabled ? page : page.replace(/<!--DEV_TOOLS_START-->[\s\S]*?<!--DEV_TOOLS_END-->/g, "");
+}
+
+function isDevToolsEnabled(request: Request, env: WorkerEnv): boolean {
+  if (env.DEV_TOOLS_ENABLED === "true") return true;
+  const hostname = new URL(request.url).hostname;
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+function meetingUiTemplate(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -1347,12 +1358,12 @@ function meetingUiHtml(): string {
       <div class="topbar">
         <div class="brand">BillionTalks</div>
         <div style="display:flex; align-items:center; gap:10px;">
-          <button class="dev-toggle" id="toggleDevPanelBtn" type="button">Developer tools</button>
+          <!--DEV_TOOLS_START--><button class="dev-toggle" id="toggleDevPanelBtn" type="button">Developer tools</button><!--DEV_TOOLS_END-->
           <div class="status-pill" id="statusPill">Meeting</div>
         </div>
       </div>
 
-      <div class="dev-panel" id="devPanel" aria-label="Developer tools panel">
+      <!--DEV_TOOLS_START--><div class="dev-panel" id="devPanel" aria-label="Developer tools panel">
         <div class="dev-panel-header">
           <span>Developer tools</span>
           <span class="muted" style="font-size:10px; letter-spacing:0.08em;">Local-only</span>
@@ -1377,7 +1388,7 @@ function meetingUiHtml(): string {
           </div>
           <div class="dev-note">This panel is for local development simulation only. It does not create real audio/video connections.</div>
         </div>
-      </div>
+      </div><!--DEV_TOOLS_END-->
 
       <section id="homeScreen" class="screen visible">
         <div class="home-card">
@@ -1905,14 +1916,21 @@ function meetingUiHtml(): string {
         return span.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
       }
 
+      // Publisher and subscriber requests mutate the same per-participant server record, so they share one chain to avoid lost updates.
+      let mediaOperationQueue = Promise.resolve();
+      let publishRetryCount = 0;
+      const mediaDiagnostics = { publishers: {}, discovered: 0, subscribed: 0, lastError: '' };
+      const DEV_TOOLS_ENABLED = __DEV_TOOLS_FLAG__;
+
+      function isSimulatedMeeting() {
+        return state.meetingId === 'btm_dev_1234567890';
+      }
+
       function enqueueMediaOperation(direction, operation) {
-        if (direction === 'publisher') {
-          const next = publisherOperationQueue.then(operation, operation);
-          publisherOperationQueue = next.catch(() => undefined);
-          return next;
-        }
-        const next = subscriberOperationQueue.then(operation, operation);
-        subscriberOperationQueue = next.catch(() => undefined);
+        const next = mediaOperationQueue.then(operation, operation);
+        mediaOperationQueue = next.catch(() => undefined);
+        publisherOperationQueue = mediaOperationQueue;
+        subscriberOperationQueue = mediaOperationQueue;
         return next;
       }
 
@@ -2178,7 +2196,7 @@ function meetingUiHtml(): string {
       }
 
       function publishCurrentLocalTracks() {
-        if (mediaRecoveryInProgress || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve();
+        if (mediaRecoveryInProgress || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve();
         return enqueueMediaOperation('publisher', async () => {
           if (mediaRecoveryInProgress) return;
           // Snapshot inside the queue so a queued publish never uses a stale view of what is being captured.
@@ -2225,6 +2243,7 @@ function meetingUiHtml(): string {
             const readyPayload = await readyResponse.json();
             if (!readyResponse.ok || !readyPayload.ok) throw new Error(readyPayload.error || 'Unable to confirm published media readiness.');
             accepted.forEach((entry) => publishedLocalTracks.set(entry.trackName, entry));
+            publishRetryCount = 0;
             updateMediaStatus('Publishing media');
             void refreshSfuSubscriptions();
           } catch (error) {
@@ -2238,6 +2257,10 @@ function meetingUiHtml(): string {
             updateMediaStatus(message);
             if (isStaleSfuSessionError(error) || /Publisher media connection (?:failed|closed)|did not become ready/.test(message)) {
               void requestMediaRecovery('publisher', message);
+            } else if (/pending media negotiation/.test(message) && publishRetryCount < 3) {
+              // A subscriber negotiation was in flight; finish it, then publish again.
+              publishRetryCount += 1;
+              void refreshSfuSubscriptions().then(() => publishCurrentLocalTracks());
             }
           }
         });
@@ -2390,27 +2413,79 @@ function meetingUiHtml(): string {
           if (hasVideo) element.style.display = screenActive ? 'none' : '';
           const placeholder = tile.querySelector('.placeholder');
           if (placeholder) placeholder.style.display = hasVideo || screenActive ? 'none' : 'block';
-          const playbackBlocked = () => {
+          const showPlaybackButton = () => {
             remotePlaybackBlocked = true;
             updateMediaStatus(state.mediaStatus || 'Receiving media');
             const playbackButton = document.getElementById('enableRemotePlaybackBtn');
             if (playbackButton) playbackButton.style.display = 'inline-flex';
           };
-          if (screenElement) void screenElement.play().catch(playbackBlocked);
-          void element.play().catch(playbackBlocked);
+          if (screenElement) startRemotePlayback(screenElement, showPlaybackButton);
+          startRemotePlayback(element, showPlaybackButton);
         }
+        updateRemoteTileDiagnostics();
+      }
+
+      // Autoplay policies block unmuted playback; video still renders muted until the user enables audio.
+      function startRemotePlayback(element, onBlocked) {
+        const markPlaying = () => { element.dataset.playback = element.dataset.autoMuted ? 'muted' : 'playing'; updateRemoteTileDiagnostics(); };
+        void element.play().then(markPlaying).catch(() => {
+          onBlocked();
+          if (element.tagName !== 'VIDEO' || element.muted) {
+            element.dataset.playback = 'blocked';
+            updateRemoteTileDiagnostics();
+            return;
+          }
+          element.muted = true;
+          element.dataset.autoMuted = 'true';
+          void element.play().then(markPlaying).catch(() => {
+            element.dataset.playback = 'blocked';
+            updateRemoteTileDiagnostics();
+          });
+        });
+      }
+
+      // Records the first stage at which a remote participant's media is missing, for tests and live debugging.
+      function remoteMediaStage(userId) {
+        const discovered = mediaDiagnostics.publishers[userId] || [];
+        const mapped = Array.from(remoteTrackByMid.values()).filter((publication) => publication.publisherUserId === userId);
+        if (!discovered.length && !mapped.length) return 'no-publication';
+        if (!mapped.length) return 'no-subscription';
+        const remote = remoteStreams.get(userId);
+        if (!remote || !remote.tracks.size) return 'no-track';
+        const stage = document.getElementById('videoStage');
+        const tile = stage && Array.from(stage.querySelectorAll('.tile')).find((entry) => entry.dataset.userId === userId);
+        const elements = tile ? Array.from(tile.querySelectorAll('video.remote-media, audio.remote-media, video.remote-screen-media')) : [];
+        if (!elements.length || elements.some((entry) => !entry.srcObject)) return 'not-assigned';
+        if (elements.some((entry) => entry.dataset.playback === 'blocked' || entry.dataset.playback === 'muted')) return 'playback-blocked';
+        return 'playing';
+      }
+
+      function updateRemoteTileDiagnostics() {
+        const stage = document.getElementById('videoStage');
+        if (!stage) return;
+        stage.querySelectorAll('.tile').forEach((tile) => {
+          const userId = tile.dataset.userId;
+          if (!userId || tile.classList.contains('self') || userId === state.currentUserId) return;
+          tile.dataset.mediaState = remoteMediaStage(userId);
+        });
       }
 
       async function enableRemotePlayback() {
         const elements = Array.from(document.querySelectorAll('#videoStage .remote-media, #videoStage .remote-screen-media'));
         let playbackFailed = false;
         for (const element of elements) {
+          const wasAutoMuted = Boolean(element.dataset.autoMuted);
+          if (wasAutoMuted) element.muted = false;
           try {
             await element.play();
+            delete element.dataset.autoMuted;
+            element.dataset.playback = 'playing';
           } catch {
+            if (wasAutoMuted) element.muted = true;
             playbackFailed = true;
           }
         }
+        updateRemoteTileDiagnostics();
         if (playbackFailed) return;
         remotePlaybackBlocked = false;
         const playbackButton = document.getElementById('enableRemotePlaybackBtn');
@@ -2437,7 +2512,7 @@ function meetingUiHtml(): string {
       }
 
       function refreshSfuSubscriptions() {
-        if (mediaRecoveryInProgress || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
+        if (mediaRecoveryInProgress || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
         return enqueueMediaOperation('subscriber', async () => {
           if (mediaRecoveryInProgress) return;
           const peer = ensureSubscriberPeerConnection();
@@ -2451,6 +2526,13 @@ function meetingUiHtml(): string {
             const payload = await response.json();
             if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to subscribe to media.');
             const data = payload.data;
+            if (data && data.diagnostics) {
+              mediaDiagnostics.publishers = data.diagnostics.publishers || {};
+              mediaDiagnostics.discovered = data.diagnostics.discovered || 0;
+              mediaDiagnostics.subscribed = data.diagnostics.subscribed || 0;
+              mediaDiagnostics.lastError = '';
+              updateRemoteTileDiagnostics();
+            }
             if (!data || !data.sessionDescription || !data.operationId || !Array.isArray(data.tracks)) return;
             const removed = Array.isArray(data.removed) ? data.removed : [];
             if (!data.tracks.length && !removed.length) return;
@@ -2476,8 +2558,10 @@ function meetingUiHtml(): string {
               void refreshSfuSubscriptions();
             }
             updateMediaStatus('Receiving media');
+            updateRemoteTileDiagnostics();
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to receive media';
+            mediaDiagnostics.lastError = message;
             updateMediaStatus(message);
             if (isStaleSfuSessionError(error)) void requestMediaRecovery('subscriber', message);
           }
@@ -3044,6 +3128,9 @@ function meetingUiHtml(): string {
         state.route = name;
         if (name === 'home') void refreshMeetingHistory();
         if (name === 'meeting') {
+          // Every route into the meeting (direct join, host approval, rejoin) must capture and publish the devices shown as ON.
+          acquireDesiredLocalMedia();
+          void publishCurrentLocalTracks();
           void refreshMeetingChat();
           void refreshRecordingStatus();
           void refreshSfuSubscriptions();
@@ -3248,6 +3335,7 @@ function meetingUiHtml(): string {
       }
 
       function stopLocalMicrophone() {
+        deviceStopToken.mic += 1;
         void closePublishedLocalTracks(['microphone']);
         Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'mic'));
         state.localDevice.micEnabled = false;
@@ -3255,6 +3343,7 @@ function meetingUiHtml(): string {
       }
 
       function stopLocalCamera() {
+        deviceStopToken.camera += 1;
         void closePublishedLocalTracks(['camera']);
         Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'camera'));
         state.localDevice.cameraEnabled = false;
@@ -3262,11 +3351,19 @@ function meetingUiHtml(): string {
       }
 
       let localCaptureGeneration = 0;
+      const deviceStopToken = { mic: 0, camera: 0 };
 
       function stopAllLocalMedia() {
         localCaptureGeneration += 1;
         stopLocalMicrophone();
         stopLocalCamera();
+      }
+
+      function acquireDesiredLocalMedia() {
+        if (isSimulatedMeeting()) return;
+        const local = state.localDevice;
+        if (local.micEnabled && local.micAvailable !== false && !localMediaState.micStream && !localMediaState.micRequestInFlight) void toggleMicrophone();
+        if (local.cameraEnabled && local.cameraAvailable !== false && !localMediaState.cameraStream && !localMediaState.cameraRequestInFlight) void toggleCamera();
       }
 
       async function toggleMicrophone() {
@@ -3288,10 +3385,11 @@ function meetingUiHtml(): string {
         }
 
         const captureGeneration = localCaptureGeneration;
+        const stopToken = deviceStopToken.mic;
         try {
           localMediaState.micRequestInFlight = true;
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          if (captureGeneration !== localCaptureGeneration) {
+          if (captureGeneration !== localCaptureGeneration || stopToken !== deviceStopToken.mic) {
             stream.getTracks().forEach((track) => track.stop());
             return;
           }
@@ -3343,10 +3441,11 @@ function meetingUiHtml(): string {
         }
 
         const captureGeneration = localCaptureGeneration;
+        const stopToken = deviceStopToken.camera;
         try {
           localMediaState.cameraRequestInFlight = true;
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          if (captureGeneration !== localCaptureGeneration) {
+          if (captureGeneration !== localCaptureGeneration || stopToken !== deviceStopToken.camera) {
             stream.getTracks().forEach((track) => track.stop());
             return;
           }
@@ -3620,6 +3719,12 @@ function meetingUiHtml(): string {
         });
       }
 
+      function isLocalParticipant(participant) {
+        if (participant.userId === 'user-me' || participant.id === 'demo-me') return true;
+        if (state.currentUserId && participant.userId) return participant.userId === state.currentUserId;
+        return (participant.displayName || '').trim().toLowerCase() === (state.displayName || '').trim().toLowerCase();
+      }
+
       function renderMeetingRoom() {
         if (!state.meeting) {
           return;
@@ -3680,11 +3785,7 @@ function meetingUiHtml(): string {
         });
 
         const orderedParticipants = [...allParticipants];
-        const localIndex = orderedParticipants.findIndex((participant) => {
-          const participantName = (participant.displayName || '').trim().toLowerCase();
-          const localName = (state.displayName || '').trim().toLowerCase();
-          return participantName === localName || participant.userId === 'user-me' || participant.id === 'demo-me';
-        });
+        const localIndex = orderedParticipants.findIndex((participant) => isLocalParticipant(participant));
 
         if (localIndex > 0) {
           const [localParticipant] = orderedParticipants.splice(localIndex, 1);
@@ -3706,13 +3807,13 @@ function meetingUiHtml(): string {
           const tile = document.createElement('div');
           tile.className = 'tile';
           if (participant.userId) tile.dataset.userId = participant.userId;
-          if (participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me') {
+          if (isLocalParticipant(participant)) {
             tile.classList.add('self');
           }
 
-          const tileLabel = participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me' ? 'You' : participant.displayName;
+          const tileLabel = isLocalParticipant(participant) ? 'You' : participant.displayName;
           const tileStatus = participant.state === 'JOINED' ? 'Joined' : 'Waiting';
-          const isLocalTile = participant.displayName === state.displayName || participant.userId === 'user-me' || participant.id === 'demo-me';
+          const isLocalTile = isLocalParticipant(participant);
 
           tile.innerHTML =
             '<div class="placeholder">' + escapeHtml(tileLabel) + '</div>' +
@@ -3907,15 +4008,56 @@ function meetingUiHtml(): string {
         await runHostAction('/end', { userId: state.currentUserId });
       }
 
+      let copyFeedbackTimer = null;
+
+      function copyTextWithSelectionFallback(text) {
+        const field = document.createElement('textarea');
+        field.value = text;
+        field.setAttribute('readonly', '');
+        field.style.position = 'fixed';
+        field.style.top = '0';
+        field.style.opacity = '0';
+        document.body.appendChild(field);
+        try {
+          field.focus();
+          field.select();
+          field.setSelectionRange(0, text.length);
+          return typeof document.execCommand === 'function' && document.execCommand('copy');
+        } catch {
+          return false;
+        } finally {
+          field.remove();
+        }
+      }
+
       async function copyMeetingId() {
         if (!state.meetingId) return;
-        try {
-          const invite = new URL('/', window.location.origin);
-          invite.searchParams.set('meeting', state.meetingId);
-          await navigator.clipboard.writeText(invite.toString());
-          setError('Meeting link copied to clipboard.');
-        } catch {
-          setError('Clipboard access unavailable in this browser.');
+        const invite = new URL('/', window.location.origin);
+        invite.searchParams.set('meeting', state.meetingId);
+        const link = invite.toString();
+        let copied = false;
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          try {
+            await navigator.clipboard.writeText(link);
+            copied = true;
+          } catch {
+            copied = false;
+          }
+        }
+        if (!copied) copied = copyTextWithSelectionFallback(link);
+        const button = document.getElementById('copyMeetingIdBtn');
+        const showCopyResult = (label) => {
+          if (!button) return;
+          button.textContent = label;
+          clearTimeout(copyFeedbackTimer);
+          copyFeedbackTimer = setTimeout(() => { button.textContent = 'Copy meeting link'; }, 2500);
+        };
+        if (copied) {
+          setError(null);
+          showCopyResult('Link copied');
+        } else {
+          showCopyResult('Copy failed');
+          setError('Copy failed. Copy this link manually: ' + link);
         }
       }
 
@@ -3930,6 +4072,12 @@ function meetingUiHtml(): string {
       };
 
       function handleDevAction(action) {
+        if (!DEV_TOOLS_ENABLED) return;
+        // Simulated rooms must never replace a real meeting that owns live media.
+        if (state.meetingId && !isSimulatedMeeting() && state.currentUserId && ['meeting', 'prejoin'].includes(state.route)) {
+          setError('Leave the real meeting before using developer tools.');
+          return;
+        }
         if (action === 'addParticipant') {
           const baseMeeting = state.meeting && state.meeting.id ? state.meeting : {
             id: 'btm_dev_1234567890',
@@ -4066,16 +4214,18 @@ function meetingUiHtml(): string {
         }
       }
 
-      document.getElementById('toggleDevPanelBtn').addEventListener('click', toggleDevPanel);
-      const devParticipantSelect = document.getElementById('devParticipantSelect');
-      if (devParticipantSelect) {
-        devParticipantSelect.addEventListener('change', (event) => {
-          selectedDevParticipantId = event.target.value;
+      if (DEV_TOOLS_ENABLED) {
+        document.getElementById('toggleDevPanelBtn').addEventListener('click', toggleDevPanel);
+        const devParticipantSelect = document.getElementById('devParticipantSelect');
+        if (devParticipantSelect) {
+          devParticipantSelect.addEventListener('change', (event) => {
+            selectedDevParticipantId = event.target.value;
+          });
+        }
+        document.querySelectorAll('[data-dev-action]').forEach((button) => {
+          button.addEventListener('click', () => handleDevAction(button.dataset.devAction));
         });
       }
-      document.querySelectorAll('[data-dev-action]').forEach((button) => {
-        button.addEventListener('click', () => handleDevAction(button.dataset.devAction));
-      });
 
       document.getElementById('startMeetingBtn').addEventListener('click', () => {
         setError(null);
@@ -4122,10 +4272,18 @@ function meetingUiHtml(): string {
       });
       document.getElementById('backToHomeFromPrejoin').addEventListener('click', () => showScreen('home'));
       document.getElementById('toggleMicBtn').addEventListener('click', () => {
+        if (state.localDevice.micEnabled) {
+          stopLocalMicrophone();
+          return;
+        }
         void toggleMicrophone();
       });
 
       document.getElementById('toggleCameraBtn').addEventListener('click', () => {
+        if (state.localDevice.cameraEnabled) {
+          stopLocalCamera();
+          return;
+        }
         void toggleCamera();
       });
 
@@ -4217,7 +4375,7 @@ export default {
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
       const { session } = await getOrCreateSession(request, env);
       return withSessionCookie(
-        new Response(meetingUiHtml(), {
+        new Response(meetingUiHtml(isDevToolsEnabled(request, env)), {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
           },
@@ -4663,8 +4821,16 @@ export default {
           }));
         });
 
+        const publishersByUser: Record<string, string[]> = {};
+        for (const publication of publications) (publishersByUser[publication.publisherUserId] ??= []).push(publication.trackName);
+        const diagnostics = () => ({
+          discovered: publications.length,
+          subscribed: ownState?.subscribedTracks.length ?? 0,
+          publishers: publishersByUser,
+        });
+
         if (!publications.length && !ownState) {
-          return withSessionCookie(jsonResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } }), request, session);
+          return withSessionCookie(jsonResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [], diagnostics: diagnostics() } }), request, session);
         }
 
         if (!ownState) {
@@ -4710,7 +4876,7 @@ export default {
         ]);
         const newPublications = publications.filter((publication) => !subscribedKeys.has(publication.key));
         if (!newPublications.length) {
-          return withSessionCookie(jsonResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } }), request, session);
+          return withSessionCookie(jsonResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [], diagnostics: diagnostics() } }), request, session);
         }
 
         if (!ownState.subscriberSessionId) {
@@ -4748,7 +4914,7 @@ export default {
         await rpc.saveSfuParticipantState(ownState);
         return withSessionCookie(jsonResponse({
           ok: true,
-          data: { operationId, sessionDescription: operation.sessionDescription, tracks: subscriptions },
+          data: { operationId, sessionDescription: operation.sessionDescription, tracks: subscriptions, diagnostics: diagnostics() },
         }), request, session);
       } catch (error) {
         return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);

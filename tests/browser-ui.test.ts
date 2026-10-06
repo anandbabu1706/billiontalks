@@ -742,6 +742,9 @@ describe("BillionTalks browser UI regression tests", () => {
     expect((document.getElementById("recordingControls") as HTMLElement).style.display).toBe("flex");
     expect(document.getElementById("recordingStatus")?.textContent).toContain("Not started");
 
+    // The fake browser has no AudioContext, so recording only runs without live microphone audio.
+    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
+    await flush();
     document.getElementById("startRecordingBtn")?.click();
     await flush();
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/start", expect.objectContaining({ method: "POST" }));
@@ -771,14 +774,7 @@ describe("BillionTalks browser UI regression tests", () => {
     await flush();
 
     const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
-    const cameraControl = document.getElementById("cameraControlBtn") as HTMLButtonElement;
-    micControl.click();
-    micControl.click();
-    await flush();
-    cameraControl.click();
-    cameraControl.click();
-    await flush();
-
+    // Mic and camera are ON at join and must publish without any toggling.
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
     const publishBodies = fetchMock.mock.calls
       .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
@@ -829,13 +825,7 @@ describe("BillionTalks browser UI regression tests", () => {
     document.getElementById("joinNowButton")?.click();
     await flush();
     const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
-    const cameraControl = document.getElementById("cameraControlBtn") as HTMLButtonElement;
-    micControl.click();
-    micControl.click();
-    await flush();
-    cameraControl.click();
-    cameraControl.click();
-    await flush();
+    expect(micControl).not.toBeNull();
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
 
     document.getElementById("shareScreenBtn")?.click();
@@ -925,12 +915,6 @@ describe("BillionTalks browser UI regression tests", () => {
       configurable: true,
     });
     await joinHostMeeting(document, "Share lifecycle");
-    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
-    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
-    await flush();
-    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
-    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
-    await flush();
     return { ...page, screenTracks };
   }
 
@@ -1079,7 +1063,7 @@ describe("BillionTalks browser UI regression tests", () => {
 
     shareButton.click();
     await flush();
-    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST" && String(init?.body).includes("screen-video"))).toHaveLength(0);
   });
 
   it("subscribes to a remote SFU video track and renders it in the matching participant tile", async () => {
@@ -1255,18 +1239,11 @@ describe("BillionTalks browser UI regression tests", () => {
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
     await joinHostMeeting(document, "Publisher recovery");
 
-    const micControl = document.getElementById("micControlBtn") as HTMLButtonElement;
-    const cameraControl = document.getElementById("cameraControlBtn") as HTMLButtonElement;
-    micControl.click();
-    micControl.click();
-    await flush();
-    cameraControl.click();
-    cameraControl.click();
-    await flush();
     const publisherPeers = () => FakePeerConnection.instances.filter((peer) => peer.getTransceivers().some((transceiver) => transceiver.direction === "sendonly"));
     const originalPublisher = publisherPeers().at(-1);
     expect(originalPublisher?.connectionState).toBe("connected");
     const initialPublishCount = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST").length;
+    const initialReadyCount = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST").length;
     const joinCount = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/join") && init?.method === "POST").length;
 
     originalPublisher!.setConnectionStates("failed", "failed");
@@ -1286,7 +1263,7 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(publishBodies.at(-1).tracks.map((track: { trackName: string }) => track.trackName)).toEqual(expect.arrayContaining(["microphone", "camera"]));
     expect(publisherPeers().at(-1)).not.toBe(originalPublisher);
     expect(publisherPeers().at(-1)?.connectionState).toBe("connected");
-    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST")).toHaveLength(3);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST")).toHaveLength(initialReadyCount + 1);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/join") && init?.method === "POST")).toHaveLength(joinCount);
   });
 
@@ -1361,7 +1338,8 @@ describe("BillionTalks browser UI regression tests", () => {
       .filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")
       .map(([, init]) => JSON.parse(String(init?.body)));
     expect(recoveryCalls).toEqual([expect.objectContaining({ direction: "subscriber" })]);
-    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/subscribe") && init?.method === "POST")).toHaveLength(2);
+    // Auto-published local media also triggers a subscription refresh, so at least the failed and recovered requests occur.
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/subscribe") && init?.method === "POST").length).toBeGreaterThanOrEqual(2);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/renegotiate") && init?.method === "POST")).toHaveLength(1);
     const remoteVideo = document.querySelector('#videoStage .tile[data-user-id="remote-user"] video.remote-media') as HTMLVideoElement | null;
     expect(remoteVideo).not.toBeNull();
@@ -1414,30 +1392,25 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(localStatusLabel).not.toBeNull();
     localStatusLabel?.remove();
 
-    expect(() => micControl.click()).not.toThrow();
-    await flush();
-    expect(getUserMediaMock).toHaveBeenCalledTimes(0);
-    expect(document.getElementById("errorBanner")?.textContent).toBe("");
-
-    micControl.click();
-    await flush();
-    expect(getUserMediaMock).toHaveBeenCalledTimes(1);
+    // Devices selected ON are captured when entering the meeting.
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
     const firstTrack = micStreams[0]?.getAudioTracks?.()[0];
     expect(firstTrack?.readyState).toBe("live");
-    expect(micControl.classList.contains("active") || micControl.textContent?.toLowerCase().includes("on")).toBe(true);
     expect(document.getElementById("errorBanner")?.textContent).toBe("");
 
-    micControl.click();
+    expect(() => micControl.click()).not.toThrow();
     await flush();
     expect(firstTrack?.stop).toHaveBeenCalledTimes(1);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
 
     micControl.click();
     await flush();
     const secondTrack = micStreams[1]?.getAudioTracks?.()[0];
-    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(3);
     expect(secondTrack).toBeTruthy();
     expect(secondTrack).not.toBe(firstTrack);
     expect(secondTrack?.readyState).toBe("live");
+    expect(micControl.classList.contains("active") || micControl.textContent?.toLowerCase().includes("on")).toBe(true);
     expect(document.getElementById("errorBanner")?.textContent).toBe("");
 
     cameraControl.click();
@@ -1446,7 +1419,7 @@ describe("BillionTalks browser UI regression tests", () => {
 
     cameraControl.click();
     await flush();
-    expect(getUserMediaMock).toHaveBeenCalledTimes(3);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(4);
     expect(document.querySelector("video.local-preview")).not.toBeNull();
     expect(document.getElementById("errorBanner")?.textContent).toBe("");
 
@@ -1454,7 +1427,7 @@ describe("BillionTalks browser UI regression tests", () => {
     await flush();
     cameraControl.click();
     await flush();
-    expect(getUserMediaMock).toHaveBeenCalledTimes(4);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(5);
   });
 
   it("submits admission requests on Join Now and keeps guests waiting without entering the active room", async () => {
@@ -1660,6 +1633,11 @@ describe("BillionTalks browser UI regression tests", () => {
 
   it("allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state", async () => {
     const { document, getUserMediaMock } = await loadRenderedPage();
+
+    document.getElementById("toggleCameraBtn")?.click();
+    await flush();
+    expect(getUserMediaMock).toHaveBeenCalledTimes(0);
+    expect((document.getElementById("toggleCameraBtn") as HTMLButtonElement).textContent).toContain("Off");
 
     document.getElementById("toggleCameraBtn")?.click();
     await flush();
@@ -1962,6 +1940,7 @@ describe("BT-V0-009 leave cleanup", () => {
       value: vi.fn(() => new Promise(resolve => { resolveCamera = resolve; })),
     });
     document.getElementById("toggleCameraBtn")?.click();
+    document.getElementById("toggleCameraBtn")?.click();
     installFetch(window, vi.fn(() => new Promise(() => {})));
     document.getElementById("leaveMeetingBtn")?.click();
     expect(getVisibleScreen(document, "homeScreen")).toBe(true);
@@ -1998,5 +1977,269 @@ describe("BT-V0-009 waiting room synchronization", () => {
     expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
     expect(document.getElementById("admissionPanel")?.style.display).toBe("none");
     expect(document.querySelector("[data-remove-user-id]")).toBeNull();
+  });
+});
+
+describe("BT-V0-018 production media stabilization", () => {
+  const bodiesFor = (fetchMock: ReturnType<typeof vi.fn>, suffix: string) => fetchMock.mock.calls
+    .filter(([url, init]) => String(url).endsWith(suffix) && init?.method === "POST")
+    .map(([, init]) => JSON.parse(String(init?.body)));
+  const remotePublication = (trackName: string, mid: string, key: string) => ({
+    mid, publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName, publicationKey: key,
+  });
+  const remoteTile = (document: Document) => document.querySelector('#videoStage .tile[data-user-id="remote-user"]') as HTMLElement;
+
+  async function joinWithRemote(payload: unknown) {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    page.setIncludeRemoteParticipant();
+    page.setNextSubscribePayload(payload);
+    await joinHostMeeting(page.document, "Remote diagnostics");
+    await flush();
+    return page;
+  }
+
+  it("captures and publishes microphone and camera that are ON at join without any toggle", async () => {
+    const { window, document, fetchMock, getUserMediaMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Initial media");
+
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(bodiesFor(fetchMock, "/media/publish").flatMap((body) => body.tracks.map((track: { trackName: string }) => track.trackName))).toEqual(["microphone", "camera"]);
+    expect(bodiesFor(fetchMock, "/media/publish/ready").flatMap((body) => body.trackNames)).toEqual(expect.arrayContaining(["microphone", "camera"]));
+    expect(document.querySelector("video.local-preview")).not.toBeNull();
+    expect(document.getElementById("mediaStatus")?.textContent).toBe("Publishing media");
+  });
+
+  it("captures and publishes selected devices when an approved guest is admitted from the waiting room", async () => {
+    const { window, document, getUserMediaMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const meeting = hostSnapshot();
+    let guestId = "";
+    let approved = false;
+    const calls: string[] = [];
+    installFetch(window, vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(url);
+      if (url.endsWith("/media/publish")) return createResponse({ ok: true, data: { sessionDescription: { type: "answer", sdp: "a" }, tracks: JSON.parse(String(init?.body)).tracks } });
+      if (url.endsWith("/media/publish/ready")) return createResponse({ ok: true, data: { ready: [] } });
+      if (url.endsWith("/media/subscribe")) return createResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } });
+      if (init?.method === "POST" && url.endsWith("/admission/request")) {
+        guestId = JSON.parse(String(init.body)).userId;
+        return createResponse({ ok: true, data: { id: "waiting", userId: guestId, status: "WAITING", displayName: "Waiting guest" } });
+      }
+      return createResponse({ ok: true, data: approved ? {
+        ...meeting,
+        participants: [...meeting.participants, { id: "approved", userId: guestId, role: "PARTICIPANT", state: "JOINED", displayName: "Waiting guest" }],
+      } : meeting });
+    }));
+    (document.getElementById("meetingIdInput") as HTMLInputElement).value = meeting.id;
+    document.getElementById("resolveMeetingButton")?.click(); await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Waiting guest";
+    document.getElementById("joinNowButton")?.click(); await flush();
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+
+    approved = true;
+    await new Promise((resolve) => setTimeout(resolve, 3150));
+    expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(calls.filter((url) => url.endsWith("/media/publish")).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reports no-publication when the server sees no remote publication", async () => {
+    const { document } = await joinWithRemote({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [], diagnostics: { discovered: 0, subscribed: 0, publishers: {} } } });
+    expect(remoteTile(document).dataset.mediaState).toBe("no-publication");
+  });
+
+  it("reports no-subscription when a publication exists but no subscription was negotiated", async () => {
+    const { document } = await joinWithRemote({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [], diagnostics: { discovered: 1, subscribed: 0, publishers: { "remote-user": ["camera"] } } } });
+    expect(remoteTile(document).dataset.mediaState).toBe("no-subscription");
+  });
+
+  it("reports no-track when the subscription is negotiated but no remote track event arrives", async () => {
+    const { document, fetchMock } = await joinWithRemote({
+      ok: true,
+      data: {
+        operationId: "op-no-track",
+        sessionDescription: { type: "offer", sdp: "offer-removal-no-track-event" },
+        tracks: [remotePublication("camera", "remote-0", "remote-camera")],
+        diagnostics: { discovered: 1, subscribed: 0, publishers: { "remote-user": ["camera"] } },
+      },
+    });
+    expect(bodiesFor(fetchMock, "/media/renegotiate")).toHaveLength(1);
+    expect(remoteTile(document).dataset.mediaState).toBe("no-track");
+  });
+
+  it("renders a remote camera and reports playing once the track is assigned and playback starts", async () => {
+    const { document } = await joinWithRemote({
+      ok: true,
+      data: {
+        operationId: "op-camera",
+        sessionDescription: { type: "offer", sdp: "offer-camera" },
+        tracks: [remotePublication("camera", "remote-0", "remote-camera")],
+        diagnostics: { discovered: 1, subscribed: 0, publishers: { "remote-user": ["camera"] } },
+      },
+    });
+    const video = remoteTile(document).querySelector("video.remote-media") as HTMLVideoElement;
+    expect((video.srcObject as unknown as FakeMediaStream).getVideoTracks()).toHaveLength(1);
+    expect(video.dataset.playback).toBe("playing");
+    expect(remoteTile(document).dataset.mediaState).toBe("playing");
+  });
+
+  it("keeps remote video visible muted when autoplay blocks audio and unmutes after the user enables playback", async () => {
+    let userGesture = false;
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window.HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: vi.fn(function (this: HTMLMediaElement) {
+        return !this.muted && !userGesture ? Promise.reject(new DOMException("blocked", "NotAllowedError")) : Promise.resolve();
+      }),
+    });
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    page.setIncludeRemoteParticipant();
+    page.setNextSubscribePayload({
+      ok: true,
+      data: {
+        operationId: "op-blocked",
+        sessionDescription: { type: "offer", sdp: "offer-camera" },
+        tracks: [remotePublication("camera", "remote-0", "remote-camera")],
+        diagnostics: { discovered: 1, subscribed: 0, publishers: { "remote-user": ["camera"] } },
+      },
+    });
+    await joinHostMeeting(page.document, "Autoplay");
+    await flush();
+
+    const video = remoteTile(page.document).querySelector("video.remote-media") as HTMLVideoElement;
+    expect(video.muted).toBe(true);
+    expect(video.dataset.playback).toBe("muted");
+    expect(remoteTile(page.document).dataset.mediaState).toBe("playback-blocked");
+    expect((page.document.getElementById("enableRemotePlaybackBtn") as HTMLButtonElement).style.display).toBe("inline-flex");
+
+    userGesture = true;
+    page.document.getElementById("enableRemotePlaybackBtn")?.click();
+    await flush();
+    expect(video.muted).toBe(false);
+    expect(remoteTile(page.document).dataset.mediaState).toBe("playing");
+  });
+
+  it("renders a remote screen share as a distinct playing element beside live camera and microphone", async () => {
+    const { document } = await joinWithRemote({
+      ok: true,
+      data: {
+        operationId: "op-three",
+        sessionDescription: { type: "offer", sdp: "offer-screen-three" },
+        tracks: [remotePublication("camera", "remote-0", "remote-camera"), remotePublication("microphone", "remote-1", "remote-mic"), remotePublication("screen-video", "remote-2", "remote-screen")],
+        diagnostics: { discovered: 3, subscribed: 0, publishers: { "remote-user": ["camera", "microphone", "screen-video"] } },
+      },
+    });
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+    const camera = createFakeRemoteTrack("remote-cam", "video");
+    const microphone = createFakeRemoteTrack("remote-mic", "audio");
+    const screen = createFakeRemoteTrack("remote-screen", "video");
+    subscriber.emitTrack("remote-0", camera);
+    subscriber.emitTrack("remote-1", microphone);
+    subscriber.emitTrack("remote-2", screen);
+    await flush();
+
+    const tile = remoteTile(document);
+    const cameraStream = (tile.querySelector("video.remote-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream;
+    const screenElement = tile.querySelector("video.remote-screen-media") as HTMLVideoElement;
+    expect(cameraStream.getTracks()).toEqual([camera, microphone]);
+    expect((screenElement.srcObject as unknown as FakeMediaStream).getTracks()).toEqual([screen]);
+    expect(screenElement.dataset.playback).toBe("playing");
+    expect(tile.dataset.mediaState).toBe("playing");
+  });
+
+  describe("meeting link copy", () => {
+    async function enterRoom(clipboard: unknown, execCommand?: () => boolean) {
+      const page = await enterHostRoom();
+      const view = page.document.defaultView!;
+      Object.defineProperty(view.navigator, "clipboard", { value: clipboard, configurable: true });
+      Object.defineProperty(page.document, "execCommand", { value: execCommand ? vi.fn(execCommand) : undefined, configurable: true });
+      return page;
+    }
+    const copyButton = (document: Document) => document.getElementById("copyMeetingIdBtn") as HTMLButtonElement;
+
+    it("copies with the Clipboard API and confirms with Link copied", async () => {
+      const writeText = vi.fn(async () => undefined);
+      const { document } = await enterRoom({ writeText });
+      copyButton(document).click();
+      await flush();
+      expect(writeText).toHaveBeenCalledWith("http://localhost/?meeting=btm_test_123");
+      expect(copyButton(document).textContent).toBe("Link copied");
+    });
+
+    it("falls back to selection copy when the Clipboard API rejects", async () => {
+      const writeText = vi.fn(async () => { throw new DOMException("denied", "NotAllowedError"); });
+      const { document } = await enterRoom({ writeText }, () => true);
+      copyButton(document).click();
+      await flush();
+      expect(document.execCommand).toHaveBeenCalledWith("copy");
+      expect(copyButton(document).textContent).toBe("Link copied");
+      expect(document.querySelector("textarea")).toBeNull();
+    });
+
+    it("falls back to selection copy when the Clipboard API is unavailable", async () => {
+      const { document } = await enterRoom(undefined, () => true);
+      copyButton(document).click();
+      await flush();
+      expect(document.execCommand).toHaveBeenCalledWith("copy");
+      expect(copyButton(document).textContent).toBe("Link copied");
+    });
+
+    it("shows the link for manual copy when every copy method fails", async () => {
+      const { document } = await enterRoom(undefined, () => false);
+      copyButton(document).click();
+      await flush();
+      expect(copyButton(document).textContent).toBe("Copy failed");
+      expect(document.getElementById("errorBanner")?.textContent).toContain("http://localhost/?meeting=btm_test_123");
+    });
+  });
+
+  describe("developer tools gating", () => {
+    const sessionEnv = { SESSION_STORE: createSessionNamespace() };
+
+    it("omits the developer panel, its controls, and enabling flag from the production page", async () => {
+      const html = await (await app.fetch(new Request("https://billiontalks.example/"), sessionEnv)).text();
+      expect(html).not.toContain('id="devPanel"');
+      expect(html).not.toContain('id="toggleDevPanelBtn"');
+      expect(html).not.toContain("data-dev-action=");
+      expect(html).not.toContain("Developer tools");
+      expect(html).toContain("const DEV_TOOLS_ENABLED = false;");
+      const { document } = await loadRenderedPage("https://billiontalks.example/");
+      expect(document.getElementById("devPanel")).toBeNull();
+      expect(document.getElementById("toggleDevPanelBtn")).toBeNull();
+    });
+
+    it("keeps the developer panel for local development and the explicit debug flag", async () => {
+      const local = await (await app.fetch(new Request("http://localhost:8787/"), sessionEnv)).text();
+      expect(local).toContain('id="devPanel"');
+      expect(local).toContain("const DEV_TOOLS_ENABLED = true;");
+      const flagged = await (await app.fetch(new Request("https://staging.example/"), { ...sessionEnv, DEV_TOOLS_ENABLED: "true" })).text();
+      expect(flagged).toContain('id="toggleDevPanelBtn"');
+    });
+
+    it("keeps simulated rooms off the real media transport", async () => {
+      const { window, document, fetchMock, getUserMediaMock } = await loadRenderedPage();
+      Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+      document.getElementById("toggleDevPanelBtn")?.click();
+      (document.querySelector('[data-dev-action="hostView"]') as HTMLButtonElement).click();
+      await flush();
+      expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+      expect(getUserMediaMock).not.toHaveBeenCalled();
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/media/"))).toHaveLength(0);
+      expect(FakePeerConnection.instances).toHaveLength(0);
+    });
+
+    it("refuses to overwrite a real meeting with a simulated one", async () => {
+      const { document } = await enterHostRoom();
+      document.getElementById("toggleDevPanelBtn")?.click();
+      (document.querySelector('[data-dev-action="participantView"]') as HTMLButtonElement).click();
+      await flush();
+      expect(document.getElementById("errorBanner")?.textContent).toContain("Leave the real meeting");
+      expect(document.getElementById("participantList")?.textContent).not.toContain("Ava");
+      expect(document.getElementById("participantList")?.textContent).toContain("Host");
+    });
   });
 });
