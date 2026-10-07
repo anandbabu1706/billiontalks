@@ -22,6 +22,8 @@ class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   static initialRemoteTrackKind: "audio" | "video" = "video";
   static negotiationViolations: string[] = [];
+  static subscriberIceTimeouts = 0;
+  static subscriberTimeoutSdp = "browser-answer-sdp";
   public connectionState = "new";
   public iceConnectionState = "new";
   public iceGatheringState = "complete";
@@ -51,7 +53,15 @@ class FakePeerConnection {
     if (this.signalingState !== "stable") FakePeerConnection.negotiationViolations.push(`createOffer while ${this.signalingState}`);
     return { type: "offer", sdp: "browser-offer-sdp" };
   }
-  async createAnswer() { return { type: "answer", sdp: "browser-answer-sdp" }; }
+  async createAnswer() {
+    if (this.ontrack && FakePeerConnection.subscriberIceTimeouts > 0) {
+      FakePeerConnection.subscriberIceTimeouts -= 1;
+      this.iceGatheringState = "gathering";
+      return { type: "answer", sdp: FakePeerConnection.subscriberTimeoutSdp };
+    }
+    this.iceGatheringState = "complete";
+    return { type: "answer", sdp: "browser-answer-sdp" };
+  }
   emitTrack(mid: string, track: any) { this.ontrack?.({ transceiver: { mid }, track }); }
   setConnectionStates(connectionState: string, iceConnectionState: string) {
     this.connectionState = connectionState;
@@ -509,6 +519,8 @@ afterEach(() => {
   openWindows.splice(0).forEach((window) => window.close());
   FakePeerConnection.instances.length = 0;
   FakePeerConnection.negotiationViolations.length = 0;
+  FakePeerConnection.subscriberIceTimeouts = 0;
+  FakePeerConnection.subscriberTimeoutSdp = "browser-answer-sdp";
   FakePeerConnection.initialRemoteTrackKind = "video";
   vi.restoreAllMocks();
 });
@@ -1313,6 +1325,175 @@ describe("BillionTalks browser UI regression tests", () => {
     expect((recoveredVideo?.srcObject as unknown as FakeMediaStream).getVideoTracks()).toHaveLength(1);
     expect(recoveredTile?.querySelectorAll("video.remote-media")).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/join") && init?.method === "POST")).toHaveLength(joinCount);
+  });
+
+  describe("subscriber ICE timeout and recovery", () => {
+    const subscribePayload = (operationId: string, withMicrophone = false) => ({
+      ok: true,
+      data: {
+        operationId,
+        sessionDescription: { type: "offer", sdp: operationId },
+        tracks: [
+          { mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "remote-camera" },
+          ...(withMicrophone ? [{ mid: "remote-1", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "microphone", publicationKey: "remote-microphone" }] : []),
+        ],
+        diagnostics: { discovered: withMicrophone ? 2 : 1, subscribed: 0, publishers: {} },
+      },
+    });
+    const settle = async () => { for (let index = 0; index < 4; index += 1) await new Promise((resolve) => setTimeout(resolve, 40)); };
+    const subscriberPeers = () => FakePeerConnection.instances.filter((peer) => Boolean(peer.ontrack));
+    const publisherPeerList = () => FakePeerConnection.instances.filter((peer) => peer.getTransceivers().some((entry) => entry.direction === "sendonly"));
+    const callsTo = (fetchMock: ReturnType<typeof vi.fn>, suffix: string) => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(suffix) && init?.method === "POST");
+    const remoteVideo = (document: Document) => document.querySelector('#videoStage .tile[data-user-id="remote-user"] video.remote-media') as HTMLVideoElement | null;
+
+    // Mimics the server: one pending offer per subscriber session generation until it is answered; recovery starts a new generation.
+    function installSubscribeServer(page: Awaited<ReturnType<typeof loadRenderedPage>>, withMicrophone = false) {
+      const original = page.fetchMock.getMockImplementation()!;
+      let generation = 0;
+      let negotiated = -1;
+      page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/media/recover") && JSON.parse(String(init?.body)).direction === "subscriber") generation += 1;
+        if (url.endsWith("/media/renegotiate")) negotiated = generation;
+        if (url.endsWith("/media/subscribe")) {
+          if (negotiated === generation) return createResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } });
+          return createResponse(subscribePayload("op-" + generation, withMicrophone));
+        }
+        return original(input, init);
+      });
+    }
+
+    async function setup(timeouts: number, withMicrophone = false) {
+      const page = await loadRenderedPage();
+      Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+      Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
+      (page.window as any).btIceGatheringTimeoutMs = 30;
+      FakePeerConnection.subscriberIceTimeouts = timeouts;
+      page.setIncludeRemoteParticipant();
+      installSubscribeServer(page, withMicrophone);
+      await joinHostMeeting(page.document, "ICE timeout");
+      await settle();
+      return page;
+    }
+
+    it("recovers the subscriber and re-subscribes every active publication after an ICE timeout, keeping the publisher", async () => {
+      const { window, document, fetchMock, getUserMediaMock } = await setup(1, true);
+      const peers = subscriberPeers();
+      expect(peers).toHaveLength(2);
+      expect(peers[0].connectionState).toBe("closed");
+      expect(peers[1].connectionState).toBe("connected");
+      expect(callsTo(fetchMock, "/media/recover").map(([, init]) => JSON.parse(String(init?.body)))).toEqual([expect.objectContaining({ direction: "subscriber" })]);
+      expect(callsTo(fetchMock, "/media/subscribe").length).toBeGreaterThanOrEqual(2);
+      expect(callsTo(fetchMock, "/media/renegotiate")).toHaveLength(1);
+      expect(JSON.parse(String(callsTo(fetchMock, "/media/renegotiate")[0][1]?.body)).operationId).toBe("op-1");
+
+      peers[1].emitTrack("remote-1", createFakeRemoteTrack("recovered-mic", "audio"));
+      const diagnostics = (window as any).btMediaDiagnostics();
+      expect(diagnostics).toEqual(expect.objectContaining({
+        iceTimeoutCount: 1,
+        subscriberRecoveryCount: 1,
+        subscriptionResultCount: 2,
+        remotePublicationCount: 2,
+        connectionState: "connected",
+        iceConnectionState: "connected",
+        iceGatheringState: "complete",
+        mediaStreamTrackCount: 2,
+        videoSrcObjectAssigned: true,
+        remoteVideoTrackReadyStates: ["live"],
+        lastPlay: "success",
+      }));
+      expect(diagnostics.ontrackCount).toBeGreaterThanOrEqual(2);
+
+      expect(publisherPeerList()).toHaveLength(1);
+      expect(publisherPeerList()[0].connectionState).toBe("connected");
+      expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+      expect(callsTo(fetchMock, "/join")).toHaveLength(1);
+      expect(callsTo(fetchMock, "/media/recover").some(([, init]) => String(init?.body).includes("publisher"))).toBe(false);
+      expect(document.querySelectorAll('#videoStage .tile[data-user-id="remote-user"]')).toHaveLength(1);
+      expect(FakePeerConnection.negotiationViolations).toEqual([]);
+    });
+
+    it("continues without recovery when ICE gathering times out but candidates were already gathered", async () => {
+      FakePeerConnection.subscriberTimeoutSdp = "v=0\r\na=candidate:1 1 udp 1 10.0.0.2 5000 typ host\r\n";
+      const { fetchMock, window } = await setup(1);
+      expect(subscriberPeers()).toHaveLength(1);
+      expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+      expect(callsTo(fetchMock, "/media/renegotiate")).toHaveLength(1);
+      expect((window as any).btMediaDiagnostics().iceTimeoutCount).toBe(1);
+    });
+
+    it("assigns a fresh stream and video element after recovery and stops the stale track", async () => {
+      const { document, window } = await setup(0);
+      const [original] = subscriberPeers();
+      const staleVideo = remoteVideo(document)!;
+      const staleStream = staleVideo.srcObject as unknown as FakeMediaStream;
+      const staleTrack = staleStream.getVideoTracks()[0];
+      original.setConnectionStates("failed", "failed");
+      await settle();
+
+      const freshVideo = remoteVideo(document)!;
+      const freshStream = freshVideo.srcObject as unknown as FakeMediaStream;
+      expect(freshVideo).not.toBe(staleVideo);
+      expect(staleVideo.isConnected).toBe(false);
+      expect(staleVideo.srcObject).toBeNull();
+      expect(freshStream).not.toBe(staleStream);
+      expect(freshStream.getVideoTracks()).toHaveLength(1);
+      expect(freshStream.getVideoTracks()[0]).not.toBe(staleTrack);
+      expect(staleTrack.stop).toHaveBeenCalled();
+      expect((window as any).btMediaDiagnostics().remoteVideoTrackReadyStates).toEqual(["live"]);
+    });
+
+    it("applies the muted autoplay fallback to the recovered video element", async () => {
+      const page = await loadRenderedPage();
+      const { window, document } = page;
+      Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+      Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+      page.setIncludeRemoteParticipant();
+      installSubscribeServer(page);
+      Object.defineProperty(window.HTMLMediaElement.prototype, "play", {
+        configurable: true,
+        value: vi.fn(function (this: HTMLMediaElement) {
+          if (this.classList.contains("remote-media") && !this.muted) {
+            return Promise.reject(new window.DOMException("Playback requires a user gesture.", "NotAllowedError"));
+          }
+          return Promise.resolve();
+        }),
+      });
+      await joinHostMeeting(document, "Autoplay after recovery");
+      await settle();
+      expect(remoteVideo(document)!.muted).toBe(true);
+
+      subscriberPeers()[0].setConnectionStates("failed", "failed");
+      await settle();
+
+      const recovered = remoteVideo(document)!;
+      expect(subscriberPeers()).toHaveLength(2);
+      expect(recovered.muted).toBe(true);
+      expect(recovered.dataset.autoMuted).toBe("true");
+      expect(recovered.dataset.playback).toBe("muted");
+      expect((document.getElementById("enableRemotePlaybackBtn") as HTMLButtonElement).style.display).toBe("inline-flex");
+      expect((window as any).btMediaDiagnostics().lastPlay).toBe("success");
+    });
+
+    it("keeps exactly one remote track and element across repeated recovery cycles", async () => {
+      const { document, window } = await setup(0);
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        subscriberPeers().at(-1)!.setConnectionStates("failed", "failed");
+        await settle();
+      }
+      const peers = subscriberPeers();
+      expect(peers).toHaveLength(4);
+      peers.slice(0, -1).forEach((peer) => expect(peer.connectionState).toBe("closed"));
+      const tile = document.querySelector('#videoStage .tile[data-user-id="remote-user"]')!;
+      expect(tile.querySelectorAll("video.remote-media")).toHaveLength(1);
+      const stream = remoteVideo(document)!.srcObject as unknown as FakeMediaStream;
+      expect(stream.getTracks()).toHaveLength(1);
+
+      peers[0].emitTrack("remote-0", createFakeRemoteTrack("late-stale-track", "video"));
+      expect(stream.getTracks()).toHaveLength(1);
+      expect((window as any).btMediaDiagnostics().mediaStreamTrackCount).toBe(1);
+      expect(tile.querySelectorAll("video.remote-media")).toHaveLength(1);
+    });
   });
 
   it("recovers a stale subscriber session after SFU returns 410", async () => {

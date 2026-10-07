@@ -1919,8 +1919,45 @@ function meetingUiTemplate(): string {
       // Publisher and subscriber requests mutate the same per-participant server record, so they share one chain to avoid lost updates.
       let mediaOperationQueue = Promise.resolve();
       let publishRetryCount = 0;
-      const mediaDiagnostics = { publishers: {}, discovered: 0, subscribed: 0, lastError: '' };
+      const mediaDiagnostics = {
+        publishers: {}, discovered: 0, subscribed: 0, lastError: '',
+        subscriptionResultCount: 0, ontrackCount: 0, droppedTrackCount: 0, iceTimeoutCount: 0,
+        subscriberRecoveryCount: 0, lastPlay: 'none',
+      };
+      let subscriberFailureCount = 0;
+      const MAX_SUBSCRIBER_FAILURES = 3;
       const DEV_TOOLS_ENABLED = __DEV_TOOLS_FLAG__;
+
+      function snapshotMediaDiagnostics() {
+        const peer = subscriberPeerConnection;
+        const videoStates = [];
+        let streamTrackCount = 0;
+        for (const remote of remoteStreams.values()) {
+          streamTrackCount += remote.stream.getTracks().length + remote.screenStream.getTracks().length;
+          remote.stream.getVideoTracks().forEach((track) => videoStates.push(track.readyState));
+        }
+        const videos = Array.from(document.querySelectorAll('#videoStage video.remote-media'));
+        return {
+          iceGatheringState: peer ? peer.iceGatheringState : 'none',
+          iceConnectionState: peer ? peer.iceConnectionState : 'none',
+          connectionState: peer ? peer.connectionState : 'none',
+          remotePublicationCount: mediaDiagnostics.discovered,
+          subscriptionResultCount: mediaDiagnostics.subscriptionResultCount,
+          ontrackCount: mediaDiagnostics.ontrackCount,
+          droppedTrackCount: mediaDiagnostics.droppedTrackCount,
+          iceTimeoutCount: mediaDiagnostics.iceTimeoutCount,
+          subscriberRecoveryCount: mediaDiagnostics.subscriberRecoveryCount,
+          remoteVideoTrackReadyStates: videoStates,
+          mediaStreamTrackCount: streamTrackCount,
+          videoSrcObjectAssigned: videos.length > 0 && videos.every((video) => Boolean(video.srcObject)),
+          lastPlay: mediaDiagnostics.lastPlay,
+        };
+      }
+      window.btMediaDiagnostics = snapshotMediaDiagnostics;
+
+      function logMediaDiagnostics(event) {
+        console.info('[billiontalks media]', event, snapshotMediaDiagnostics());
+      }
 
       function isSimulatedMeeting() {
         return state.meetingId === 'btm_dev_1234567890';
@@ -1939,7 +1976,10 @@ function meetingUiTemplate(): string {
         return state.mediaConnectionId;
       }
 
-      function waitForIceGatheringComplete(peer) {
+      // With allowPartial, a timeout still resolves when the local description already carries candidates; otherwise it rejects.
+      function waitForIceGatheringComplete(peer, options) {
+        const allowPartial = Boolean(options && options.allowPartial);
+        const timeoutMs = window.btIceGatheringTimeoutMs || 10000;
         if (peer.iceGatheringState === 'complete') return Promise.resolve();
         return new Promise((resolve, reject) => {
           let timeoutId = null;
@@ -1957,12 +1997,21 @@ function meetingUiTemplate(): string {
           peer.addEventListener('icegatheringstatechange', check);
           timeoutId = setTimeout(() => {
             cleanup();
-            reject(new Error('WebRTC ICE candidate gathering timed out.'));
-          }, 10000);
+            mediaDiagnostics.iceTimeoutCount += 1;
+            const hasCandidates = /a=candidate:/.test(String(peer.localDescription && peer.localDescription.sdp || ''));
+            logMediaDiagnostics('ice-gathering-timeout candidates=' + hasCandidates);
+            if (allowPartial && hasCandidates) {
+              resolve();
+              return;
+            }
+            const timeoutError = new Error('WebRTC ICE candidate gathering timed out.');
+            timeoutError.name = 'IceGatheringTimeout';
+            reject(timeoutError);
+          }, timeoutMs);
         });
       }
 
-      function waitForPeerConnectionConnected(peer, timeoutMs = 15000) {
+      function waitForPeerConnectionConnected(peer, timeoutMs = 15000, label = 'Publisher') {
         if (peer.connectionState === 'connected') return Promise.resolve();
         return new Promise((resolve, reject) => {
           let timeoutId = null;
@@ -1976,13 +2025,13 @@ function meetingUiTemplate(): string {
               resolve();
             } else if (['failed', 'closed'].includes(peer.connectionState)) {
               cleanup();
-              reject(new Error('Publisher media connection ' + peer.connectionState + ' before becoming ready.'));
+              reject(new Error(label + ' media connection ' + peer.connectionState + ' before becoming ready.'));
             }
           };
           peer.addEventListener('connectionstatechange', check);
           timeoutId = setTimeout(() => {
             cleanup();
-            reject(new Error('Publisher media connection did not become ready in time.'));
+            reject(new Error(label + ' media connection did not become ready in time.'));
           }, timeoutMs);
           check();
         });
@@ -2111,6 +2160,8 @@ function meetingUiTemplate(): string {
             const playbackButton = document.getElementById('enableRemotePlaybackBtn');
             if (playbackButton) playbackButton.style.display = 'none';
           }
+          if (direction === 'subscriber') mediaDiagnostics.subscriberRecoveryCount += 1;
+          logMediaDiagnostics(direction + '-recovered');
           updateMediaStatus(direction + ' media transport recovered. Reconnecting active media.');
           return true;
         });
@@ -2147,7 +2198,11 @@ function meetingUiTemplate(): string {
         peer.onconnectionstatechange = () => handleMediaPeerState(direction, peer);
         peer.oniceconnectionstatechange = () => handleMediaPeerState(direction, peer);
         if (direction === 'subscriber') {
-          peer.ontrack = handleRemoteTrack;
+          // A closed predecessor must never write tracks into the recovered subscriber's streams.
+          peer.ontrack = (event) => {
+            if (peer !== subscriberPeerConnection) return;
+            handleRemoteTrack(event);
+          };
         }
         return peer;
       }
@@ -2317,8 +2372,12 @@ function meetingUiTemplate(): string {
       }
 
       function handleRemoteTrack(event) {
+        mediaDiagnostics.ontrackCount += 1;
         const publication = remoteTrackByMid.get(event.transceiver.mid);
-        if (!publication) return;
+        if (!publication) {
+          mediaDiagnostics.droppedTrackCount += 1;
+          return;
+        }
         let remote = remoteStreams.get(publication.publisherUserId);
         if (!remote) {
           remote = { displayName: publication.publisherDisplayName, stream: new MediaStream(), screenStream: new MediaStream(), tracks: new Map() };
@@ -2427,8 +2486,13 @@ function meetingUiTemplate(): string {
 
       // Autoplay policies block unmuted playback; video still renders muted until the user enables audio.
       function startRemotePlayback(element, onBlocked) {
-        const markPlaying = () => { element.dataset.playback = element.dataset.autoMuted ? 'muted' : 'playing'; updateRemoteTileDiagnostics(); };
-        void element.play().then(markPlaying).catch(() => {
+        const markPlaying = () => {
+          mediaDiagnostics.lastPlay = 'success';
+          element.dataset.playback = element.dataset.autoMuted ? 'muted' : 'playing';
+          updateRemoteTileDiagnostics();
+        };
+        void element.play().then(markPlaying).catch((error) => {
+          mediaDiagnostics.lastPlay = 'failure:' + (error && error.name || 'unknown');
           onBlocked();
           if (element.tagName !== 'VIDEO' || element.muted) {
             element.dataset.playback = 'blocked';
@@ -2537,11 +2601,12 @@ function meetingUiTemplate(): string {
             const removed = Array.isArray(data.removed) ? data.removed : [];
             if (!data.tracks.length && !removed.length) return;
             for (const track of data.tracks) remoteTrackByMid.set(track.mid, track);
+            mediaDiagnostics.subscriptionResultCount = data.tracks.length;
             if (peer.signalingState !== 'stable') await peer.setLocalDescription({ type: 'rollback' });
             await peer.setRemoteDescription(data.sessionDescription);
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
-            await waitForIceGatheringComplete(peer);
+            await waitForIceGatheringComplete(peer, { allowPartial: true });
             const renegotiated = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/renegotiate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2553,17 +2618,31 @@ function meetingUiTemplate(): string {
             });
             const renegotiatedPayload = await renegotiated.json();
             if (!renegotiated.ok || !renegotiatedPayload.ok) throw new Error(renegotiatedPayload.error || 'Unable to complete media negotiation.');
+            if (data.tracks.length) await waitForPeerConnectionConnected(peer, 15000, 'Subscriber');
+            subscriberFailureCount = 0;
             if (removed.length) {
               removeRemotePublications(removed);
               void refreshSfuSubscriptions();
             }
             updateMediaStatus('Receiving media');
             updateRemoteTileDiagnostics();
+            logMediaDiagnostics('subscriber-negotiated');
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to receive media';
             mediaDiagnostics.lastError = message;
             updateMediaStatus(message);
-            if (isStaleSfuSessionError(error)) void requestMediaRecovery('subscriber', message);
+            logMediaDiagnostics('subscriber-error ' + message);
+            // A half-negotiated subscriber (unsent answer, stale operation, no transport) cannot be reused.
+            const unrecoverableNegotiation = (error instanceof Error && error.name === 'IceGatheringTimeout') ||
+              /no longer current|Subscriber media connection/.test(message);
+            if (isStaleSfuSessionError(error) || unrecoverableNegotiation) {
+              subscriberFailureCount += 1;
+              if (subscriberFailureCount > MAX_SUBSCRIBER_FAILURES) {
+                updateMediaStatus('Remote media could not connect. Check your network connection and rejoin the meeting.');
+              } else {
+                void requestMediaRecovery('subscriber', message);
+              }
+            }
           }
         });
       }
