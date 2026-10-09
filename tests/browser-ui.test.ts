@@ -2726,6 +2726,104 @@ describe("BT-V0-018 production media stabilization", () => {
     expect(document.getElementById("mediaStatus")?.textContent).toContain("could not connect");
   });
 
+  it("rebuilds a live publisher on background resume and waits for publish-ready", async () => {
+    const { window, document, fetchMock, getUserMediaMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Publisher resume with live tracks");
+
+    const setVisibility = (value: "hidden" | "visible") => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value });
+      document.dispatchEvent(new window.Event("visibilitychange"));
+    };
+    setVisibility("hidden");
+    setVisibility("visible");
+    window.dispatchEvent(new window.Event("focus"));
+    window.dispatchEvent(new window.PageTransitionEvent("pageshow", { persisted: true }));
+    await flush();
+
+    const recoveryCalls = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).endsWith("/media/recover") && init?.method === "POST" &&
+      JSON.parse(String(init.body)).direction === "publisher");
+    const publishCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publish"));
+    const readyCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publish/ready"));
+    expect(recoveryCalls).toHaveLength(1);
+    expect(publishCalls).toHaveLength(2);
+    expect(readyCalls).toHaveLength(2);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.indexOf(readyCalls[1]!)).toBeGreaterThan(fetchMock.mock.calls.indexOf(publishCalls[1]!));
+    expect((window as any).btMediaDiagnostics()).toMatchObject({
+      resumeRecoveryResult: "ready",
+      publisherSessionPresent: true,
+      resultingPublisherSessionPresent: true,
+      resultingPublishedTrackNames: expect.arrayContaining(["microphone", "camera"]),
+      resumeCaptureActions: { microphone: "reused", camera: "reused" },
+      lastResumeTrigger: "visibilitychange",
+    });
+    expect(document.querySelectorAll("#videoStage .tile.self")).toHaveLength(1);
+  });
+
+  it("reacquires ended guest capture on resume before publishing both active devices", async () => {
+    const { window, document, fetchMock, getUserMediaMock, micStreams, cameraStreams } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Publisher resume with ended tracks");
+    micStreams[0]!.getAudioTracks()[0]!.readyState = "ended";
+    cameraStreams[0]!.getVideoTracks()[0]!.readyState = "ended";
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    await flush();
+
+    const resumedPublish = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/media/publish"))
+      .at(-1);
+    expect(JSON.parse(String(resumedPublish?.[1]?.body)).tracks.map((track: { trackName: string }) => track.trackName).sort())
+      .toEqual(["camera", "microphone"]);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(4);
+    expect((window as any).btMediaDiagnostics()).toMatchObject({
+      resumeRecoveryResult: "ready",
+      resumeCaptureActions: { microphone: "reacquired", camera: "reacquired" },
+    });
+  });
+
+  it("retries a stale 410 once during resumed publisher creation and does not loop", async () => {
+    const { window, document, fetchMock, getUserMediaMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Publisher resume after stale session");
+    const originalFetch = fetchMock.getMockImplementation()!;
+    let rejectNextPublish = true;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (rejectNextPublish && url.endsWith("/media/publish")) {
+        rejectNextPublish = false;
+        return createResponse({ ok: false, error: "stale publisher session", upstreamStatus: 410 }, false, 410);
+      }
+      return originalFetch(input, init);
+    });
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    await flush();
+
+    const recoveryCalls = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).endsWith("/media/recover") && init?.method === "POST" &&
+      JSON.parse(String(init.body)).direction === "publisher");
+    const publishCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publish"));
+    const readyCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publish/ready"));
+    expect(recoveryCalls).toHaveLength(2);
+    expect(publishCalls).toHaveLength(3);
+    expect(readyCalls).toHaveLength(2);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect((window as any).btMediaDiagnostics()).toMatchObject({
+      resumeRecoveryResult: "ready",
+      resultingPublisherSessionPresent: true,
+      resultingPublishedTrackNames: expect.arrayContaining(["microphone", "camera"]),
+    });
+  });
+
   it("captures and publishes selected devices when an approved guest is admitted from the waiting room", async () => {
     const { window, document, getUserMediaMock } = await loadRenderedPage();
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
@@ -2764,7 +2862,7 @@ describe("BT-V0-018 production media stabilization", () => {
     expect(calls.filter((url) => url.endsWith("/media/publish")).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("publishes an admitted guest's ready tracks without waiting for publisher ICE connection", async () => {
+  it("publishes an admitted guest's ready tracks and restores them after background resume", async () => {
     const { window, document, getUserMediaMock } = await loadRenderedPage();
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
     FakePeerConnection.holdPublisherConnection = true;
@@ -2832,6 +2930,27 @@ describe("BT-V0-018 production media stabilization", () => {
         expect.objectContaining({ trackName: "microphone", mid: "0" }),
         expect.objectContaining({ trackName: "camera", mid: "1" }),
       ]),
+    });
+
+    const publishCountBeforeResume = publishBodies.length;
+    const readyCountBeforeResume = readyBodies.length;
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    await flush();
+
+    expect(guestFetchMock.mock.calls.some(([url, init]) =>
+      url.endsWith("/media/recover") && init?.method === "POST" &&
+      JSON.parse(String(init.body)).direction === "publisher")).toBe(true);
+    expect(bodiesFor(guestFetchMock, "/media/publish")).toHaveLength(publishCountBeforeResume + 1);
+    expect(bodiesFor(guestFetchMock, "/media/publish/ready")).toHaveLength(readyCountBeforeResume + 1);
+    expect((window as any).btMediaDiagnostics()).toMatchObject({
+      participantId: "approved",
+      userIdSuffix: guestId.slice(-6),
+      resumeRecoveryResult: "ready",
+      resultingPublisherSessionPresent: true,
+      resultingPublishedTrackNames: expect.arrayContaining(["microphone", "camera"]),
     });
   });
 

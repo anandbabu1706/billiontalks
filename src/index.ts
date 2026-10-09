@@ -2235,6 +2235,8 @@ function meetingUiTemplate(): string {
       let mediaRecoveryQueue = Promise.resolve();
       let mediaRecoveryNeedsReconcile = false;
       let publisherRecoveryPending = false;
+      let publisherRecoveryRepublishRequired = false;
+      let publisherResumeRecoveryRequested = false;
       let subscriberRecoveryPending = false;
       let publisherRecoveryPromise = null;
       let subscriberRecoveryPromise = null;
@@ -2264,6 +2266,20 @@ function meetingUiTemplate(): string {
       let publisherParticipantId = '';
       let publisherUserIdSuffix = '';
       let lastPublisherInvalidationReason = '';
+      let lastBackgroundAt = '';
+      let lastResumeAt = '';
+      let lastResumeTrigger = '';
+      let lastProcessedBackgroundAt = '';
+      let lastOfflineAt = '';
+      let resumeTrackStates = [];
+      let resumeCaptureActions = { microphone: 'not-checked', camera: 'not-checked' };
+      let publisherRecoveryStartedAt = '';
+      let publisherRecoveryEndedAt = '';
+      let resumeRecoveryResult = 'not-run';
+      let resultingPublisherSessionPresent = false;
+      let resultingPublishedTrackNames = [];
+      let publisherResumePending = false;
+      let publisherResumePromise = null;
       let pendingLocalPublications = [];
       let readyPublishedPublications = [];
       let lastCloudflareErrorCode = '';
@@ -2332,6 +2348,16 @@ function meetingUiTemplate(): string {
           pendingLocalTrackNamesAndMids: pendingLocalPublications.map((entry) => ({ ...entry })),
           readyPublishedTrackNamesAndMids: readyPublishedPublications.map((entry) => ({ ...entry })),
           lastPublisherInvalidationReason,
+          lastBackgroundAt,
+          lastResumeAt,
+          lastResumeTrigger,
+          resumeTrackStates: resumeTrackStates.map((entry) => ({ ...entry })),
+          resumeCaptureActions: { ...resumeCaptureActions },
+          publisherRecoveryStartedAt,
+          publisherRecoveryEndedAt,
+          resumeRecoveryResult,
+          resultingPublisherSessionPresent,
+          resultingPublishedTrackNames: [...resultingPublishedTrackNames],
           publisherSessionGeneration,
           publisherConnectionState: publisherPeer ? publisherPeer.connectionState : 'none',
           publisherIceConnectionState: publisherPeer ? publisherPeer.iceConnectionState : 'none',
@@ -2597,18 +2623,43 @@ function meetingUiTemplate(): string {
         });
       }
 
-      function requestMediaRecovery(direction, reason) {
+      function requestMediaRecovery(direction, reason, options = {}) {
+        if (direction === 'publisher' && options.republishAfterRecovery === true) {
+          publisherRecoveryRepublishRequired = true;
+          publisherRecoveryStartedAt = new Date().toISOString();
+          if (options.resume === true) {
+            publisherResumeRecoveryRequested = true;
+            resumeRecoveryResult = 'in-progress';
+            resultingPublisherSessionPresent = false;
+            resultingPublishedTrackNames = [];
+          }
+        }
         const recoveryPending = direction === 'publisher' ? publisherRecoveryPending : subscriberRecoveryPending;
         const existingRecovery = direction === 'publisher' ? publisherRecoveryPromise : subscriberRecoveryPromise;
         if (recoveryPending) return existingRecovery || Promise.resolve(false);
-        if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId || mediaTransportClosing) return Promise.resolve(false);
+        if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId || mediaTransportClosing) {
+          if (direction === 'publisher' && publisherRecoveryRepublishRequired) {
+            publisherRecoveryEndedAt = new Date().toISOString();
+            if (publisherResumeRecoveryRequested) resumeRecoveryResult = 'failed';
+            publisherRecoveryRepublishRequired = false;
+            publisherResumeRecoveryRequested = false;
+          }
+          return Promise.resolve(false);
+        }
         const failureCount = direction === 'publisher' ? publisherFailureCount : subscriberFailureCount;
         if (failureCount >= MAX_MEDIA_RECOVERY_ATTEMPTS) {
           updateMediaStatus(direction + ' media could not connect. Check your network connection and rejoin the meeting.');
+          if (direction === 'publisher' && publisherRecoveryRepublishRequired) {
+            publisherRecoveryEndedAt = new Date().toISOString();
+            if (publisherResumeRecoveryRequested) resumeRecoveryResult = 'failed';
+            publisherRecoveryRepublishRequired = false;
+            publisherResumeRecoveryRequested = false;
+          }
           return Promise.resolve(false);
         }
         if (direction === 'publisher') publisherFailureCount += 1;
         else subscriberFailureCount += 1;
+        const republishAfterRecovery = direction === 'publisher' && publisherRecoveryRepublishRequired;
 
         const publisherInvalidationReason = direction !== 'publisher' ? '' :
           /HTTP status: (?:404|410)|session_error/.test(reason) ? 'stale-sfu-session' :
@@ -2677,19 +2728,70 @@ function meetingUiTemplate(): string {
             if (playbackButton) playbackButton.style.display = 'none';
           }
           if (direction === 'subscriber') mediaDiagnostics.subscriberRecoveryCount += 1;
-          logMediaDiagnostics(direction + '-recovered');
-          updateMediaStatus(direction + ' media transport recovered. Reconnecting active media.');
+          if (direction === 'publisher' && publisherRecoveryRepublishRequired) {
+            let published = false;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              await ensureLocalTracksForResume();
+              try {
+                published = await publishCurrentLocalTracks({ duringRecovery: true, requireReady: true });
+              } catch (error) {
+                if (attempt > 0 || !isStaleSfuSessionError(error)) throw error;
+                published = false;
+              }
+              if (published) break;
+              if (attempt > 0 || lastPublisherInvalidationReason !== 'stale-sfu-session') break;
+              const retryResponse = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/media/recover', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connectionId, direction: 'publisher', reason: 'stale-sfu-session' }),
+              });
+              const retryPayload = await retryResponse.json();
+              if (!retryResponse.ok || !retryPayload.ok) throw new Error(retryPayload.error || 'Unable to refresh the resumed publisher session.');
+              const stalePeer = publisherPeerConnection;
+              publisherPeerConnection = null;
+              stalePeer?.close();
+              publishedLocalTracks.clear();
+              publisherSessionPresent = false;
+              pendingLocalPublications = [];
+              readyPublishedPublications = [];
+              publisherRecoveryCount += 1;
+            }
+            if (!published) throw new Error('Publisher resume recovery did not complete publish-ready.');
+            resultingPublisherSessionPresent = publisherSessionPresent;
+            resultingPublishedTrackNames = readyPublishedPublications.map((entry) => entry.trackName);
+            const expectedTrackNames = currentLocalTrackPublications().map((entry) => entry.trackName);
+            if (!publisherSessionPresent || expectedTrackNames.some((trackName) => !resultingPublishedTrackNames.includes(trackName))) {
+              throw new Error('Publisher resume recovery did not restore all active local tracks.');
+            }
+            publisherFailureCount = 0;
+            publisherRecoveryEndedAt = new Date().toISOString();
+            if (publisherResumeRecoveryRequested) resumeRecoveryResult = 'ready';
+            updateMediaStatus('Publisher resumed and media is ready.');
+            logMediaDiagnostics('publisher-recovered');
+          } else {
+            updateMediaStatus(direction + ' media transport recovered. Reconnecting active media.');
+            logMediaDiagnostics(direction + '-recovered');
+          }
           return true;
         });
 
         const settled = recovery.catch((error) => {
+          if (direction === 'publisher' && publisherRecoveryRepublishRequired) {
+            publisherRecoveryEndedAt = new Date().toISOString();
+            if (publisherResumeRecoveryRequested) resumeRecoveryResult = 'failed';
+            resultingPublisherSessionPresent = publisherSessionPresent;
+            resultingPublishedTrackNames = readyPublishedPublications.map((entry) => entry.trackName);
+          }
           updateMediaStatus(error instanceof Error ? error.message : 'Unable to recover media transport.');
           return false;
         }).then((recovered) => {
-          if (recovered) mediaRecoveryNeedsReconcile = true;
+          const republished = direction === 'publisher' && publisherRecoveryRepublishRequired;
+          if (recovered && !republished) mediaRecoveryNeedsReconcile = true;
           if (direction === 'publisher') {
             publisherRecoveryPending = false;
             publisherRecoveryPromise = null;
+            publisherRecoveryRepublishRequired = false;
+            publisherResumeRecoveryRequested = false;
           } else {
             subscriberRecoveryPending = false;
             subscriberRecoveryPromise = null;
@@ -2769,21 +2871,23 @@ function meetingUiTemplate(): string {
         return tracks;
       }
 
-      function publishCurrentLocalTracks() {
-        if (publisherRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve();
+      function publishCurrentLocalTracks(options = {}) {
+        const duringRecovery = options.duringRecovery === true;
+        const requireReady = options.requireReady === true;
+        if ((publisherRecoveryPending && !duringRecovery) || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve(false);
         return enqueueMediaOperation('publisher', async () => {
-          if (publisherRecoveryPending) return;
+          if (publisherRecoveryPending && !duringRecovery) return false;
           // Snapshot inside the queue so a queued publish never uses a stale view of what is being captured.
           const tracks = currentLocalTrackPublications();
-          if (!tracks.length) return;
+          if (!tracks.length) return false;
           const peer = ensurePublisherPeerConnection();
           if (!peer) {
             updateMediaStatus('WebRTC is unavailable in this browser');
-            return;
+            return false;
           }
           const peerGeneration = publisherPeerGeneration;
           const additions = tracks.filter((entry) => !publishedLocalTracks.has(entry.trackName));
-          if (!additions.length) return;
+          if (!additions.length) return !requireReady || tracks.every((entry) => publishedLocalTracks.has(entry.trackName));
           const connectionId = ensureMediaConnectionId();
           const added = additions.map((entry) => ({
             ...entry,
@@ -2798,7 +2902,7 @@ function meetingUiTemplate(): string {
             const offer = await peer.createOffer();
             await peer.setLocalDescription(offer);
             await waitForIceGatheringComplete(peer, { allowPartial: true });
-            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || (publisherRecoveryPending && !duringRecovery)) return false;
             const localDescription = peer.localDescription;
             pendingLocalPublications = added.map((entry) => ({
               trackName: entry.trackName,
@@ -2820,7 +2924,7 @@ function meetingUiTemplate(): string {
             if (typeof payload.errorCode === 'string') lastCloudflareErrorCode = payload.errorCode;
             if (typeof payload.errorDescription === 'string') lastCloudflareErrorDescription = payload.errorDescription;
             if (!response.ok || !payload.ok) throw mediaRequestError(payload, response.status, 'Unable to publish media.');
-            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || (publisherRecoveryPending && !duringRecovery)) return false;
             if (!Number.isInteger(payload.data.publisherGeneration) || payload.data.publisherGeneration < 1) {
               throw new Error('Media publisher response did not include a valid generation.');
             }
@@ -2833,7 +2937,7 @@ function meetingUiTemplate(): string {
               mid: entry.transceiver.mid,
             }))).map((entry) => ({ trackName: entry.trackName, mid: entry.mid }));
             await peer.setRemoteDescription(payload.data.sessionDescription);
-            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || (publisherRecoveryPending && !duringRecovery)) return false;
             const accepted = added.filter((entry) => (payload.data.tracks ?? []).some((track) =>
               track.trackName === entry.trackName && track.mid === entry.transceiver.mid));
             if (!accepted.length) throw new Error('Cloudflare Realtime did not accept any local tracks.');
@@ -2850,7 +2954,7 @@ function meetingUiTemplate(): string {
             const readyPayload = await readyResponse.json();
             publishReadyHttpStatus = readyResponse.status;
             if (!readyResponse.ok || !readyPayload.ok) throw mediaRequestError(readyPayload, readyResponse.status, 'Unable to confirm published media readiness.');
-            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || (publisherRecoveryPending && !duringRecovery)) return false;
             publisherSessionPresent = Boolean(readyPayload.data.publisherDiagnostics?.publisherSessionPresent ?? publisherSessionPresent);
             publisherParticipantId = readyPayload.data.publisherDiagnostics?.participantId || publisherParticipantId;
             publisherUserIdSuffix = readyPayload.data.publisherDiagnostics?.userIdSuffix || publisherUserIdSuffix;
@@ -2863,11 +2967,16 @@ function meetingUiTemplate(): string {
               mid: entry.transceiver.mid,
             }))).map((entry) => ({ trackName: entry.trackName, mid: entry.mid }));
             accepted.forEach((entry) => publishedLocalTracks.set(entry.trackName, entry));
+            const readyNames = new Set(readyPublishedPublications.map((entry) => entry.trackName));
+            if (requireReady && accepted.some((entry) => !readyNames.has(entry.trackName))) {
+              throw new Error('Publisher resume recovery did not confirm every active track as ready.');
+            }
             publishRetryCount = 0;
             updateMediaStatus('Publishing media');
             void refreshSfuSubscriptions();
+            return true;
           } catch (error) {
-            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration) return;
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration) return false;
             if (peer.signalingState === 'have-local-offer') {
               try { await peer.setLocalDescription({ type: 'rollback' }); } catch { /* peer already closed */ }
             }
@@ -2883,12 +2992,14 @@ function meetingUiTemplate(): string {
             }
             updateMediaStatus(message);
             if (isStaleSfuSessionError(error) || /Publisher media connection (?:failed|closed)|did not become ready/.test(message)) {
-              void requestMediaRecovery('publisher', message);
+              void requestMediaRecovery('publisher', message, { republishAfterRecovery: true });
             } else if (/pending media negotiation/.test(message) && publishRetryCount < 3) {
               // A subscriber negotiation was in flight; finish it, then publish again.
               publishRetryCount += 1;
               void refreshSfuSubscriptions().then(() => publishCurrentLocalTracks());
             }
+            if (requireReady) throw error;
+            return false;
           }
         });
       }
@@ -4247,6 +4358,94 @@ function meetingUiTemplate(): string {
           if (captureGeneration === localCaptureGeneration) localMediaState.cameraRequestInFlight = false;
         }
       }
+
+      function resumeTrackStateSnapshot() {
+        return [
+          { trackName: 'microphone', tracks: localMediaState.micStream?.getAudioTracks?.() ?? [] },
+          { trackName: 'camera', tracks: localMediaState.cameraStream?.getVideoTracks?.() ?? [] },
+        ].flatMap((entry) => entry.tracks.map((track) => ({
+          trackName: entry.trackName,
+          readyState: track.readyState,
+          muted: Boolean(track.muted),
+        })));
+      }
+
+      async function ensureLocalTracksForResume() {
+        if (isSimulatedMeeting()) return;
+        const devices = [
+          { name: 'microphone', enabled: state.localDevice.micEnabled, available: state.localDevice.micAvailable, stream: 'micStream', device: 'mic', capture: toggleMicrophone, getTracks: (stream) => stream?.getAudioTracks?.() ?? [] },
+          { name: 'camera', enabled: state.localDevice.cameraEnabled, available: state.localDevice.cameraAvailable, stream: 'cameraStream', device: 'camera', capture: toggleCamera, getTracks: (stream) => stream?.getVideoTracks?.() ?? [] },
+        ];
+        const actions = { microphone: 'disabled', camera: 'disabled' };
+        for (const device of devices) {
+          if (!device.enabled || device.available === false) continue;
+          const stream = localMediaState[device.stream];
+          const tracks = device.getTracks(stream);
+          if (tracks.some((track) => track.readyState === 'live' && track.muted !== true)) {
+            actions[device.name] = 'reused';
+            continue;
+          }
+          actions[device.name] = 'reacquired';
+          if (stream) Object.assign(localMediaState, stopLocalMediaStream(localMediaState, device.device));
+          await device.capture();
+          const replacementTracks = device.getTracks(localMediaState[device.stream]);
+          if (!replacementTracks.some((track) => track.readyState === 'live')) {
+            throw new Error('Unable to restore the selected ' + device.name + ' after resuming the meeting.');
+          }
+        }
+        resumeCaptureActions = actions;
+        resumeTrackStates = resumeTrackStateSnapshot();
+      }
+
+      function recoverPublisherAfterResume(trigger) {
+        if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId || isSimulatedMeeting()) return Promise.resolve(false);
+        if (publisherResumePending) return publisherResumePromise || Promise.resolve(false);
+        if (!lastBackgroundAt || lastProcessedBackgroundAt === lastBackgroundAt) return Promise.resolve(false);
+        lastProcessedBackgroundAt = lastBackgroundAt;
+        publisherResumePending = true;
+        lastResumeAt = new Date().toISOString();
+        lastResumeTrigger = trigger;
+        resumeTrackStates = resumeTrackStateSnapshot();
+        resumeCaptureActions = { microphone: 'checking', camera: 'checking' };
+        resumeRecoveryResult = 'in-progress';
+        const recovery = requestMediaRecovery('publisher', 'page resumed', { republishAfterRecovery: true, resume: true });
+        publisherResumePromise = recovery;
+        return recovery.finally(() => {
+          publisherResumePending = false;
+          publisherResumePromise = null;
+        });
+      }
+
+      function recordBackgroundTransition() {
+        if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return;
+        lastBackgroundAt = new Date().toISOString();
+        resumeTrackStates = resumeTrackStateSnapshot();
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          recordBackgroundTransition();
+        } else if (document.visibilityState === 'visible') {
+          void recoverPublisherAfterResume('visibilitychange');
+        }
+      });
+      window.addEventListener('pageshow', (event) => {
+        if (event.persisted && !lastBackgroundAt) recordBackgroundTransition();
+        if (document.visibilityState === 'visible') void recoverPublisherAfterResume('pageshow');
+      });
+      window.addEventListener('focus', () => {
+        if (document.visibilityState === 'visible') void recoverPublisherAfterResume('focus');
+      });
+      window.addEventListener('offline', () => {
+        if (state.route === 'meeting') {
+          lastOfflineAt = new Date().toISOString();
+          lastBackgroundAt = lastOfflineAt;
+        }
+      });
+      window.addEventListener('online', () => {
+        if (state.route === 'meeting' && !lastBackgroundAt && lastOfflineAt) lastBackgroundAt = lastOfflineAt;
+        if (document.visibilityState === 'visible') void recoverPublisherAfterResume('online');
+      });
 
       function syncMeetingRoleUi() {
         const endMeetingBtn = document.getElementById('endMeetingBtn');

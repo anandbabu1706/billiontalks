@@ -1516,10 +1516,14 @@ describe("MeetingService lifecycle", () => {
           { trackName: "camera", mid: "3" },
         ]),
       });
-      await api.request(`/api/meetings/${meeting.id}`, "GET", participant.cookie);
+      const resumedSnapshot = await (await api.request(`/api/meetings/${meeting.id}`, "GET", participant.cookie)).json();
+      const resumedParticipants = resumedSnapshot.data.participants.filter((entry: { userId: string }) => entry.userId === participant.userId);
+      expect(resumedParticipants).toHaveLength(1);
+      expect(resumedParticipants[0].id).toBe(participantId);
       const hostSubscribe = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, {
         connectionId: "host-sees-recovered-guest",
       })).json();
+      expect(hostSubscribe.data.tracks).toHaveLength(2);
       expect(hostSubscribe.data.tracks.map((track: { publisherUserId: string; trackName: string }) => [track.publisherUserId, track.trackName]))
         .toEqual(expect.arrayContaining([[participant.userId, "microphone"], [participant.userId, "camera"]]));
     } finally {
