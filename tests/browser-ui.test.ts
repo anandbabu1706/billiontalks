@@ -158,6 +158,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
   let nextSubscribePayload: unknown = null;
   let subscribePayloadUsed = false;
   const subscribeQueue: unknown[] = [];
+  let discoveryRevision = 0;
   let nextSubscribeError: string | null = null;
   let registrationResponse = createResponse({
     ok: true,
@@ -266,6 +267,14 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
           tracks: body.tracks,
         },
       });
+    }
+
+    if (url.endsWith("/media/publications") && method === "GET") {
+      const publications = remoteParticipants().flatMap((participant, participantIndex) => [
+        { participantId: participant.id, generation: discoveryRevision + subscribeQueue.length, trackName: "camera", mid: `${participantIndex}-0` },
+        { participantId: participant.id, generation: discoveryRevision + subscribeQueue.length, trackName: "microphone", mid: `${participantIndex}-1` },
+      ]);
+      return createResponse({ ok: true, data: { publications, diagnostics: { discovered: publications.length, publishers: {} } } });
     }
 
     if (url.endsWith("/media/subscribe") && method === "POST") {
@@ -430,8 +439,8 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     getUserMediaMock,
     micStreams: createdMicStreams,
     cameraStreams: createdCameraStreams,
-    setNextSubscribePayload(payload: unknown) { nextSubscribePayload = payload; subscribePayloadUsed = false; },
-    queueSubscribePayload(payload: unknown) { subscribeQueue.push(payload); },
+    setNextSubscribePayload(payload: unknown) { nextSubscribePayload = payload; subscribePayloadUsed = false; discoveryRevision += 1; },
+    queueSubscribePayload(payload: unknown) { subscribeQueue.push(payload); discoveryRevision += 1; },
     setNextSubscribeError(message: string) { nextSubscribeError = message; },
     setRegistrationResponse(payload: unknown, ok = true, status = 201) { registrationResponse = createResponse(payload, ok, status); },
     setIncludeRemoteParticipant() { includeRemoteParticipant = true; },
@@ -1263,6 +1272,29 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/media/renegotiate", expect.objectContaining({ method: "POST" }));
   });
 
+  it("does not repeat an empty subscribe mutation when publication discovery is unchanged", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Unchanged empty media set");
+    await flush();
+    await flush();
+
+    const subscribePostCount = () => fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).endsWith("/media/subscribe") && init?.method === "POST").length;
+    const discoveryGetCount = () => fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).endsWith("/media/publications") && (init?.method ?? "GET") === "GET").length;
+    const initialSubscribeCount = subscribePostCount();
+    const initialDiscoveryCount = discoveryGetCount();
+    expect(initialSubscribeCount).toBe(1);
+
+    await (window as any).refreshSfuSubscriptions();
+    await (window as any).refreshSfuSubscriptions();
+    await (window as any).refreshSfuSubscriptions();
+
+    expect(discoveryGetCount()).toBeGreaterThan(initialDiscoveryCount);
+    expect(subscribePostCount()).toBe(initialSubscribeCount);
+  });
+
   it("replaces remote camera, microphone, and screen-share tracks idempotently without affecting another participant", async () => {
     const { window, document, setNextSubscribePayload, setIncludeRemoteParticipant, setAdditionalRemoteParticipant } = await loadRenderedPage();
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
@@ -1508,6 +1540,12 @@ describe("BillionTalks browser UI regression tests", () => {
       let negotiated = -1;
       page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/media/publications")) {
+          return createResponse({ ok: true, data: { publications: [
+            { participantId: "remote-participant", generation, trackName: "camera", mid: "0" },
+            ...(withMicrophone ? [{ participantId: "remote-participant", generation, trackName: "microphone", mid: "1" }] : []),
+          ] } });
+        }
         if (url.endsWith("/media/recover") && JSON.parse(String(init?.body)).direction === "subscriber") generation += 1;
         if (url.endsWith("/media/renegotiate")) negotiated = generation;
         if (url.endsWith("/media/subscribe")) {
@@ -1682,6 +1720,11 @@ describe("BillionTalks browser UI regression tests", () => {
       let pending406 = options.fail406 ?? null;
       page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/media/publications")) {
+          return createResponse({ ok: true, data: { publications: [
+            { participantId: "remote-participant", generation, trackName: "camera", mid: "0" },
+          ] } });
+        }
         const kind = ["/media/subscribe", "/media/renegotiate", "/media/recover"].find((suffix) => url.endsWith(suffix))?.slice(7);
         if (!kind) return original(input, init);
         const subscriberRecover = kind === "recover" && JSON.parse(String(init?.body)).direction === "subscriber";

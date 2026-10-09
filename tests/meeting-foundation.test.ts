@@ -815,6 +815,15 @@ describe("MeetingService lifecycle", () => {
       expect(response.status).toBe(200);
       expect(payload.data.sessionDescription).toEqual({ type: "answer", sdp: "sfu-answer-sdp" });
       expect(payload.data.tracks).toHaveLength(2);
+      expect(payload.data.publisherDiagnostics).toMatchObject({
+        participantId: expect.any(String),
+        publisherSessionPresent: true,
+        publishedTracks: [],
+        pendingPublishedTracks: [
+          { trackName: "microphone", mid: "0" },
+          { trackName: "camera", mid: "1" },
+        ],
+      });
       expect(JSON.stringify(payload)).not.toContain("private-sfu-session-id");
       expect(JSON.stringify(payload)).not.toContain("test-sfu-app-secret");
       expect(calls.map((call) => [call.method, call.url])).toEqual([
@@ -1262,12 +1271,41 @@ describe("MeetingService lifecycle", () => {
       });
       expect(ready.status).toBe(200);
 
+      const discovery = await api.request(`/api/meetings/${meeting.id}/media/publications`, "GET", host.cookie);
+      const discoveryPayload = await discovery.json();
+      expect(discovery.status).toBe(200);
+      expect(discoveryPayload.data.publications).toEqual([
+        { participantId: expect.any(String), generation: 1, trackName: "microphone", mid: "0" },
+      ]);
+      expect(discoveryPayload.data.diagnostics).toMatchObject({
+        subscriberParticipantId: expect.any(String),
+        desiredPublicationCount: 1,
+        participants: [
+          expect.objectContaining({ userId: host.userId, exclusionReason: "local-participant" }),
+          expect.objectContaining({
+            userId: participant.userId,
+            publisherSessionPresent: true,
+            publishedTracks: [{ trackName: "microphone", mid: "0", included: true, reason: "included" }],
+          }),
+        ],
+      });
+      expect(JSON.stringify(discoveryPayload)).not.toContain("sfu-session-1-secretish");
+      expect(JSON.stringify(discoveryPayload)).not.toContain("test-sfu-app-secret");
+
       const subscribe = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: "host-mic-subscriber" });
       const payload = await subscribe.json();
       expect(subscribe.status).toBe(200);
       expect(payload.data.tracks).toEqual([
         expect.objectContaining({ publisherUserId: participant.userId, trackName: "microphone", mid: "remote-0" }),
       ]);
+      expect(payload.data.diagnostics).toMatchObject({
+        subscriberParticipantId: expect.any(String),
+        desiredPublicationCount: 1,
+        participants: expect.arrayContaining([
+          expect.objectContaining({ userId: host.userId, exclusionReason: "local-participant" }),
+          expect.objectContaining({ userId: participant.userId, publisherSessionPresent: true }),
+        ]),
+      });
       const remoteCreate = sfu.calls.find((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote");
       expect(remoteCreate?.body.tracks).toEqual([
         { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "microphone" },
@@ -1278,6 +1316,116 @@ describe("MeetingService lifecycle", () => {
         sessionDescription: { type: "answer", sdp: "host-mic-answer" },
       });
       expect(answer.status).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("discovers exactly each other participant's camera and microphone when display names match", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const initialSnapshot = await (await api.request(`/api/meetings/${meeting.id}`, "GET", host.cookie)).json();
+    const hostName = initialSnapshot.data.participants.find((entry: { userId: string }) => entry.userId === host.userId).displayName;
+    await api.request(`/api/meetings/${meeting.id}/join`, "POST", participant.cookie, {
+      userId: "untrusted-client-user",
+      displayName: hostName,
+    });
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+
+    try {
+      const publishTracks = [
+        { trackName: "microphone", mid: "0" },
+        { trackName: "camera", mid: "1" },
+      ];
+      const publish = async (cookie: string, connectionId: string) => api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", cookie, {
+        connectionId,
+        sessionDescription: { type: "offer", sdp: `${connectionId}-offer` },
+        tracks: publishTracks,
+      });
+      const ready = async (cookie: string, connectionId: string) => api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", cookie, {
+        connectionId,
+        trackNames: ["microphone", "camera"],
+      });
+      expect((await publish(host.cookie, "host-shared-media-connection")).status).toBe(200);
+      expect((await ready(host.cookie, "host-shared-media-connection")).status).toBe(200);
+      expect((await publish(participant.cookie, "guest-shared-media-connection")).status).toBe(200);
+      expect((await ready(participant.cookie, "guest-shared-media-connection")).status).toBe(200);
+
+      const hostSubscribe = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, {
+        connectionId: "host-shared-media-connection",
+      })).json();
+      expect(hostSubscribe.data.tracks).toHaveLength(2);
+      expect(hostSubscribe.data.tracks.map((track: { publisherUserId: string; trackName: string }) => [track.publisherUserId, track.trackName]))
+        .toEqual(expect.arrayContaining([[participant.userId, "microphone"], [participant.userId, "camera"]]));
+      expect(hostSubscribe.data.diagnostics.subscriberParticipantId).not.toBe(host.userId);
+      expect(hostSubscribe.data.diagnostics.participants.find((entry: { userId: string }) => entry.userId === participant.userId).participantId)
+        .not.toBe(participant.userId);
+      expect(hostSubscribe.data.diagnostics.participants.find((entry: { userId: string }) => entry.userId === host.userId).exclusionReason)
+        .toBe("local-participant");
+
+      const guestSubscribe = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", participant.cookie, {
+        connectionId: "guest-shared-media-connection",
+      })).json();
+      expect(guestSubscribe.data.tracks).toHaveLength(2);
+      expect(guestSubscribe.data.tracks.map((track: { publisherUserId: string; trackName: string }) => [track.publisherUserId, track.trackName]))
+        .toEqual(expect.arrayContaining([[host.userId, "microphone"], [host.userId, "camera"]]));
+      expect(guestSubscribe.data.diagnostics.participants.find((entry: { userId: string }) => entry.userId === participant.userId).exclusionReason)
+        .toBe("local-participant");
+      expect(sfu.calls.filter((call) => call.url.endsWith("/tracks/new") && call.body.tracks?.[0]?.location === "remote"))
+        .toHaveLength(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("retains an admitted guest's publication across meeting snapshot refresh", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const guest = await api.createSession();
+    const meeting = await api.createMeeting(host.cookie, "Admitted guest media", "HOST_APPROVAL");
+    const admission = await (await api.request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, {
+      displayName: "Admitted Guest",
+    })).json();
+    expect(admission.data.status).toBe("WAITING");
+    await api.request(`/api/meetings/${meeting.id}/admission/${admission.data.id}/approve`, "POST", host.cookie);
+    const joinedSnapshot = await (await api.request(`/api/meetings/${meeting.id}`, "GET", guest.cookie)).json();
+    expect(joinedSnapshot.data.participants.find((entry: { userId: string }) => entry.userId === guest.userId).state).toBe("JOINED");
+
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const publish = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", guest.cookie, {
+        connectionId: "admitted-guest-publisher",
+        sessionDescription: { type: "offer", sdp: "admitted-guest-offer" },
+        tracks: [{ trackName: "microphone", mid: "0" }, { trackName: "camera", mid: "1" }],
+      });
+      const publishPayload = await publish.json();
+      expect(publish.status).toBe(200);
+      expect(publishPayload.data.publisherDiagnostics).toMatchObject({
+        publisherSessionPresent: true,
+        publishedTracks: [],
+        pendingPublishedTracks: [{ trackName: "microphone", mid: "0" }, { trackName: "camera", mid: "1" }],
+      });
+      const ready = await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", guest.cookie, {
+        connectionId: "admitted-guest-publisher",
+        trackNames: ["microphone", "camera"],
+      });
+      expect(ready.status).toBe(200);
+      await api.request(`/api/meetings/${meeting.id}`, "GET", guest.cookie);
+
+      const subscribe = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, {
+        connectionId: "host-admitted-subscriber",
+      })).json();
+      expect(subscribe.data.tracks).toHaveLength(2);
+      expect(subscribe.data.tracks.map((track: { trackName: string }) => track.trackName).sort()).toEqual(["camera", "microphone"]);
+      expect(subscribe.data.diagnostics.participants.find((entry: { userId: string }) => entry.userId === guest.userId))
+        .toMatchObject({
+          publisherSessionPresent: true,
+          publishedTracks: expect.arrayContaining([
+            { trackName: "microphone", mid: "0", included: true, reason: "included" },
+            { trackName: "camera", mid: "1", included: true, reason: "included" },
+          ]),
+        });
     } finally {
       vi.unstubAllGlobals();
     }

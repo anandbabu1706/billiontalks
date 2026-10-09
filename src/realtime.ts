@@ -41,6 +41,7 @@ export type RealtimeSubscribedTrack = {
 
 export type RealtimeParticipantMediaState = {
   userId: string;
+  participantId?: string;
   connectionId: string;
   generation: number;
   publisherSessionId?: string;

@@ -519,6 +519,138 @@ async function requireJoinedMediaMember(env: WorkerEnv, meetingId: string, userI
   return meeting;
 }
 
+type DiscoveredMediaPublication = {
+  key: string;
+  publisherSessionId: string;
+  publisherUserId: string;
+  publisherParticipantId: string;
+  publisherDisplayName: string;
+  generation: number;
+  trackName: string;
+  mid: string;
+};
+
+function discoverMeetingMediaPublications(
+  meeting: Meeting,
+  subscriberUserId: string,
+  states: RealtimeParticipantMediaState[],
+): {
+  subscriberParticipantId?: string;
+  publications: DiscoveredMediaPublication[];
+  diagnostics: {
+    subscriberParticipantId?: string;
+    participants: Array<{
+      participantId: string;
+      userId: string;
+      displayName: string;
+      role: string;
+      state: string;
+      publisherSessionPresent: boolean;
+      publishedTracks: Array<{ trackName: string; mid: string; included: boolean; reason: string }>;
+      exclusionReason?: string;
+    }>;
+    discovered: number;
+    desiredPublicationCount: number;
+    publishers: Record<string, string[]>;
+  };
+} {
+const subscriberParticipant = meeting.participants.find((member) => member.userId === subscriberUserId);
+const participants = meeting.participants.map((member) => {
+  const publisher = states.find((state) => state.participantId === member.id) ??
+    states.find((state) => state.userId === member.userId);
+  const local = member.id === subscriberParticipant?.id ||
+    (!publisher?.participantId && member.userId === subscriberUserId);
+  const joined = member.state === ParticipantState.JOINED;
+  const participantIdentityMatches = !publisher || publisher.userId === member.userId;
+  const participantIdMatches = !publisher?.participantId || publisher.participantId === member.id;
+  let exclusionReason: string | undefined;
+  if (local) exclusionReason = "local-participant";
+  else if (!joined) exclusionReason = "participant-not-joined";
+  else if (!participantIdentityMatches) exclusionReason = "participant-user-id-mismatch";
+  else if (!participantIdMatches) exclusionReason = "participant-id-mismatch";
+    else if (!publisher) exclusionReason = "publisher-state-missing";
+    else if (!publisher.publisherSessionId) exclusionReason = "publisher-session-missing";
+
+    const publishedTracks = (publisher?.publishedTracks ?? []).map((track) => ({
+      trackName: track.trackName,
+      mid: track.mid,
+      included: !exclusionReason,
+      reason: exclusionReason ?? "included",
+    }));
+
+    return {
+      member,
+      publisher,
+      diagnostics: {
+        participantId: member.id,
+        userId: member.userId,
+        displayName: member.displayName,
+        role: member.role,
+        state: member.state,
+        publisherSessionPresent: Boolean(publisher?.publisherSessionId),
+        publishedTracks,
+        ...(exclusionReason ? { exclusionReason } : {}),
+      },
+      exclusionReason,
+    };
+  });
+  const meetingUserIds = new Set(meeting.participants.map((member) => member.userId));
+  const meetingParticipantIds = new Set(meeting.participants.map((member) => member.id));
+  const unlinkedStates = states.filter((publisher) =>
+    !meetingUserIds.has(publisher.userId) &&
+    (!publisher.participantId || !meetingParticipantIds.has(publisher.participantId)),
+  ).map((publisher) => ({
+    participantId: publisher.participantId ?? "",
+    userId: publisher.userId,
+    displayName: "",
+    role: "UNKNOWN",
+    state: "NOT_IN_MEETING",
+    publisherSessionPresent: Boolean(publisher.publisherSessionId),
+    publishedTracks: publisher.publishedTracks.map((track) => ({
+      trackName: track.trackName,
+      mid: track.mid,
+      included: false,
+      reason: "participant-not-in-meeting",
+    })),
+    exclusionReason: "participant-not-in-meeting",
+  }));
+
+  const publications: DiscoveredMediaPublication[] = participants.flatMap(({ member, publisher, exclusionReason }) => {
+    if (exclusionReason || !publisher?.publisherSessionId) return [];
+    return publisher.publishedTracks.map((track) => ({
+      key: `${publisher.userId}:${publisher.generation}:${track.trackName}`,
+      publisherSessionId: publisher.publisherSessionId!,
+      publisherUserId: publisher.userId,
+      publisherParticipantId: member.id,
+      publisherDisplayName: member.displayName,
+      generation: publisher.generation,
+      trackName: track.trackName,
+      mid: track.mid,
+    }));
+  }).filter((publication, index, all) =>
+    all.findIndex((entry) =>
+      entry.publisherSessionId === publication.publisherSessionId && entry.trackName === publication.trackName,
+    ) === index);
+
+  const publishers: Record<string, string[]> = {};
+  for (const publication of publications) {
+    (publishers[publication.publisherUserId] ??= []).push(publication.trackName);
+  }
+  const subscriberParticipantId = subscriberParticipant?.id;
+
+  return {
+    subscriberParticipantId,
+    publications,
+    diagnostics: {
+      ...(subscriberParticipantId ? { subscriberParticipantId } : {}),
+      participants: [...participants.map((participant) => participant.diagnostics), ...unlinkedStates],
+      discovered: publications.length,
+      desiredPublicationCount: publications.length,
+      publishers,
+    },
+  };
+}
+
 function validateMediaConnectionId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{16,80}$/.test(value);
 }
@@ -1981,6 +2113,8 @@ function meetingUiTemplate(): string {
       let subscriberFailureCount = 0;
       let subscriberSessionLabel = 0;
       let queuedSubscriberRefresh = null;
+      let lastSubscriberPublicationSet = null;
+      let lastSubscriberPublicationSetConnectionId = null;
       let subscriberMutationSeq = 0;
 
       // The upstream session id stays server-side; this label identifies the browser-side subscriber PeerConnection.
@@ -2254,6 +2388,8 @@ function meetingUiTemplate(): string {
           } else {
             const previousPeer = subscriberPeerConnection;
             subscriberPeerConnection = null;
+            lastSubscriberPublicationSet = null;
+            lastSubscriberPublicationSetConnectionId = null;
             previousPeer?.close();
             const remotes = Array.from(remoteStreams.entries());
             remoteStreams.clear();
@@ -2703,19 +2839,34 @@ function meetingUiTemplate(): string {
         queuedSubscriberRefresh = enqueueMediaOperation('subscriber', async () => {
           queuedSubscriberRefresh = null;
           if (mediaRecoveryInProgress) return;
-          const peer = ensureSubscriberPeerConnection();
-          if (!peer) return;
           let mutation = null;
+          let peer = null;
           try {
+            const connectionId = ensureMediaConnectionId();
+            const discoveryResponse = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publications');
+            const discoveryPayload = await discoveryResponse.json();
+            if (!discoveryResponse.ok || !discoveryPayload.ok || !Array.isArray(discoveryPayload.data && discoveryPayload.data.publications)) {
+              throw new Error(discoveryPayload.error || 'Unable to discover remote publications.');
+            }
+            const publications = discoveryPayload.data.publications;
+            const publicationSet = JSON.stringify(publications.map((publication) => [
+              publication.participantId, publication.generation, publication.trackName, publication.mid,
+            ]).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+            if (publicationSet === lastSubscriberPublicationSet && connectionId === lastSubscriberPublicationSetConnectionId) return;
+
+            peer = ensureSubscriberPeerConnection();
+            if (!peer) return;
             mutation = beginSubscriberMutation('subscribe', peer);
             const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/subscribe', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ connectionId: ensureMediaConnectionId() }),
+              body: JSON.stringify({ connectionId }),
             });
             const payload = await response.json();
             mutation.httpStatus = response.status;
             if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to subscribe to media.');
+            lastSubscriberPublicationSet = publicationSet;
+            lastSubscriberPublicationSetConnectionId = connectionId;
             const data = payload.data;
             mutation.pendingOperationId = data && data.operationId || '';
             if (data && data.diagnostics) {
@@ -2791,6 +2942,8 @@ function meetingUiTemplate(): string {
 
       function closeRealtimeTransports(meetingId) {
         const connectionId = state.mediaConnectionId;
+        lastSubscriberPublicationSet = null;
+        lastSubscriberPublicationSetConnectionId = null;
         mediaTransportClosing = true;
         clearMediaDisconnectTimer('publisher');
         clearMediaDisconnectTimer('subscriber');
@@ -4908,7 +5061,8 @@ const routeHandler = {
       }
 
       try {
-        await requireJoinedMediaMember(env, mediaPublishMatch[1], session.userId);
+        const meeting = await requireJoinedMediaMember(env, mediaPublishMatch[1], session.userId);
+        const participantId = meeting.participants.find((participant) => participant.userId === session.userId)!.id;
         const rpc = getMeetingStateRpc(env, mediaPublishMatch[1]);
         const client = getCloudflareRealtimeClient(env);
         let state = await rpc.getSfuParticipantState(session.userId);
@@ -4922,12 +5076,18 @@ const routeHandler = {
         if (!state) {
           state = {
             userId: session.userId,
+            participantId,
             connectionId: body.connectionId,
             generation: generation + 1,
             publishedTracks: [],
             subscribedTracks: [],
           };
           await rpc.saveSfuParticipantState(state);
+        } else {
+          if (state.participantId !== participantId) {
+            state = { ...state, participantId };
+            await rpc.saveSfuParticipantState(state);
+          }
         }
         if (state.pendingSubscriptions) {
           return withSessionCookie(jsonResponse({ ok: false, error: "Finish the pending media negotiation before publishing." }, 409), request, session);
@@ -4973,7 +5133,17 @@ const routeHandler = {
 
         return withSessionCookie(jsonResponse({
           ok: true,
-          data: { sessionDescription: operation.sessionDescription, tracks: acceptedTracks, publisherGeneration: state.generation },
+          data: {
+            sessionDescription: operation.sessionDescription,
+            tracks: acceptedTracks,
+            publisherGeneration: state.generation,
+            publisherDiagnostics: {
+              participantId: state.participantId,
+              publisherSessionPresent: Boolean(state.publisherSessionId),
+              publishedTracks: state.publishedTracks,
+              pendingPublishedTracks: state.pendingPublishedTracks ?? [],
+            },
+          },
         }), request, session);
       } catch (error) {
         return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
@@ -5003,12 +5173,49 @@ const routeHandler = {
         if (readyTracks.length !== requestedNames.size) throw new Error("Published media tracks are not awaiting readiness.");
         const publishedByName = new Map(state.publishedTracks.map((track) => [track.trackName, track]));
         readyTracks.forEach((track) => publishedByName.set(track.trackName, track));
-        await rpc.saveSfuParticipantState({
+        const updatedState = {
           ...state,
           publishedTracks: [...publishedByName.values()],
           pendingPublishedTracks: pending.filter((track) => !requestedNames.has(track.trackName)),
-        });
-        return withSessionCookie(jsonResponse({ ok: true, data: { ready: readyTracks.map((track) => track.trackName) } }), request, session);
+        };
+        await rpc.saveSfuParticipantState(updatedState);
+        return withSessionCookie(jsonResponse({
+          ok: true,
+          data: {
+            ready: readyTracks.map((track) => track.trackName),
+            publisherDiagnostics: {
+              participantId: updatedState.participantId,
+              publisherSessionPresent: Boolean(updatedState.publisherSessionId),
+              publishedTracks: updatedState.publishedTracks,
+              pendingPublishedTracks: updatedState.pendingPublishedTracks ?? [],
+            },
+          },
+        }), request, session);
+      } catch (error) {
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
+      }
+    }
+
+    const mediaPublicationsMatch = /^\/api\/meetings\/([^/]+)\/media\/publications$/.exec(url.pathname);
+
+    if (mediaPublicationsMatch && request.method === "GET") {
+      const { session } = await getOrCreateSession(request, env);
+      try {
+        const meeting = await requireJoinedMediaMember(env, mediaPublicationsMatch[1], session.userId);
+        const rpc = getMeetingStateRpc(env, mediaPublicationsMatch[1]);
+        const discovery = discoverMeetingMediaPublications(meeting, session.userId, await rpc.listSfuParticipantStates());
+        return withSessionCookie(jsonResponse({
+          ok: true,
+          data: {
+            publications: discovery.publications.map((publication) => ({
+              participantId: publication.publisherParticipantId,
+              generation: publication.generation,
+              trackName: publication.trackName,
+              mid: publication.mid,
+            })),
+            diagnostics: discovery.diagnostics,
+          },
+        }), request, session);
       } catch (error) {
         return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
@@ -5030,6 +5237,7 @@ const routeHandler = {
         let states = await rpc.listSfuParticipantStates();
         let ownState = states.find((state) => state.userId === session.userId);
         let generation = ownState?.generation ?? 0;
+        const ownParticipant = meeting.participants.find((participant) => participant.userId === session.userId)!;
         if (ownState && ownState.connectionId !== body.connectionId) {
           await closeSfuTransport(client, ownState);
           await rpc.deleteSfuParticipantState(session.userId);
@@ -5037,6 +5245,12 @@ const routeHandler = {
           ownState = undefined;
           states = states.filter((state) => state.userId !== session.userId);
         }
+        const discovery = discoverMeetingMediaPublications(meeting, session.userId, states);
+        const publications = discovery.publications;
+        const diagnostics = () => ({
+          ...discovery.diagnostics,
+          subscribed: ownState?.subscribedTracks.length ?? 0,
+        });
         if (ownState?.pendingSubscriptions) {
           return withSessionCookie(jsonResponse({
             ok: true,
@@ -5045,34 +5259,10 @@ const routeHandler = {
               sessionDescription: ownState.pendingSubscriptions.sessionDescription,
               tracks: ownState.pendingSubscriptions.tracks,
               removed: ownState.pendingSubscriptions.removed ?? [],
+              diagnostics: diagnostics(),
             },
           }), request, session);
         }
-
-        const joinedUsers = new Map(meeting.participants
-          .filter((participant) => participant.state === ParticipantState.JOINED)
-          .map((participant) => [participant.userId, participant]));
-        const publications = states.flatMap((publisher) => {
-          if (publisher.userId === session.userId || !joinedUsers.has(publisher.userId)) return [];
-          const member = joinedUsers.get(publisher.userId)!;
-          if (!publisher.publisherSessionId) return [];
-          return publisher.publishedTracks.map((track) => ({
-            key: `${publisher.userId}:${publisher.generation}:${track.trackName}`,
-            publisherSessionId: publisher.publisherSessionId!,
-            publisherUserId: publisher.userId,
-            publisherDisplayName: member.displayName,
-            trackName: track.trackName,
-          }));
-        }).filter((publication, index, all) =>
-          all.findIndex((entry) => entry.publisherSessionId === publication.publisherSessionId && entry.trackName === publication.trackName) === index);
-
-        const publishersByUser: Record<string, string[]> = {};
-        for (const publication of publications) (publishersByUser[publication.publisherUserId] ??= []).push(publication.trackName);
-        const diagnostics = () => ({
-          discovered: publications.length,
-          subscribed: ownState?.subscribedTracks.length ?? 0,
-          publishers: publishersByUser,
-        });
 
         if (!publications.length && !ownState) {
           return withSessionCookie(jsonResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [], diagnostics: diagnostics() } }), request, session);
@@ -5081,11 +5271,15 @@ const routeHandler = {
         if (!ownState) {
           ownState = {
             userId: session.userId,
+            participantId: ownParticipant.id,
             connectionId: body.connectionId,
             generation: generation + 1,
             publishedTracks: [],
             subscribedTracks: [],
           };
+          await rpc.saveSfuParticipantState(ownState);
+        } else if (ownState.participantId !== ownParticipant.id) {
+          ownState = { ...ownState, participantId: ownParticipant.id };
           await rpc.saveSfuParticipantState(ownState);
         }
 
