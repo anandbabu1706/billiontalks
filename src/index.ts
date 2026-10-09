@@ -1013,7 +1013,7 @@ function meetingUiTemplate(): string {
         border-radius: 18px;
         min-height: 500px;
         display: grid;
-        grid-template-columns: repeat(2, minmax(160px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
         gap: 12px;
         padding: 12px;
       }
@@ -1048,6 +1048,88 @@ function meetingUiTemplate(): string {
       }
       .tile.self {
         background: linear-gradient(135deg, rgba(79, 117, 255, 0.38), rgba(51, 65, 85, 0.96));
+      }
+      .presentation-canvas {
+        display: none;
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #05080e;
+      }
+      .presentation-canvas video {
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        object-fit: contain;
+      }
+      .presentation-focus-btn {
+        position: absolute;
+        z-index: 2;
+        top: 10px;
+        right: 10px;
+        padding: 8px 11px;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.86);
+        color: white;
+        cursor: pointer;
+      }
+      .video-stage.presentation-active {
+        min-width: 0;
+        grid-template-columns: minmax(0, 1fr) 148px;
+        grid-template-rows: minmax(0, 1fr);
+        align-items: stretch;
+      }
+      .video-stage.presentation-active .presentation-canvas {
+        display: flex;
+        grid-column: 1;
+        grid-row: 1;
+        min-height: 0;
+      }
+      .video-stage.presentation-active .tile {
+        grid-column: 2;
+        min-width: 0;
+        min-height: 92px;
+        height: 112px;
+      }
+      .video-stage.presentation-active .tile .remote-media {
+        object-fit: cover;
+      }
+      .camera-strip {
+        display: contents;
+      }
+      .video-stage.presentation-active .camera-strip {
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+        flex-direction: column;
+        gap: 8px;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+      .video-stage.presentation-focused,
+      .video-stage:fullscreen {
+        position: fixed;
+        z-index: 1000;
+        inset: 8px;
+        width: auto;
+        height: auto;
+        min-height: 0;
+        margin: 0;
+        border-radius: 14px;
+        background: #05080e;
+        box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.88);
+      }
+      .video-stage.presentation-focused .presentation-canvas,
+      .video-stage:fullscreen .presentation-canvas {
+        min-height: 0;
       }
       .side-panel {
         border-left: 1px solid var(--border);
@@ -1538,6 +1620,56 @@ function meetingUiTemplate(): string {
         .video-stage {
           grid-template-columns: 1fr;
         }
+        .video-stage.presentation-active {
+          grid-template-columns: minmax(0, 1fr) 128px;
+        }
+      }
+      @media (max-width: 720px) {
+        .video-stage.presentation-active {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: minmax(220px, 1fr) auto;
+          min-height: min(72svh, 680px);
+          gap: 8px;
+          padding: 8px;
+        }
+        .video-stage.presentation-active .presentation-canvas {
+          grid-column: 1;
+          grid-row: 1;
+          min-height: 0;
+        }
+        .video-stage.presentation-active .tile {
+          grid-column: auto;
+          grid-row: 2;
+          width: 104px;
+          height: 78px;
+          min-height: 78px;
+          flex: 0 0 104px;
+        }
+        .video-stage.presentation-active .camera-strip {
+          grid-column: 1;
+          grid-row: 2;
+          flex-direction: row;
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding-bottom: 2px;
+        }
+        .video-stage.presentation-active .tile .meta {
+          left: 4px;
+          bottom: 4px;
+          max-width: calc(100% - 8px);
+          padding: 3px 6px;
+          font-size: 10px;
+        }
+        .video-stage.presentation-focused,
+        .video-stage:fullscreen {
+          inset: 4px;
+          grid-template-rows: minmax(0, 1fr) auto;
+          min-height: 0;
+        }
+        .video-stage.presentation-focused .presentation-canvas,
+        .video-stage:fullscreen .presentation-canvas {
+          min-height: 0;
+        }
       }
       @media (max-width: 720px) {
         .app-shell { padding: 16px; }
@@ -1779,6 +1911,10 @@ function meetingUiTemplate(): string {
             </div>
 
             <div class="video-stage" id="videoStage">
+              <div class="presentation-canvas" id="presentationCanvas" aria-label="Shared presentation">
+                <video id="presentationVideo" class="presentation-video" autoplay playsinline></video>
+                <button type="button" class="presentation-focus-btn" id="presentationFocusBtn" aria-pressed="false">Focus / Full Screen</button>
+              </div>
               <div class="tile self">
                 <div class="placeholder" id="localTileLabel">You</div>
                 <div class="meta"><span class="dot"></span><span id="localStatusLabel">Mic on</span></div>
@@ -2801,7 +2937,7 @@ function meetingUiTemplate(): string {
       function removeRemoteMediaElements(userId) {
         const stage = document.getElementById('videoStage');
         const tile = stage && Array.from(stage.querySelectorAll('.tile')).find((entry) => entry.dataset.userId === userId);
-        tile?.querySelectorAll('.remote-media, .remote-screen-media').forEach((element) => {
+        tile?.querySelectorAll('.remote-media').forEach((element) => {
           element.srcObject = null;
           element.remove();
         });
@@ -2886,23 +3022,7 @@ function meetingUiTemplate(): string {
           }
           element.srcObject = remote.stream;
           const screenActive = remote.screenStream.getTracks().some((track) => track.readyState !== 'ended');
-          let screenElement = tile.querySelector('video.remote-screen-media');
-          if (screenActive && !screenElement) {
-            screenElement = document.createElement('video');
-            screenElement.className = 'remote-screen-media';
-            screenElement.autoplay = true;
-            screenElement.playsInline = true;
-            screenElement.muted = false;
-            screenElement.style.width = '100%';
-            screenElement.style.height = '100%';
-            screenElement.style.objectFit = 'contain';
-            tile.appendChild(screenElement);
-          }
-          if (screenElement) {
-            screenElement.srcObject = remote.screenStream;
-            screenElement.style.display = screenActive ? '' : 'none';
-          }
-          if (hasVideo) element.style.display = screenActive ? 'none' : '';
+          if (hasVideo) element.style.display = '';
           const placeholder = tile.querySelector('.placeholder');
           if (placeholder) placeholder.style.display = hasVideo || screenActive ? 'none' : 'block';
           const showPlaybackButton = () => {
@@ -2911,10 +3031,101 @@ function meetingUiTemplate(): string {
             const playbackButton = document.getElementById('enableRemotePlaybackBtn');
             if (playbackButton) playbackButton.style.display = 'inline-flex';
           };
-          if (screenElement) startRemotePlayback(screenElement, showPlaybackButton);
           startRemotePlayback(element, showPlaybackButton);
         }
+        syncPresentationLayout();
         updateRemoteTileDiagnostics();
+      }
+
+      function syncPresentationLayout() {
+        const stage = document.getElementById('videoStage');
+        const canvas = document.getElementById('presentationCanvas');
+        const video = document.getElementById('presentationVideo');
+        if (!stage || !canvas || !video) return;
+
+        const localTrack = activeScreenShareStream?.getVideoTracks().find((track) => track.readyState !== 'ended');
+        let activePresentation = localTrack
+          ? { source: 'local', userId: state.currentUserId || '', displayName: 'Your screen', stream: activeScreenShareStream }
+          : null;
+        if (!activePresentation) {
+          for (const [userId, remote] of remoteStreams) {
+            const track = remote.screenStream.getVideoTracks().find((entry) => entry.readyState !== 'ended');
+            if (track) {
+              activePresentation = { source: 'remote', userId, displayName: remote.displayName, stream: remote.screenStream };
+              break;
+            }
+          }
+        }
+
+        if (!activePresentation) {
+          if (document.fullscreenElement === stage && typeof document.exitFullscreen === 'function') {
+            void document.exitFullscreen().catch((error) => console.warn('[billiontalks presentation] Unable to exit full screen.', error));
+          }
+          video.srcObject = null;
+          video.classList.remove('remote-screen-media', 'local-screen-media');
+          delete video.dataset.userId;
+          delete video.dataset.presentationSource;
+          canvas.style.display = 'none';
+          stage.classList.remove('presentation-active', 'presentation-focused');
+          stage.style.gridTemplateColumns = '';
+          const focusButton = document.getElementById('presentationFocusBtn');
+          if (focusButton) {
+            focusButton.textContent = 'Focus / Full Screen';
+            focusButton.setAttribute('aria-pressed', 'false');
+          }
+          return;
+        }
+
+        video.srcObject = activePresentation.stream;
+        video.muted = activePresentation.source === 'local';
+        video.classList.toggle('remote-screen-media', activePresentation.source === 'remote');
+        video.classList.toggle('local-screen-media', activePresentation.source === 'local');
+        video.dataset.presentationSource = activePresentation.source;
+        video.dataset.userId = activePresentation.userId;
+        video.setAttribute('aria-label', activePresentation.displayName + ' screen share');
+        canvas.style.display = 'flex';
+        stage.classList.add('presentation-active');
+        stage.style.gridTemplateColumns = '';
+        const button = document.getElementById('presentationFocusBtn');
+        if (button) {
+          button.textContent = document.fullscreenElement === stage || stage.classList.contains('presentation-focused')
+            ? 'Exit focus'
+            : 'Focus / Full Screen';
+          button.setAttribute('aria-pressed', String(document.fullscreenElement === stage || stage.classList.contains('presentation-focused')));
+        }
+        const showPlaybackButton = () => {
+          remotePlaybackBlocked = true;
+          updateMediaStatus(state.mediaStatus || 'Receiving media');
+          const playbackButton = document.getElementById('enableRemotePlaybackBtn');
+          if (playbackButton) playbackButton.style.display = 'inline-flex';
+        };
+        if (activePresentation.source === 'remote') startRemotePlayback(video, showPlaybackButton);
+        else void video.play().catch(() => undefined);
+      }
+
+      async function togglePresentationFocus() {
+        const stage = document.getElementById('videoStage');
+        if (!stage || !stage.classList.contains('presentation-active')) return;
+        if (document.fullscreenElement === stage) {
+          stage.classList.remove('presentation-focused');
+          await document.exitFullscreen?.();
+          return;
+        }
+        if (stage.classList.contains('presentation-focused')) {
+          stage.classList.remove('presentation-focused');
+          syncPresentationLayout();
+          return;
+        }
+        stage.classList.add('presentation-focused');
+        syncPresentationLayout();
+        if (typeof stage.requestFullscreen === 'function') {
+          try {
+            await stage.requestFullscreen();
+          } catch {
+            stage.classList.add('presentation-focused');
+          }
+        }
+        syncPresentationLayout();
       }
 
       // Autoplay policies block unmuted playback; video still renders muted until the user enables audio.
@@ -2951,7 +3162,9 @@ function meetingUiTemplate(): string {
         if (!remote || !remote.tracks.size) return 'no-track';
         const stage = document.getElementById('videoStage');
         const tile = stage && Array.from(stage.querySelectorAll('.tile')).find((entry) => entry.dataset.userId === userId);
-        const elements = tile ? Array.from(tile.querySelectorAll('video.remote-media, audio.remote-media, video.remote-screen-media')) : [];
+        const presentation = stage ? stage.querySelector('video.remote-screen-media[data-user-id]') : null;
+        const elements = tile ? Array.from(tile.querySelectorAll('video.remote-media, audio.remote-media')) : [];
+        if (presentation?.dataset.userId === userId) elements.push(presentation);
         if (!elements.length || elements.some((entry) => !entry.srcObject)) return 'not-assigned';
         if (elements.some((entry) => entry.dataset.playback === 'blocked' || entry.dataset.playback === 'muted')) return 'playback-blocked';
         return 'playing';
@@ -4051,48 +4264,11 @@ function meetingUiTemplate(): string {
       let activeScreenShareStream = null;
 
       function clearScreenSharePreview() {
-        const selfTile = document.querySelector('.tile.self');
-        if (!selfTile) {
-          return;
-        }
-
-        const preview = selfTile.querySelector('video');
-        if (preview) {
-          preview.remove();
-        }
-
-        const placeholder = selfTile.querySelector('.placeholder');
-        if (placeholder) {
-          placeholder.style.display = 'block';
-          placeholder.textContent = 'You';
-        }
+        syncPresentationLayout();
       }
 
       function showScreenSharePreview(stream) {
-        const selfTile = document.querySelector('.tile.self');
-        if (!selfTile || !stream) {
-          return;
-        }
-
-        clearScreenSharePreview();
-
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.autoplay = true;
-        video.muted = true;
-        video.playsInline = true;
-        video.style.width = '100%';
-        video.style.height = '100%';
-        video.style.objectFit = 'contain';
-        video.style.background = 'rgba(15, 23, 42, 0.7)';
-
-        const placeholder = selfTile.querySelector('.placeholder');
-        if (placeholder) {
-          placeholder.style.display = 'none';
-        }
-
-        selfTile.appendChild(video);
-        void video.play().catch(() => undefined);
+        if (stream) syncPresentationLayout();
       }
 
       function stopScreenShareCapture() {
@@ -4313,6 +4489,29 @@ function meetingUiTemplate(): string {
         participantList.innerHTML = '';
         stage.innerHTML = '';
 
+        const presentationCanvas = document.createElement('div');
+        presentationCanvas.className = 'presentation-canvas';
+        presentationCanvas.id = 'presentationCanvas';
+        presentationCanvas.setAttribute('aria-label', 'Shared presentation');
+        const presentationVideo = document.createElement('video');
+        presentationVideo.id = 'presentationVideo';
+        presentationVideo.className = 'presentation-video';
+        presentationVideo.autoplay = true;
+        presentationVideo.playsInline = true;
+        const focusButton = document.createElement('button');
+        focusButton.type = 'button';
+        focusButton.className = 'presentation-focus-btn';
+        focusButton.id = 'presentationFocusBtn';
+        focusButton.textContent = 'Focus / Full Screen';
+        focusButton.setAttribute('aria-pressed', 'false');
+        focusButton.addEventListener('click', () => { void togglePresentationFocus(); });
+        presentationCanvas.append(presentationVideo, focusButton);
+        stage.appendChild(presentationCanvas);
+        const cameraStrip = document.createElement('div');
+        cameraStrip.className = 'camera-strip';
+        cameraStrip.id = 'cameraStrip';
+        stage.appendChild(cameraStrip);
+
         allParticipants.forEach((participant) => {
           const item = document.createElement('li');
           const participantColor = participant.state === 'JOINED' ? '#9ae6b4' : '#d1d5db';
@@ -4357,9 +4556,6 @@ function meetingUiTemplate(): string {
           state: 'JOINED',
         }];
 
-        const count = Math.max(stageParticipants.length, 1);
-        stage.style.gridTemplateColumns = count <= 1 ? '1fr' : count <= 4 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))';
-
         stageParticipants.forEach((participant) => {
           const tile = document.createElement('div');
           tile.className = 'tile';
@@ -4375,11 +4571,10 @@ function meetingUiTemplate(): string {
           tile.innerHTML =
             '<div class="placeholder">' + escapeHtml(tileLabel) + '</div>' +
             '<div class="meta"><span class="dot"></span><span' + (isLocalTile ? ' id="localStatusLabel"' : '') + '>' + tileStatus + '</span></div>';
-          stage.appendChild(tile);
+          cameraStrip.appendChild(tile);
         });
 
         renderLocalState();
-        if (activeScreenShareStream) showScreenSharePreview(activeScreenShareStream);
         renderRemoteMediaStreams();
         syncHostActionButtons();
         if (state.route === 'meeting') void refreshMeetingChat();
@@ -4861,6 +5056,11 @@ function meetingUiTemplate(): string {
       });
 
       document.getElementById('shareScreenBtn').addEventListener('click', handleScreenShareToggle);
+      document.addEventListener('fullscreenchange', () => {
+        const stage = document.getElementById('videoStage');
+        if (stage && document.fullscreenElement !== stage) stage.classList.remove('presentation-focused');
+        syncPresentationLayout();
+      });
 
       document.getElementById('enableRemotePlaybackBtn').addEventListener('click', () => { void enableRemotePlayback(); });
       document.getElementById('copyMeetingIdBtn').addEventListener('click', copyMeetingId);

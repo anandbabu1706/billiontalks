@@ -910,6 +910,10 @@ describe("BillionTalks browser UI regression tests", () => {
       .filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST")
       .map(([, init]) => JSON.parse(String(init?.body))).find((body) => body.trackNames.includes("screen-video"));
     expect(firstShareReady).toBeTruthy();
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-active")).toBe(true);
+    expect((document.getElementById("presentationVideo") as HTMLVideoElement).dataset.presentationSource).toBe("local");
+    expect(document.getElementById("presentationFocusBtn")?.textContent).toBe("Focus / Full Screen");
+    expect(document.querySelector("#cameraStrip .tile.self video.local-preview")).not.toBeNull();
 
     const initialPublisher = FakePeerConnection.instances.find((peer) => peer.getTransceivers().some((entry) => entry.sender.track === screenTracks[0]));
     expect(initialPublisher).toBeTruthy();
@@ -962,6 +966,9 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(screenTracks[1].stop).toHaveBeenCalled();
     expect(micStreams[0]?.getAudioTracks()[0]?.readyState).toBe("live");
     expect(cameraStreams[0]?.getVideoTracks()[0]?.readyState).toBe("live");
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-active")).toBe(false);
+    expect(document.getElementById("presentationCanvas")?.style.display).toBe("none");
+    expect(document.querySelector("#cameraStrip .tile.self video.local-preview")).not.toBeNull();
   });
 
   it("replaces a disconnected publisher after 410, republishes active tracks once, and coalesces recovery", async () => {
@@ -1245,7 +1252,7 @@ describe("BillionTalks browser UI regression tests", () => {
     const cameraStream = (tile().querySelector("video.remote-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream;
     const cameraTrack = cameraStream.getVideoTracks()[0];
     expect(cameraStream.getAudioTracks()).toEqual([microphoneTrack]);
-    expect(tile().querySelector("video.remote-screen-media")).toBeNull();
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-active")).toBe(false);
 
     queueSubscribePayload({ ok: true, data: { operationId: "op-a", sessionDescription: { type: "offer", sdp: "offer-screen-a" }, tracks: [screen] } });
     (document.getElementById("micControlBtn") as HTMLButtonElement).click();
@@ -1253,7 +1260,7 @@ describe("BillionTalks browser UI regression tests", () => {
     await flush();
     const firstScreen = createFakeRemoteTrack("remote-screen-a", "video");
     subscriber.emitTrack("remote-2", firstScreen);
-    const screenElement = tile().querySelector("video.remote-screen-media") as HTMLVideoElement;
+    const screenElement = document.getElementById("presentationVideo") as HTMLVideoElement;
     expect((screenElement.srcObject as unknown as FakeMediaStream).getVideoTracks()).toEqual([firstScreen]);
     expect(cameraStream.getVideoTracks()).toEqual([cameraTrack]);
 
@@ -1269,7 +1276,7 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(cameraTrack.stop).not.toHaveBeenCalled();
     expect(microphoneTrack.stop).not.toHaveBeenCalled();
     expect(cameraStream.getTracks()).toEqual([cameraTrack, microphoneTrack]);
-    expect(((tile().querySelector("video.remote-screen-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream).getVideoTracks()).toEqual([restartedScreen]);
+    expect(((document.getElementById("presentationVideo") as HTMLVideoElement).srcObject as unknown as FakeMediaStream).getVideoTracks()).toEqual([restartedScreen]);
 
     expect(bodiesFor(fetchMock, "/media/renegotiate").map((body) => body.operationId)).toEqual(["op-1", "op-a", "op-remove", "op-restart"]);
     expect(FakePeerConnection.instances.filter((peer) => peer.ontrack)).toHaveLength(1);
@@ -1476,7 +1483,7 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(firstCamera.stop).toHaveBeenCalledTimes(1);
     expect(firstMicrophone.stop).toHaveBeenCalledTimes(1);
     expect(firstScreenShare.stop).toHaveBeenCalledTimes(1);
-    const screenStream = (remoteTile?.querySelector("video.remote-screen-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream;
+    const screenStream = (document.getElementById("presentationVideo") as HTMLVideoElement).srcObject as unknown as FakeMediaStream;
     expect(remoteStream.getVideoTracks()).toEqual([nextCamera]);
     expect(screenStream.getVideoTracks()).toEqual([nextScreenShare]);
     expect(remoteStream.getAudioTracks()).toEqual([nextMicrophone]);
@@ -2905,7 +2912,7 @@ describe("BT-V0-018 production media stabilization", () => {
     expect(remoteTile(page.document).dataset.mediaState).toBe("playing");
   });
 
-  it("renders a remote screen share as a distinct playing element beside live camera and microphone", async () => {
+  it("promotes a live remote screen share and restores camera layout when it stops", async () => {
     const { document } = await joinWithRemote({
       ok: true,
       data: {
@@ -2926,11 +2933,56 @@ describe("BT-V0-018 production media stabilization", () => {
 
     const tile = remoteTile(document);
     const cameraStream = (tile.querySelector("video.remote-media") as HTMLVideoElement).srcObject as unknown as FakeMediaStream;
-    const screenElement = tile.querySelector("video.remote-screen-media") as HTMLVideoElement;
+    const screenElement = document.getElementById("presentationVideo") as HTMLVideoElement;
     expect(cameraStream.getTracks()).toEqual([camera, microphone]);
     expect((screenElement.srcObject as unknown as FakeMediaStream).getTracks()).toEqual([screen]);
     expect(screenElement.dataset.playback).toBe("playing");
+    expect(screenElement.dataset.presentationSource).toBe("remote");
+    expect(screenElement.dataset.userId).toBe("remote-user");
+    expect(screenElement.classList.contains("remote-screen-media")).toBe(true);
+    expect(document.querySelector("style")?.textContent).toContain("object-fit: contain");
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-active")).toBe(true);
+    expect(document.getElementById("cameraStrip")?.contains(tile)).toBe(true);
+    expect((tile.querySelector("video.remote-media") as HTMLVideoElement).style.display).not.toBe("none");
     expect(tile.dataset.mediaState).toBe("playing");
+    const focusButton = document.getElementById("presentationFocusBtn") as HTMLButtonElement;
+    focusButton.click();
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-focused")).toBe(true);
+    expect(focusButton.getAttribute("aria-pressed")).toBe("true");
+    focusButton.click();
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-focused")).toBe(false);
+
+    screen.stop();
+    await flush();
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-active")).toBe(false);
+    expect(document.getElementById("presentationCanvas")?.style.display).toBe("none");
+    expect((tile.querySelector("video.remote-media") as HTMLVideoElement).style.display).not.toBe("none");
+    expect(tile.dataset.mediaState).toBe("playing");
+  });
+
+  it("uses a compact mobile presentation canvas with a horizontally accessible camera strip", async () => {
+    const { document } = await joinWithRemote({
+      ok: true,
+      data: {
+        operationId: "op-mobile-screen",
+        sessionDescription: { type: "offer", sdp: "offer-mobile-screen" },
+        tracks: [remotePublication("camera", "remote-0", "mobile-camera"), remotePublication("screen-video", "remote-2", "mobile-screen")],
+        diagnostics: { discovered: 2, subscribed: 0, publishers: { "remote-user": ["camera", "screen-video"] } },
+      },
+    });
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+    subscriber.emitTrack("remote-0", createFakeRemoteTrack("mobile-cam", "video"));
+    subscriber.emitTrack("remote-2", createFakeRemoteTrack("mobile-screen", "video"));
+    await flush();
+
+    const style = document.querySelector("style")?.textContent ?? "";
+    expect(document.getElementById("videoStage")?.classList.contains("presentation-active")).toBe(true);
+    expect(document.getElementById("presentationFocusBtn")).not.toBeNull();
+    expect(document.getElementById("cameraStrip")?.classList.contains("camera-strip")).toBe(true);
+    expect(style).toContain("@media (max-width: 720px)");
+    expect(style).toContain(".video-stage.presentation-active .camera-strip");
+    expect(style).toContain("overflow-x: auto");
+    expect(style).toContain("object-fit: contain");
   });
 
   describe("meeting link copy", () => {
