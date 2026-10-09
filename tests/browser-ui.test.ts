@@ -904,6 +904,161 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(cameraStreams[0]?.getVideoTracks()[0]?.readyState).toBe("live");
   });
 
+  it("replaces a disconnected publisher after 410, republishes active tracks once, and coalesces recovery", async () => {
+    const { window, document, fetchMock, getUserMediaMock, micStreams, cameraStreams } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const screenTrack: any = {
+      id: "publisher-recovery-screen",
+      kind: "video",
+      readyState: "live",
+      stop: vi.fn(() => { screenTrack.readyState = "ended"; }),
+      addEventListener: vi.fn(),
+    };
+    const getDisplayMedia = vi.fn(async () => ({
+      getTracks: () => [screenTrack],
+      getVideoTracks: () => [screenTrack],
+      getAudioTracks: () => [],
+    }));
+    Object.defineProperty(window.navigator.mediaDevices, "getDisplayMedia", { value: getDisplayMedia, configurable: true });
+
+    let notifyPublishStarted!: () => void;
+    const publishStarted = new Promise<void>((resolve) => { notifyPublishStarted = resolve; });
+    let releaseFailedPublish!: () => void;
+    const failedPublishGate = new Promise<void>((resolve) => { releaseFailedPublish = resolve; });
+    const originalFetch = fetchMock.getMockImplementation()!;
+    let failScreenPublish = true;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/media/publish") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        if (failScreenPublish && body.tracks.some((track: { trackName: string }) => track.trackName === "screen-video")) {
+          failScreenPublish = false;
+          notifyPublishStarted();
+          await failedPublishGate;
+          return createResponse({
+            ok: false,
+            error: "Cloudflare Realtime request failed. HTTP status: 410. errorCode: session_error. errorDescription: Session appears to be disconnected.",
+            upstreamStatus: 410,
+            errorCode: "session_error",
+            errorDescription: "Session appears to be disconnected.",
+          }, false, 410);
+        }
+      }
+      return originalFetch(input, init);
+    });
+
+    await joinHostMeeting(document, "Publisher session replacement");
+    const initialPublisher = FakePeerConnection.instances.find((peer) => !peer.ontrack && peer.getTransceivers().length)!;
+    const initialSubscriber = FakePeerConnection.instances.find((peer) => Boolean(peer.ontrack));
+    document.getElementById("shareScreenBtn")?.click();
+    await publishStarted;
+    initialPublisher.setConnectionStates("failed", "failed");
+    releaseFailedPublish();
+
+    for (let attempt = 0; attempt < 12; attempt += 1) await flush();
+
+    const publishBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    const names = (body: any) => body.tracks.map((track: { trackName: string }) => track.trackName);
+    expect(publishBodies.map(names)).toEqual([
+      ["microphone", "camera"],
+      ["screen-video"],
+      ["microphone", "camera", "screen-video"],
+    ]);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")).toHaveLength(1);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
+    expect(micStreams[0].getAudioTracks()[0].readyState).toBe("live");
+    expect(cameraStreams[0].getVideoTracks()[0].readyState).toBe("live");
+    expect(screenTrack.readyState).toBe("live");
+
+    const publisherPeers = FakePeerConnection.instances.filter((peer) => !peer.ontrack && peer.getTransceivers().length);
+    expect(publisherPeers).toHaveLength(2);
+    expect(publisherPeers[0]).toBe(initialPublisher);
+    expect(publisherPeers[0].connectionState).toBe("closed");
+    expect(publisherPeers[1].getTransceivers().map((transceiver) => transceiver.sender.track)).toEqual([
+      micStreams[0].getAudioTracks()[0],
+      cameraStreams[0].getVideoTracks()[0],
+      screenTrack,
+    ]);
+    expect(FakePeerConnection.instances.find((peer) => Boolean(peer.ontrack))).toBe(initialSubscriber);
+
+    const diagnostics = (window as any).btMediaDiagnostics();
+    expect(diagnostics).toMatchObject({
+      publisherSessionGeneration: 2,
+      publisherConnectionState: "connected",
+      publisherIceConnectionState: "connected",
+      publisherSignalingState: "stable",
+      publisherRecoveryCount: 1,
+      lastCloudflareErrorCode: "session_error",
+      lastCloudflareErrorDescription: "Session appears to be disconnected.",
+      activeLocalTrackNames: ["microphone", "camera", "screen-video"],
+      publisherMids: ["0", "1", "2"],
+    });
+    expect(publishBodies[2].tracks.filter((track: { trackName: string }) => track.trackName === "microphone")).toHaveLength(1);
+    expect(publishBodies[2].tracks.filter((track: { trackName: string }) => track.trackName === "camera")).toHaveLength(1);
+    expect(publishBodies[2].tracks.filter((track: { trackName: string }) => track.trackName === "screen-video")).toHaveLength(1);
+  });
+
+  it("ignores a successful publish response from a publisher being recovered", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const screenTrack: any = {
+      id: "stale-publisher-response-screen",
+      kind: "video",
+      readyState: "live",
+      stop: vi.fn(() => { screenTrack.readyState = "ended"; }),
+      addEventListener: vi.fn(),
+    };
+    Object.defineProperty(window.navigator.mediaDevices, "getDisplayMedia", {
+      value: vi.fn(async () => ({ getTracks: () => [screenTrack], getVideoTracks: () => [screenTrack], getAudioTracks: () => [] })),
+      configurable: true,
+    });
+
+    let notifyPublishStarted!: () => void;
+    const publishStarted = new Promise<void>((resolve) => { notifyPublishStarted = resolve; });
+    let releaseStaleResponse!: () => void;
+    const staleResponseGate = new Promise<void>((resolve) => { releaseStaleResponse = resolve; });
+    const originalFetch = fetchMock.getMockImplementation()!;
+    let delayScreenPublish = true;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/media/publish") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        if (delayScreenPublish && body.tracks.some((track: { trackName: string }) => track.trackName === "screen-video")) {
+          delayScreenPublish = false;
+          notifyPublishStarted();
+          await staleResponseGate;
+        }
+      }
+      return originalFetch(input, init);
+    });
+
+    await joinHostMeeting(document, "Ignore stale publisher response");
+    const oldPublisher = FakePeerConnection.instances.find((peer) => !peer.ontrack && peer.getTransceivers().length)!;
+    document.getElementById("shareScreenBtn")?.click();
+    await publishStarted;
+    oldPublisher.setConnectionStates("failed", "failed");
+    releaseStaleResponse();
+    for (let attempt = 0; attempt < 12; attempt += 1) await flush();
+
+    const publishBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    const readyBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/media/publish/ready") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(oldPublisher.connectionState).toBe("closed");
+    expect(readyBodies.map((body) => body.trackNames)).toEqual([
+      ["microphone", "camera"],
+      ["microphone", "camera", "screen-video"],
+    ]);
+    expect(publishBodies.at(-1).tracks.map((track: { trackName: string }) => track.trackName)).toEqual(["microphone", "camera", "screen-video"]);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/media/recover") && init?.method === "POST")).toHaveLength(1);
+    expect((window as any).btMediaDiagnostics().publisherRecoveryCount).toBe(1);
+  });
+
   async function setupPublisherWithMedia(shareCount: number) {
     const page = await loadRenderedPage();
     const { window, document } = page;

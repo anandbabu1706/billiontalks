@@ -532,7 +532,9 @@ function validateMediaSessionDescription(value: unknown): value is { type: "offe
 }
 
 function mediaApiErrorStatus(error: unknown): number {
-  if (error instanceof CloudflareRealtimeSessionError) return 502;
+  if (error instanceof CloudflareRealtimeSessionError) {
+    return [404, 410].includes(error.upstreamStatus) ? error.upstreamStatus : 502;
+  }
   const message = error instanceof Error ? error.message : "";
   if (message === "Meeting not found.") return 404;
   if (message === "Meeting is not active.") return 409;
@@ -587,6 +589,19 @@ function mediaErrorMessage(error: unknown): string {
     return `Cloudflare Realtime request failed. HTTP status: ${error.upstreamStatus}.${detail}`;
   }
   return error instanceof Error ? error.message : "Unable to update media transport.";
+}
+
+function mediaErrorPayload(error: unknown): { ok: false; error: string; upstreamStatus?: number; errorCode?: string; errorDescription?: string } {
+  if (error instanceof CloudflareRealtimeSessionError) {
+    return {
+      ok: false,
+      error: mediaErrorMessage(error),
+      upstreamStatus: error.upstreamStatus,
+      ...(error.errorCode ? { errorCode: error.errorCode } : {}),
+      ...(error.errorDescription ? { errorDescription: error.errorDescription } : {}),
+    };
+  }
+  return { ok: false, error: mediaErrorMessage(error) };
 }
 
 function recordingErrorMessage(error: unknown): string {
@@ -1927,6 +1942,8 @@ function meetingUiTemplate(): string {
       let historyRefreshPending = false;
       let publisherPeerConnection = null;
       let subscriberPeerConnection = null;
+      let publisherSessionGeneration = 0;
+      let publisherPeerGeneration = 0;
       let publisherOperationQueue = Promise.resolve();
       let subscriberOperationQueue = Promise.resolve();
       let mediaRecoveryQueue = Promise.resolve();
@@ -1952,6 +1969,10 @@ function meetingUiTemplate(): string {
       // Publisher and subscriber requests mutate the same per-participant server record, so they share one chain to avoid lost updates.
       let mediaOperationQueue = Promise.resolve();
       let publishRetryCount = 0;
+      let publisherRecoveryCount = 0;
+      let lastPublishHttpStatus = 0;
+      let lastCloudflareErrorCode = '';
+      let lastCloudflareErrorDescription = '';
       const mediaDiagnostics = {
         publishers: {}, discovered: 0, subscribed: 0, lastError: '',
         subscriptionResultCount: 0, ontrackCount: 0, droppedTrackCount: 0, iceTimeoutCount: 0,
@@ -1990,6 +2011,7 @@ function meetingUiTemplate(): string {
       const DEV_TOOLS_ENABLED = __DEV_TOOLS_FLAG__;
 
       function snapshotMediaDiagnostics() {
+        const publisherPeer = publisherPeerConnection;
         const peer = subscriberPeerConnection;
         const videoStates = [];
         let streamTrackCount = 0;
@@ -1999,6 +2021,16 @@ function meetingUiTemplate(): string {
         }
         const videos = Array.from(document.querySelectorAll('#videoStage video.remote-media'));
         return {
+          publisherSessionGeneration,
+          publisherConnectionState: publisherPeer ? publisherPeer.connectionState : 'none',
+          publisherIceConnectionState: publisherPeer ? publisherPeer.iceConnectionState : 'none',
+          publisherSignalingState: publisherPeer ? publisherPeer.signalingState : 'none',
+          publisherRecoveryCount,
+          lastPublishHttpStatus,
+          lastCloudflareErrorCode,
+          lastCloudflareErrorDescription,
+          activeLocalTrackNames: currentLocalTrackPublications().map((entry) => entry.trackName),
+          publisherMids: Array.from(publishedLocalTracks.values(), (entry) => entry.transceiver.mid),
           iceGatheringState: peer ? peer.iceGatheringState : 'none',
           iceConnectionState: peer ? peer.iceConnectionState : 'none',
           connectionState: peer ? peer.connectionState : 'none',
@@ -2159,11 +2191,21 @@ function meetingUiTemplate(): string {
 
 
       function isStaleSfuSessionError(error) {
-        return error instanceof Error && /HTTP status: (?:404|410)\\b/.test(error.message);
+        return error instanceof Error &&
+          ([404, 410].includes(error.upstreamStatus) || /HTTP status: (?:404|410)\\b/.test(error.message));
+      }
+
+      function mediaRequestError(payload, responseStatus, fallback) {
+        const error = new Error(payload && payload.error || fallback);
+        error.upstreamStatus = Number.isInteger(payload && payload.upstreamStatus) ? payload.upstreamStatus : responseStatus;
+        error.errorCode = typeof (payload && payload.errorCode) === 'string' ? payload.errorCode : '';
+        error.errorDescription = typeof (payload && payload.errorDescription) === 'string' ? payload.errorDescription : '';
+        return error;
       }
 
       function reconcileMediaAfterRecovery(meetingId, userId) {
         if (meetingId !== state.meetingId || userId !== state.currentUserId || state.route !== 'meeting') return;
+        acquireDesiredLocalMedia();
         const desiredTrackNames = new Set(currentLocalTrackPublications().map((entry) => entry.trackName));
         const obsoleteTrackNames = Array.from(publishedLocalTracks.keys()).filter((trackName) => !desiredTrackNames.has(trackName));
         const closeObsolete = obsoleteTrackNames.length ? closePublishedLocalTracks(obsoleteTrackNames) : Promise.resolve();
@@ -2208,6 +2250,7 @@ function meetingUiTemplate(): string {
             publisherPeerConnection = null;
             previousPeer?.close();
             publishedLocalTracks.clear();
+            publisherRecoveryCount += 1;
           } else {
             const previousPeer = subscriberPeerConnection;
             subscriberPeerConnection = null;
@@ -2269,6 +2312,9 @@ function meetingUiTemplate(): string {
             if (peer !== subscriberPeerConnection) return;
             handleRemoteTrack(event);
           };
+        } else {
+          publisherPeerGeneration += 1;
+          publisherSessionGeneration += 1;
         }
         return peer;
       }
@@ -2317,9 +2363,9 @@ function meetingUiTemplate(): string {
       }
 
       function publishCurrentLocalTracks() {
-        if (mediaRecoveryInProgress || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve();
+        if (mediaRecoveryInProgress || publisherRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve();
         return enqueueMediaOperation('publisher', async () => {
-          if (mediaRecoveryInProgress) return;
+          if (mediaRecoveryInProgress || publisherRecoveryPending) return;
           // Snapshot inside the queue so a queued publish never uses a stale view of what is being captured.
           const tracks = currentLocalTrackPublications();
           if (!tracks.length) return;
@@ -2328,6 +2374,7 @@ function meetingUiTemplate(): string {
             updateMediaStatus('WebRTC is unavailable in this browser');
             return;
           }
+          const peerGeneration = publisherPeerGeneration;
           const additions = tracks.filter((entry) => !publishedLocalTracks.has(entry.trackName));
           if (!additions.length) return;
           const connectionId = ensureMediaConnectionId();
@@ -2350,9 +2397,16 @@ function meetingUiTemplate(): string {
               }),
             });
             const payload = await response.json();
-            if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to publish media.');
+            lastPublishHttpStatus = response.status;
+            if (typeof payload.errorCode === 'string') lastCloudflareErrorCode = payload.errorCode;
+            if (typeof payload.errorDescription === 'string') lastCloudflareErrorDescription = payload.errorDescription;
+            if (!response.ok || !payload.ok) throw mediaRequestError(payload, response.status, 'Unable to publish media.');
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
+            if (Number.isInteger(payload.data.publisherGeneration)) publisherSessionGeneration = payload.data.publisherGeneration;
             await peer.setRemoteDescription(payload.data.sessionDescription);
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
             await waitForPeerConnectionConnected(peer);
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
             const acceptedTrackNames = new Set((payload.data.tracks ?? []).map((track) => track.trackName));
             const accepted = added.filter((entry) => acceptedTrackNames.has(entry.trackName));
             if (!accepted.length) throw new Error('Cloudflare Realtime did not accept any local tracks.');
@@ -2362,12 +2416,14 @@ function meetingUiTemplate(): string {
               body: JSON.stringify({ connectionId, trackNames: accepted.map((entry) => entry.trackName) }),
             });
             const readyPayload = await readyResponse.json();
-            if (!readyResponse.ok || !readyPayload.ok) throw new Error(readyPayload.error || 'Unable to confirm published media readiness.');
+            if (!readyResponse.ok || !readyPayload.ok) throw mediaRequestError(readyPayload, readyResponse.status, 'Unable to confirm published media readiness.');
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
             accepted.forEach((entry) => publishedLocalTracks.set(entry.trackName, entry));
             publishRetryCount = 0;
             updateMediaStatus('Publishing media');
             void refreshSfuSubscriptions();
           } catch (error) {
+            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration) return;
             if (peer.signalingState === 'have-local-offer') {
               try { await peer.setLocalDescription({ type: 'rollback' }); } catch { /* peer already closed */ }
             }
@@ -3527,6 +3583,12 @@ function meetingUiTemplate(): string {
       function acquireDesiredLocalMedia() {
         if (isSimulatedMeeting()) return;
         const local = state.localDevice;
+        if (local.micEnabled && localMediaState.micStream && !localMediaState.micStream.getAudioTracks().some((track) => track.readyState !== 'ended')) {
+          Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'mic'));
+        }
+        if (local.cameraEnabled && localMediaState.cameraStream && !localMediaState.cameraStream.getVideoTracks().some((track) => track.readyState !== 'ended')) {
+          Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'camera'));
+        }
         if (local.micEnabled && local.micAvailable !== false && !localMediaState.micStream && !localMediaState.micRequestInFlight) void toggleMicrophone();
         if (local.cameraEnabled && local.cameraAvailable !== false && !localMediaState.cameraStream && !localMediaState.cameraRequestInFlight) void toggleCamera();
       }
@@ -4877,11 +4939,28 @@ const routeHandler = {
           await rpc.saveSfuParticipantState(state);
         }
         const tracks = body.tracks as Array<{ trackName: string; mid: string }>;
-        const operation = await client.publishTracks(state.publisherSessionId!, body.sessionDescription, tracks.map((track) => ({
+        const publisherSessionId = state.publisherSessionId!;
+        const operation = await client.publishTracks(publisherSessionId, body.sessionDescription, tracks.map((track) => ({
           location: "local" as const,
           trackName: track.trackName,
           mid: track.mid,
-        })));
+        }))).catch(async (error: unknown) => {
+          if (error instanceof CloudflareRealtimeSessionError &&
+            [404, 410].includes(error.upstreamStatus) &&
+            error.errorCode === "session_error") {
+            const current = await rpc.getSfuParticipantState(session.userId);
+            if (current && current.connectionId === body.connectionId && current.publisherSessionId === publisherSessionId) {
+              await rpc.saveSfuParticipantState({
+                ...current,
+                generation: current.generation + 1,
+                publisherSessionId: undefined,
+                publishedTracks: [],
+                pendingPublishedTracks: [],
+              });
+            }
+          }
+          throw error;
+        });
         if (!validateMediaSessionDescription(operation.sessionDescription) || operation.sessionDescription.type !== "answer") {
           throw new Error("Cloudflare Realtime did not return a publish answer.");
         }
@@ -4894,10 +4973,10 @@ const routeHandler = {
 
         return withSessionCookie(jsonResponse({
           ok: true,
-          data: { sessionDescription: operation.sessionDescription, tracks: acceptedTracks },
+          data: { sessionDescription: operation.sessionDescription, tracks: acceptedTracks, publisherGeneration: state.generation },
         }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
 
@@ -4931,7 +5010,7 @@ const routeHandler = {
         });
         return withSessionCookie(jsonResponse({ ok: true, data: { ready: readyTracks.map((track) => track.trackName) } }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
 
@@ -5083,7 +5162,7 @@ const routeHandler = {
           data: { operationId, sessionDescription: operation.sessionDescription, tracks: subscriptions, diagnostics: diagnostics() },
         }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
 
@@ -5115,7 +5194,7 @@ const routeHandler = {
         });
         return withSessionCookie(jsonResponse({ ok: true, data: { connected: true } }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
 
@@ -5139,8 +5218,25 @@ const routeHandler = {
         ].filter((track) => body.trackNames!.includes(track.trackName));
         let answer: unknown;
         if (closing.length && state.publisherSessionId) {
+          const publisherSessionId = state.publisherSessionId;
           const offer = body.sessionDescription as { type: "offer" | "answer"; sdp: string } | undefined;
-          const closed = await getCloudflareRealtimeClient(env).closeTracks(state.publisherSessionId, closing.map((track) => track.mid), offer ? { force: false, sessionDescription: offer } : {});
+          const closed = await getCloudflareRealtimeClient(env).closeTracks(publisherSessionId, closing.map((track) => track.mid), offer ? { force: false, sessionDescription: offer } : {}).catch(async (error: unknown) => {
+            if (error instanceof CloudflareRealtimeSessionError &&
+              [404, 410].includes(error.upstreamStatus) &&
+              error.errorCode === "session_error") {
+              const current = await rpc.getSfuParticipantState(session.userId);
+              if (current && current.connectionId === body.connectionId && current.publisherSessionId === publisherSessionId) {
+                await rpc.saveSfuParticipantState({
+                  ...current,
+                  generation: current.generation + 1,
+                  publisherSessionId: undefined,
+                  publishedTracks: [],
+                  pendingPublishedTracks: [],
+                });
+              }
+            }
+            throw error;
+          });
           if (offer && validateMediaSessionDescription(closed.sessionDescription) && closed.sessionDescription.type === "answer") answer = closed.sessionDescription;
         }
         await rpc.saveSfuParticipantState({
@@ -5150,7 +5246,7 @@ const routeHandler = {
         });
         return withSessionCookie(jsonResponse({ ok: true, data: { closed: closing.map((track) => track.trackName), sessionDescription: answer ?? null } }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
 
@@ -5188,7 +5284,7 @@ const routeHandler = {
         const recoveredState: RealtimeParticipantMediaState = body.direction === "publisher"
           ? {
               ...state,
-              generation: state.generation + 1,
+              generation: state.generation + (state.publisherSessionId ? 1 : 0),
               publisherSessionId: undefined,
               publishedTracks: [],
               pendingPublishedTracks: [],
@@ -5202,7 +5298,7 @@ const routeHandler = {
         await rpc.saveSfuParticipantState(recoveredState);
         return withSessionCookie(jsonResponse({ ok: true, data: { recovered: true, direction: body.direction } }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
 
@@ -5227,7 +5323,7 @@ const routeHandler = {
         }
         return withSessionCookie(jsonResponse({ ok: true, data: { closed: true } }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: mediaErrorMessage(error) }, mediaApiErrorStatus(error)), request, session);
+        return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
 
@@ -5583,10 +5679,13 @@ export default {
     const sessionId = route ? getSessionIdFromRequest(request) : null;
     let rpc: MeetingStateDurableObject | undefined;
     let token: string | undefined;
+    let mutationKey: string | undefined;
     if (route && sessionId) {
       try {
+        const session = await resolveSessionStore(env).getSession(sessionId);
         rpc = getMeetingStateRpc(env, route[1]);
-        token = await rpc.acquireSfuMutation(sessionId);
+        mutationKey = session?.userId ?? sessionId;
+        token = await rpc.acquireSfuMutation(mutationKey);
       } catch (error) {
         console.error("Unable to acquire SFU mutation lock", error);
         return jsonResponse({ ok: false, error: "Media mutation is temporarily unavailable." }, 503);
@@ -5595,9 +5694,9 @@ export default {
     try {
       return await routeHandler.fetch(request, env);
     } finally {
-      if (rpc && token && sessionId) {
+      if (rpc && token && mutationKey) {
         try {
-          await rpc.releaseSfuMutation(sessionId, token);
+          await rpc.releaseSfuMutation(mutationKey, token);
         } catch (error) {
           console.error("Unable to release SFU mutation lock", error);
         }

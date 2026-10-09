@@ -834,6 +834,95 @@ describe("MeetingService lifecycle", () => {
     }
   });
 
+  it("invalidates a disconnected publisher session on 410 and preserves subscriber state", async () => {
+    const namespace = createDurableObjectNamespace();
+    const { api, host, meeting } = await createJoinedChatRoom(namespace);
+    const sfu = createSfuFetchMock();
+    const attemptedPublishUrls: string[] = [];
+    let failStalePublisher = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/tracks/new") && String(init?.body).includes('"location":"local"')) {
+        attemptedPublishUrls.push(url);
+        if (failStalePublisher && url.includes("/sessions/sfu-session-1-secretish/")) {
+          failStalePublisher = false;
+          return Response.json({
+            errorCode: "session_error",
+            errorDescription: "Session appears to be disconnected. Please check if the PeerConnection is connected.",
+          }, { status: 410 });
+        }
+      }
+      return sfu.fetcher(input, init);
+    }));
+
+    try {
+      const initial = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "publisher-liveness-connection",
+        sessionDescription: { type: "offer", sdp: "initial-offer" },
+        tracks: [{ trackName: "camera", mid: "0" }],
+      });
+      expect(initial.status).toBe(200);
+      expect((await initial.json()).data.publisherGeneration).toBe(1);
+
+      const ready = await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", host.cookie, {
+        connectionId: "publisher-liveness-connection",
+        trackNames: ["camera"],
+      });
+      expect(ready.status).toBe(200);
+      failStalePublisher = true;
+
+      const rpc = namespace.get(meeting.id);
+      const current = (await rpc.getSfuParticipantState(host.userId))!;
+      await rpc.saveSfuParticipantState({
+        ...current,
+        subscriberSessionId: "subscriber-session-retained",
+        subscribedTracks: [{
+          publicationKey: "remote-user:1:camera",
+          publisherUserId: "remote-user",
+          publisherDisplayName: "Remote",
+          trackName: "camera",
+          mid: "remote-0",
+        }],
+      });
+
+      const failed = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "publisher-liveness-connection",
+        sessionDescription: { type: "offer", sdp: "disconnected-publisher-offer" },
+        tracks: [{ trackName: "microphone", mid: "1" }],
+      });
+      const failurePayload = await failed.json();
+      expect(failed.status).toBe(410);
+      expect(failurePayload).toMatchObject({
+        ok: false,
+        upstreamStatus: 410,
+        errorCode: "session_error",
+        errorDescription: "Session appears to be disconnected. Please check if the PeerConnection is connected.",
+      });
+
+      const invalidated = (await rpc.getSfuParticipantState(host.userId))!;
+      expect(invalidated.publisherSessionId).toBeUndefined();
+      expect(invalidated.generation).toBe(2);
+      expect(invalidated.publishedTracks).toEqual([]);
+      expect(invalidated.pendingPublishedTracks).toEqual([]);
+      expect(invalidated.subscriberSessionId).toBe("subscriber-session-retained");
+      expect(invalidated.subscribedTracks).toEqual([expect.objectContaining({ mid: "remote-0", trackName: "camera" })]);
+
+      const retried = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "publisher-liveness-connection",
+        sessionDescription: { type: "offer", sdp: "fresh-publisher-offer" },
+        tracks: [{ trackName: "microphone", mid: "0" }],
+      });
+      expect(retried.status).toBe(200);
+      expect((await retried.json()).data.publisherGeneration).toBe(2);
+      expect(attemptedPublishUrls).toHaveLength(3);
+      expect(attemptedPublishUrls[1]).toContain("/sessions/sfu-session-1-secretish/");
+      expect(attemptedPublishUrls[2]).toContain("/sessions/sfu-session-2-secretish/");
+      expect((await rpc.getSfuParticipantState(host.userId))?.subscriberSessionId).toBe("subscriber-session-retained");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("subscribes joined participants to remote publications and completes the returned SDP offer", async () => {
     const { api, host, participant, meeting } = await createJoinedChatRoom();
     const sfu = createSfuFetchMock();
