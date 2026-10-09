@@ -24,6 +24,8 @@ class FakePeerConnection {
   static negotiationViolations: string[] = [];
   static subscriberIceTimeouts = 0;
   static subscriberTimeoutSdp = "browser-answer-sdp";
+  static publisherIceTimeouts = 0;
+  static publisherTimeoutSdp = "v=0\r\na=candidate:1 1 udp 1 10.0.0.2 5000 typ host\r\n";
   static holdPublisherConnection = false;
   public connectionState = "new";
   public iceConnectionState = "new";
@@ -52,7 +54,18 @@ class FakePeerConnection {
   getTransceivers() { return this.transceivers; }
   async createOffer() {
     if (this.signalingState !== "stable") FakePeerConnection.negotiationViolations.push(`createOffer while ${this.signalingState}`);
+    if (!this.ontrack && FakePeerConnection.publisherIceTimeouts > 0) {
+      FakePeerConnection.publisherIceTimeouts -= 1;
+      this.iceGatheringState = "gathering";
+      return { type: "offer", sdp: FakePeerConnection.publisherTimeoutSdp };
+    }
     return { type: "offer", sdp: "browser-offer-sdp" };
+  }
+  async getStats() {
+    return new Map([
+      ["redacted-outbound", { id: "redacted-outbound", type: "outbound-rtp", kind: "video", bytesSent: 128, packetsSent: 4, framesEncoded: 2, ssrc: 123, address: "192.0.2.1" }],
+      ["redacted-inbound", { id: "redacted-inbound", type: "inbound-rtp", kind: "audio", bytesReceived: 64, packetsReceived: 3, packetsLost: 1, jitter: 0.02, trackIdentifier: "private-track" }],
+    ]);
   }
   async createAnswer() {
     if (this.ontrack && FakePeerConnection.subscriberIceTimeouts > 0) {
@@ -165,6 +178,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
   let nextSubscribeError: string | null = null;
   let locallyPublishedTracks: Array<{ trackName: string; mid: string }> = [];
   const locallyReadyTrackNames = new Set<string>();
+  let localPublisherGeneration = 0;
   let registrationResponse = createResponse({
     ok: true,
     data: { account: { email: "jane@example.com" }, emailVerificationRequired: true },
@@ -265,6 +279,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
 
     if (url.endsWith("/media/publish") && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}"));
+      if (localPublisherGeneration === 0) localPublisherGeneration = 1;
       locallyPublishedTracks = [
         ...locallyPublishedTracks.filter((existing) => !body.tracks.some((track: { trackName: string }) => track.trackName === existing.trackName)),
         ...body.tracks,
@@ -274,6 +289,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
         data: {
           sessionDescription: { type: "answer", sdp: "sfu-publish-answer" },
           tracks: body.tracks,
+          publisherGeneration: localPublisherGeneration,
         },
       });
     }
@@ -293,6 +309,12 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
           },
         },
       });
+    }
+
+    if (url.endsWith("/media/recover") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.direction === "publisher") localPublisherGeneration += 1;
+      return createResponse({ ok: true, data: { recovered: true, direction: body.direction } });
     }
 
     if (url.endsWith("/media/publications") && method === "GET") {
@@ -556,6 +578,8 @@ afterEach(() => {
   FakePeerConnection.negotiationViolations.length = 0;
   FakePeerConnection.subscriberIceTimeouts = 0;
   FakePeerConnection.subscriberTimeoutSdp = "browser-answer-sdp";
+  FakePeerConnection.publisherIceTimeouts = 0;
+  FakePeerConnection.publisherTimeoutSdp = "v=0\r\na=candidate:1 1 udp 1 10.0.0.2 5000 typ host\r\n";
   FakePeerConnection.holdPublisherConnection = false;
   FakePeerConnection.initialRemoteTrackKind = "video";
   vi.restoreAllMocks();
@@ -1322,6 +1346,81 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(subscribePostCount()).toBe(initialSubscribeCount);
   });
 
+  it("lets subscriber discovery proceed while a publisher request is still pending", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const originalFetch = fetchMock.getMockImplementation()!;
+    let releasePublish!: (response: ReturnType<typeof createResponse>) => void;
+    let signalPublishStarted!: () => void;
+    const publishStarted = new Promise<void>((resolve) => { signalPublishStarted = resolve; });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/media/publish")) {
+        signalPublishStarted();
+        const body = JSON.parse(String(init?.body));
+        return new Promise((resolve) => {
+          releasePublish = (response) => resolve(response);
+          void body;
+        });
+      }
+      return originalFetch(input, init);
+    });
+    await joinHostMeeting(document, "Independent media queues");
+    await publishStarted;
+    const discoveriesBefore = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publications")).length;
+    await (window as any).refreshSfuSubscriptions();
+    const discoveriesWhilePublisherPending = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publications")).length;
+    expect(discoveriesWhilePublisherPending).toBeGreaterThan(discoveriesBefore);
+
+    const publishBody = JSON.parse(String(fetchMock.mock.calls.find(([url]) => String(url).endsWith("/media/publish"))?.[1]?.body));
+    releasePublish(createResponse({
+      ok: true,
+      data: {
+        sessionDescription: { type: "answer", sdp: "deferred-publish-answer" },
+        tracks: publishBody.tracks,
+        publisherGeneration: 1,
+        publisherDiagnostics: { publisherSessionPresent: true, pendingPublishedTracks: publishBody.tracks, publishedTracks: [] },
+      },
+    }));
+    await flush();
+    await flush();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/media/publish/ready"))).toBe(true);
+  });
+
+  it("retries publication discovery after subscription negotiation fails", async () => {
+    const page = await loadRenderedPage();
+    const { window, document, fetchMock } = page;
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    page.setIncludeRemoteParticipant();
+    page.setNextSubscribePayload({
+      ok: true,
+      data: {
+        operationId: "cache-retry",
+        sessionDescription: { type: "offer", sdp: "cache-retry-offer" },
+        tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "cache-retry-camera" }],
+      },
+    });
+    const originalFetch = fetchMock.getMockImplementation()!;
+    let firstRenegotiation = true;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/media/renegotiate") && firstRenegotiation) {
+        firstRenegotiation = false;
+        return createResponse({ ok: false, error: "Negotiation failed." }, false, 502);
+      }
+      return originalFetch(input, init);
+    });
+    await joinHostMeeting(document, "Discovery cache correction");
+    for (let attempt = 0; attempt < 5; attempt += 1) await flush();
+    const subscribeCountAfterRetry = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).endsWith("/media/subscribe") && init?.method === "POST").length;
+    await (window as any).refreshSfuSubscriptions();
+    const subscribeCountAfterRefresh = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).endsWith("/media/subscribe") && init?.method === "POST").length;
+    expect(subscribeCountAfterRetry).toBeGreaterThan(1);
+    expect(subscribeCountAfterRefresh).toBe(subscribeCountAfterRetry);
+  });
+
   it("replaces remote camera, microphone, and screen-share tracks idempotently without affecting another participant", async () => {
     const { window, document, setNextSubscribePayload, setIncludeRemoteParticipant, setAdditionalRemoteParticipant } = await loadRenderedPage();
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
@@ -1608,6 +1707,8 @@ describe("BillionTalks browser UI regression tests", () => {
       expect(JSON.parse(String(callsTo(fetchMock, "/media/renegotiate")[0][1]?.body)).operationId).toBe("op-1");
 
       peers[1].emitTrack("remote-1", createFakeRemoteTrack("recovered-mic", "audio"));
+      (window as any).btMediaDiagnostics();
+      await flush();
       const diagnostics = (window as any).btMediaDiagnostics();
       expect(diagnostics).toEqual(expect.objectContaining({
         iceTimeoutCount: 1,
@@ -1642,7 +1743,7 @@ describe("BillionTalks browser UI regression tests", () => {
       expect((window as any).btMediaDiagnostics().iceTimeoutCount).toBe(1);
     });
 
-    it("assigns a fresh stream and video element after recovery and stops the stale track", async () => {
+    it("preserves the remote stream and video element across recovery while replacing stale tracks", async () => {
       const { document, window } = await setup(0);
       const [original] = subscriberPeers();
       const staleVideo = remoteVideo(document)!;
@@ -1653,10 +1754,9 @@ describe("BillionTalks browser UI regression tests", () => {
 
       const freshVideo = remoteVideo(document)!;
       const freshStream = freshVideo.srcObject as unknown as FakeMediaStream;
-      expect(freshVideo).not.toBe(staleVideo);
-      expect(staleVideo.isConnected).toBe(false);
-      expect(staleVideo.srcObject).toBeNull();
-      expect(freshStream).not.toBe(staleStream);
+      expect(freshVideo).toBe(staleVideo);
+      expect(staleVideo.isConnected).toBe(true);
+      expect(freshStream).toBe(staleStream);
       expect(freshStream.getVideoTracks()).toHaveLength(1);
       expect(freshStream.getVideoTracks()[0]).not.toBe(staleTrack);
       expect(staleTrack.stop).toHaveBeenCalled();
@@ -2561,6 +2661,64 @@ describe("BT-V0-018 production media stabilization", () => {
     expect(document.getElementById("mediaStatus")?.textContent).toBe("Publishing media");
   });
 
+  it("uses gathered publisher candidates when ICE gathering reaches its bound", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    (window as any).btIceGatheringTimeoutMs = 20;
+    FakePeerConnection.publisherIceTimeouts = 1;
+    await joinHostMeeting(document, "Publisher candidate fallback");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const publish = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/media/publish"));
+    expect(publish).toBeTruthy();
+    expect(String(JSON.parse(String(publish?.[1]?.body)).sessionDescription.sdp)).toContain("a=candidate:");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/media/recover"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/media/publish/ready"))).toBe(true);
+  });
+
+  it("exposes aggregate RTP counters without raw transport identifiers or addresses", async () => {
+    const { window, document } = await joinWithRemote({
+      ok: true,
+      data: { operationId: null, sessionDescription: null, tracks: [], diagnostics: { discovered: 0, subscribed: 0, publishers: {} } },
+    });
+    await flush();
+    (window as any).btMediaDiagnostics();
+    await flush();
+    const diagnostics = (window as any).btMediaDiagnostics();
+    expect(diagnostics.redactedRtpStats).toMatchObject({
+      status: "available",
+      publisher: expect.arrayContaining([expect.objectContaining({ flow: "outbound", kind: "video", bytes: 128, packets: 4, frames: 2 })]),
+      subscriber: expect.arrayContaining([expect.objectContaining({ flow: "inbound", kind: "audio", bytes: 64, packets: 3, packetsLost: 1 })]),
+    });
+    const serialized = JSON.stringify(diagnostics.redactedRtpStats);
+    expect(serialized).not.toContain("192.0.2.1");
+    expect(serialized).not.toContain("123");
+    expect(serialized).not.toContain("private-track");
+    expect(serialized).not.toContain("redacted-inbound");
+    expect(document.getElementById("mediaStatus")?.textContent).not.toContain("error");
+  });
+
+  it("bounds repeated publisher recovery attempts", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Bounded publisher recovery");
+    const publishers = () => FakePeerConnection.instances.filter((peer) => peer.getTransceivers().some((entry) => entry.direction === "sendonly"));
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const peer = publishers().at(-1)!;
+      peer.setConnectionStates("failed", "failed");
+      await new Promise((resolve) => setTimeout(resolve, 90));
+    }
+    const recoveries = () => fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).endsWith("/media/recover") && init?.method === "POST" &&
+      JSON.parse(String(init.body)).direction === "publisher").length;
+    expect(recoveries()).toBe(3);
+
+    publishers().at(-1)!.setConnectionStates("failed", "failed");
+    await flush();
+    expect(recoveries()).toBe(3);
+    expect(document.getElementById("mediaStatus")?.textContent).toContain("could not connect");
+  });
+
   it("captures and publishes selected devices when an approved guest is admitted from the waiting room", async () => {
     const { window, document, getUserMediaMock } = await loadRenderedPage();
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
@@ -2570,8 +2728,12 @@ describe("BT-V0-018 production media stabilization", () => {
     const calls: string[] = [];
     installFetch(window, vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(url);
-      if (url.endsWith("/media/publish")) return createResponse({ ok: true, data: { sessionDescription: { type: "answer", sdp: "a" }, tracks: JSON.parse(String(init?.body)).tracks } });
-      if (url.endsWith("/media/publish/ready")) return createResponse({ ok: true, data: { ready: [] } });
+      if (url.endsWith("/media/publish")) return createResponse({ ok: true, data: {
+        sessionDescription: { type: "answer", sdp: "a" },
+        tracks: JSON.parse(String(init?.body)).tracks,
+        publisherGeneration: 1,
+      } });
+      if (url.endsWith("/media/publish/ready")) return createResponse({ ok: true, data: { ready: ["microphone", "camera"], publisherDiagnostics: { publisherSessionPresent: true, publishedTracks: [{ trackName: "microphone", mid: "0" }, { trackName: "camera", mid: "1" }], pendingPublishedTracks: [] } } });
       if (url.endsWith("/media/subscribe")) return createResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } });
       if (init?.method === "POST" && url.endsWith("/admission/request")) {
         guestId = JSON.parse(String(init.body)).userId;

@@ -875,9 +875,16 @@ describe("MeetingService lifecycle", () => {
 
       const ready = await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", host.cookie, {
         connectionId: "publisher-liveness-connection",
+        publisherGeneration: 2,
         trackNames: ["camera"],
       });
-      expect(ready.status).toBe(200);
+      expect(ready.status).toBe(409);
+      const currentReady = await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", host.cookie, {
+        connectionId: "publisher-liveness-connection",
+        publisherGeneration: 1,
+        trackNames: ["camera"],
+      });
+      expect(currentReady.status).toBe(200);
       failStalePublisher = true;
 
       const rpc = namespace.get(meeting.id);
@@ -927,6 +934,35 @@ describe("MeetingService lifecycle", () => {
       expect(attemptedPublishUrls[1]).toContain("/sessions/sfu-session-1-secretish/");
       expect(attemptedPublishUrls[2]).toContain("/sessions/sfu-session-2-secretish/");
       expect((await rpc.getSfuParticipantState(host.userId))?.subscriberSessionId).toBe("subscriber-session-retained");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("only saves local tracks Cloudflare explicitly accepted", async () => {
+    const { api, host, meeting } = await createJoinedChatRoom();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/sessions/new")) return Response.json({ sessionId: "partial-publish-session" }, { status: 201 });
+      if (url.endsWith("/tracks/new")) return Response.json({
+        sessionDescription: { type: "answer", sdp: "partial-publish-answer" },
+        tracks: [
+          { mid: "0", trackName: "microphone", status: "active" },
+          { mid: "1", trackName: "camera", errorCode: "track_rejected", errorDescription: "Camera publication was rejected." },
+        ],
+      });
+      return Response.json({});
+    }));
+    try {
+      const response = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {
+        connectionId: "partial-track-publish",
+        sessionDescription: { type: "offer", sdp: "offer" },
+        tracks: [{ trackName: "microphone", mid: "0" }, { trackName: "camera", mid: "1" }],
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(200);
+      expect(payload.data.tracks).toEqual([{ trackName: "microphone", mid: "0" }]);
+      expect(payload.data.publisherDiagnostics.pendingPublishedTracks).toEqual([{ trackName: "microphone", mid: "0" }]);
     } finally {
       vi.unstubAllGlobals();
     }
