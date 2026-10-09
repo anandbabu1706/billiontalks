@@ -655,6 +655,14 @@ function validateMediaConnectionId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{16,80}$/.test(value);
 }
 
+function safeIdentitySuffix(userId: string): string {
+  return userId.slice(-6);
+}
+
+function logPublisherLifecycle(event: string, details: Record<string, unknown>): void {
+  console.info(`[billiontalks publisher] ${JSON.stringify({ event, ...details })}`);
+}
+
 function validateMediaSessionDescription(value: unknown): value is { type: "offer" | "answer"; sdp: string } {
   return typeof value === "object" && value !== null &&
     ((value as { type?: unknown }).type === "offer" || (value as { type?: unknown }).type === "answer") &&
@@ -753,6 +761,15 @@ async function cleanupSfuParticipant(env: WorkerEnv, meetingId: string, userId: 
   const rpc = getMeetingStateRpc(env, meetingId);
   const state = await rpc.getSfuParticipantState(userId);
   if (!state) return;
+  if (state.publisherSessionId || state.publishedTracks.length || state.pendingPublishedTracks?.length) {
+    logPublisherLifecycle("publisher-state-cleared", {
+      meetingId,
+      participantId: state.participantId,
+      userIdSuffix: safeIdentitySuffix(userId),
+      reason: "participant-media-cleanup",
+      generation: state.generation,
+    });
+  }
   const client = getCloudflareRealtimeClient(env);
   await closeSfuTransport(client, state);
   await rpc.deleteSfuParticipantState(userId);
@@ -2103,6 +2120,16 @@ function meetingUiTemplate(): string {
       let publishRetryCount = 0;
       let publisherRecoveryCount = 0;
       let lastPublishHttpStatus = 0;
+      let publishAttemptCount = 0;
+      const publishHttpStatuses = [];
+      let publishReadyAttemptCount = 0;
+      let publishReadyHttpStatus = 0;
+      let publisherSessionPresent = false;
+      let publisherParticipantId = '';
+      let publisherUserIdSuffix = '';
+      let lastPublisherInvalidationReason = '';
+      let pendingLocalPublications = [];
+      let readyPublishedPublications = [];
       let lastCloudflareErrorCode = '';
       let lastCloudflareErrorDescription = '';
       const mediaDiagnostics = {
@@ -2155,6 +2182,17 @@ function meetingUiTemplate(): string {
         }
         const videos = Array.from(document.querySelectorAll('#videoStage video.remote-media'));
         return {
+          participantId: publisherParticipantId || state.meeting?.participants.find((participant) => participant.userId === state.currentUserId)?.id || '',
+          userIdSuffix: publisherUserIdSuffix || String(state.currentUserId || '').slice(-6),
+          publisherSessionPresent,
+          publishAttemptCount,
+          publishHttpStatuses: [...publishHttpStatuses],
+          publishReadyAttemptCount,
+          publishReadyHttpStatus,
+          publisherGeneration: publisherSessionGeneration,
+          pendingLocalTrackNamesAndMids: pendingLocalPublications.map((entry) => ({ ...entry })),
+          readyPublishedTrackNamesAndMids: readyPublishedPublications.map((entry) => ({ ...entry })),
+          lastPublisherInvalidationReason,
           publisherSessionGeneration,
           publisherConnectionState: publisherPeer ? publisherPeer.connectionState : 'none',
           publisherIceConnectionState: publisherPeer ? publisherPeer.iceConnectionState : 'none',
@@ -2355,12 +2393,18 @@ function meetingUiTemplate(): string {
         if (recoveryPending) return existingRecovery || Promise.resolve(false);
         if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId || mediaTransportClosing) return Promise.resolve(false);
 
+        const publisherInvalidationReason = direction !== 'publisher' ? '' :
+          /HTTP status: (?:404|410)|session_error/.test(reason) ? 'stale-sfu-session' :
+            /did not become ready|timed out/.test(reason) ? 'connection-ready-timeout' :
+              /failed/.test(reason) ? 'connection-failed' :
+                /disconnected|closed/.test(reason) ? 'connection-disconnected' : 'publisher-recovery';
         if (direction === 'publisher') publisherRecoveryPending = true;
         else subscriberRecoveryPending = true;
         mediaRecoveryInProgress = true;
         const meetingId = state.meetingId;
         const userId = state.currentUserId;
         const connectionId = state.mediaConnectionId;
+        if (direction === 'publisher') lastPublisherInvalidationReason = publisherInvalidationReason;
         updateMediaStatus('Recovering ' + direction + ' media transport: ' + reason);
 
         const recovery = mediaRecoveryQueue.then(async () => {
@@ -2373,7 +2417,7 @@ function meetingUiTemplate(): string {
           const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/media/recover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connectionId, direction }),
+            body: JSON.stringify({ connectionId, direction, ...(direction === 'publisher' ? { reason: publisherInvalidationReason } : {}) }),
           });
           const payload = await response.json();
           if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to recover ' + direction + ' media transport.');
@@ -2384,6 +2428,9 @@ function meetingUiTemplate(): string {
             publisherPeerConnection = null;
             previousPeer?.close();
             publishedLocalTracks.clear();
+            publisherSessionPresent = false;
+            pendingLocalPublications = [];
+            readyPublishedPublications = [];
             publisherRecoveryCount += 1;
           } else {
             const previousPeer = subscriberPeerConnection;
@@ -2519,10 +2566,19 @@ function meetingUiTemplate(): string {
             transceiver: peer.addTransceiver(entry.track, { direction: 'sendonly' }),
           }));
           try {
+            publishAttemptCount += 1;
+            pendingLocalPublications = added.map((entry) => ({
+              trackName: entry.trackName,
+              mid: entry.transceiver.mid,
+            }));
             const offer = await peer.createOffer();
             await peer.setLocalDescription(offer);
             await waitForIceGatheringComplete(peer);
             const localDescription = peer.localDescription;
+            pendingLocalPublications = added.map((entry) => ({
+              trackName: entry.trackName,
+              mid: entry.transceiver.mid,
+            }));
             const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2534,26 +2590,46 @@ function meetingUiTemplate(): string {
             });
             const payload = await response.json();
             lastPublishHttpStatus = response.status;
+            publishHttpStatuses.push(response.status);
+            if (publishHttpStatuses.length > 20) publishHttpStatuses.shift();
             if (typeof payload.errorCode === 'string') lastCloudflareErrorCode = payload.errorCode;
             if (typeof payload.errorDescription === 'string') lastCloudflareErrorDescription = payload.errorDescription;
             if (!response.ok || !payload.ok) throw mediaRequestError(payload, response.status, 'Unable to publish media.');
             if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
             if (Number.isInteger(payload.data.publisherGeneration)) publisherSessionGeneration = payload.data.publisherGeneration;
+            publisherSessionPresent = Boolean(payload.data.publisherDiagnostics?.publisherSessionPresent);
+            publisherParticipantId = payload.data.publisherDiagnostics?.participantId || publisherParticipantId;
+            publisherUserIdSuffix = payload.data.publisherDiagnostics?.userIdSuffix || publisherUserIdSuffix;
+            pendingLocalPublications = (payload.data.publisherDiagnostics?.pendingPublishedTracks ?? added.map((entry) => ({
+              trackName: entry.trackName,
+              mid: entry.transceiver.mid,
+            }))).map((entry) => ({ trackName: entry.trackName, mid: entry.mid }));
             await peer.setRemoteDescription(payload.data.sessionDescription);
-            if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
-            await waitForPeerConnectionConnected(peer);
             if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
             const acceptedTrackNames = new Set((payload.data.tracks ?? []).map((track) => track.trackName));
             const accepted = added.filter((entry) => acceptedTrackNames.has(entry.trackName));
             if (!accepted.length) throw new Error('Cloudflare Realtime did not accept any local tracks.');
+            publishReadyAttemptCount += 1;
             const readyResponse = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish/ready', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ connectionId, trackNames: accepted.map((entry) => entry.trackName) }),
             });
             const readyPayload = await readyResponse.json();
+            publishReadyHttpStatus = readyResponse.status;
             if (!readyResponse.ok || !readyPayload.ok) throw mediaRequestError(readyPayload, readyResponse.status, 'Unable to confirm published media readiness.');
             if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || publisherRecoveryPending) return;
+            publisherSessionPresent = Boolean(readyPayload.data.publisherDiagnostics?.publisherSessionPresent ?? publisherSessionPresent);
+            publisherParticipantId = readyPayload.data.publisherDiagnostics?.participantId || publisherParticipantId;
+            publisherUserIdSuffix = readyPayload.data.publisherDiagnostics?.userIdSuffix || publisherUserIdSuffix;
+            pendingLocalPublications = (readyPayload.data.publisherDiagnostics?.pendingPublishedTracks ?? []).map((entry) => ({
+              trackName: entry.trackName,
+              mid: entry.mid,
+            }));
+            readyPublishedPublications = (readyPayload.data.publisherDiagnostics?.publishedTracks ?? accepted.map((entry) => ({
+              trackName: entry.trackName,
+              mid: entry.transceiver.mid,
+            }))).map((entry) => ({ trackName: entry.trackName, mid: entry.mid }));
             accepted.forEach((entry) => publishedLocalTracks.set(entry.trackName, entry));
             publishRetryCount = 0;
             updateMediaStatus('Publishing media');
@@ -2567,6 +2643,12 @@ function meetingUiTemplate(): string {
               try { entry.transceiver.stop(); } catch { /* already stopped */ }
             });
             const message = error instanceof Error ? error.message : 'Unable to publish media';
+            if (isStaleSfuSessionError(error)) {
+              publisherSessionPresent = false;
+              pendingLocalPublications = [];
+              readyPublishedPublications = [];
+              lastPublisherInvalidationReason = 'stale-sfu-session';
+            }
             updateMediaStatus(message);
             if (isStaleSfuSessionError(error) || /Publisher media connection (?:failed|closed)|did not become ready/.test(message)) {
               void requestMediaRecovery('publisher', message);
@@ -5066,8 +5148,23 @@ const routeHandler = {
         const rpc = getMeetingStateRpc(env, mediaPublishMatch[1]);
         const client = getCloudflareRealtimeClient(env);
         let state = await rpc.getSfuParticipantState(session.userId);
+        logPublisherLifecycle("publish-started", {
+          meetingId: meeting.id,
+          participantId,
+          userIdSuffix: safeIdentitySuffix(session.userId),
+          existingPublisherSessionPresent: Boolean(state?.publisherSessionId),
+          generation: state?.generation ?? 0,
+          tracks: (body.tracks as Array<{ trackName: string; mid: string }>).map(({ trackName, mid }) => ({ trackName, mid })),
+        });
         let generation = state?.generation ?? 0;
         if (state && state.connectionId !== body.connectionId) {
+          logPublisherLifecycle("publisher-state-cleared", {
+            meetingId: meeting.id,
+            participantId: state.participantId ?? participantId,
+            userIdSuffix: safeIdentitySuffix(session.userId),
+            reason: "media-connection-changed",
+            generation: state.generation,
+          });
           await closeSfuTransport(client, state);
           await rpc.deleteSfuParticipantState(session.userId);
           generation = state.generation;
@@ -5097,6 +5194,13 @@ const routeHandler = {
           const created = await client.createSession();
           state = { ...state, publisherSessionId: created.sessionId };
           await rpc.saveSfuParticipantState(state);
+          logPublisherLifecycle("publisher-session-created", {
+            meetingId: meeting.id,
+            participantId,
+            userIdSuffix: safeIdentitySuffix(session.userId),
+            publisherSessionPresent: true,
+            generation: state.generation,
+          });
         }
         const tracks = body.tracks as Array<{ trackName: string; mid: string }>;
         const publisherSessionId = state.publisherSessionId!;
@@ -5110,12 +5214,20 @@ const routeHandler = {
             error.errorCode === "session_error") {
             const current = await rpc.getSfuParticipantState(session.userId);
             if (current && current.connectionId === body.connectionId && current.publisherSessionId === publisherSessionId) {
-              await rpc.saveSfuParticipantState({
+              const invalidated = {
                 ...current,
                 generation: current.generation + 1,
                 publisherSessionId: undefined,
                 publishedTracks: [],
                 pendingPublishedTracks: [],
+              };
+              await rpc.saveSfuParticipantState(invalidated);
+              logPublisherLifecycle("publisher-state-cleared", {
+                meetingId: meeting.id,
+                participantId: current.participantId ?? participantId,
+                userIdSuffix: safeIdentitySuffix(session.userId),
+                reason: `publish-${error.upstreamStatus}-${error.errorCode}`,
+                generation: invalidated.generation,
               });
             }
           }
@@ -5130,6 +5242,14 @@ const routeHandler = {
         for (const track of acceptedTracks) pendingByName.set(track.trackName, track);
         state = { ...state, pendingPublishedTracks: [...pendingByName.values()] };
         await rpc.saveSfuParticipantState(state);
+        logPublisherLifecycle("publish-pending-saved", {
+          meetingId: meeting.id,
+          participantId: state.participantId ?? participantId,
+          userIdSuffix: safeIdentitySuffix(session.userId),
+          generation: state.generation,
+          publisherSessionPresent: Boolean(state.publisherSessionId),
+          pendingTracks: state.pendingPublishedTracks ?? [],
+        });
 
         return withSessionCookie(jsonResponse({
           ok: true,
@@ -5139,6 +5259,7 @@ const routeHandler = {
             publisherGeneration: state.generation,
             publisherDiagnostics: {
               participantId: state.participantId,
+              userIdSuffix: safeIdentitySuffix(session.userId),
               publisherSessionPresent: Boolean(state.publisherSessionId),
               publishedTracks: state.publishedTracks,
               pendingPublishedTracks: state.pendingPublishedTracks ?? [],
@@ -5146,6 +5267,12 @@ const routeHandler = {
           },
         }), request, session);
       } catch (error) {
+        logPublisherLifecycle("publish-failed", {
+          meetingId: mediaPublishMatch[1],
+          userIdSuffix: safeIdentitySuffix(session.userId),
+          status: mediaApiErrorStatus(error),
+          errorCode: error instanceof CloudflareRealtimeSessionError ? error.errorCode : undefined,
+        });
         return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
@@ -5161,9 +5288,18 @@ const routeHandler = {
         return withSessionCookie(jsonResponse({ ok: false, error: "A valid connection and published track names are required." }, 400), request, session);
       }
       try {
-        await requireJoinedMediaMember(env, mediaPublishReadyMatch[1], session.userId);
+        const meeting = await requireJoinedMediaMember(env, mediaPublishReadyMatch[1], session.userId);
         const rpc = getMeetingStateRpc(env, mediaPublishReadyMatch[1]);
         const state = await rpc.getSfuParticipantState(session.userId);
+        logPublisherLifecycle("publish-ready-started", {
+          meetingId: meeting.id,
+          participantId: meeting.participants.find((participant) => participant.userId === session.userId)?.id,
+          userIdSuffix: safeIdentitySuffix(session.userId),
+          statePresent: Boolean(state),
+          publisherSessionPresent: Boolean(state?.publisherSessionId),
+          generation: state?.generation ?? 0,
+          trackNames: body.trackNames,
+        });
         if (!state || state.connectionId !== body.connectionId || !state.publisherSessionId) {
           throw new Error("Media publisher is no longer current.");
         }
@@ -5179,12 +5315,22 @@ const routeHandler = {
           pendingPublishedTracks: pending.filter((track) => !requestedNames.has(track.trackName)),
         };
         await rpc.saveSfuParticipantState(updatedState);
+        logPublisherLifecycle("publish-ready-saved", {
+          meetingId: meeting.id,
+          participantId: updatedState.participantId ?? meeting.participants.find((participant) => participant.userId === session.userId)?.id,
+          userIdSuffix: safeIdentitySuffix(session.userId),
+          generation: updatedState.generation,
+          publisherSessionPresent: Boolean(updatedState.publisherSessionId),
+          publishedTracks: updatedState.publishedTracks,
+          pendingTracks: updatedState.pendingPublishedTracks ?? [],
+        });
         return withSessionCookie(jsonResponse({
           ok: true,
           data: {
             ready: readyTracks.map((track) => track.trackName),
             publisherDiagnostics: {
               participantId: updatedState.participantId,
+              userIdSuffix: safeIdentitySuffix(session.userId),
               publisherSessionPresent: Boolean(updatedState.publisherSessionId),
               publishedTracks: updatedState.publishedTracks,
               pendingPublishedTracks: updatedState.pendingPublishedTracks ?? [],
@@ -5192,6 +5338,11 @@ const routeHandler = {
           },
         }), request, session);
       } catch (error) {
+        logPublisherLifecycle("publish-ready-failed", {
+          meetingId: mediaPublishReadyMatch[1],
+          userIdSuffix: safeIdentitySuffix(session.userId),
+          status: mediaApiErrorStatus(error),
+        });
         return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
       }
     }
@@ -5239,6 +5390,13 @@ const routeHandler = {
         let generation = ownState?.generation ?? 0;
         const ownParticipant = meeting.participants.find((participant) => participant.userId === session.userId)!;
         if (ownState && ownState.connectionId !== body.connectionId) {
+          logPublisherLifecycle("publisher-state-cleared", {
+            meetingId: meeting.id,
+            participantId: ownState.participantId ?? ownParticipant.id,
+            userIdSuffix: safeIdentitySuffix(session.userId),
+            reason: "media-connection-changed",
+            generation: ownState.generation,
+          });
           await closeSfuTransport(client, ownState);
           await rpc.deleteSfuParticipantState(session.userId);
           generation = ownState.generation;
@@ -5420,12 +5578,20 @@ const routeHandler = {
               error.errorCode === "session_error") {
               const current = await rpc.getSfuParticipantState(session.userId);
               if (current && current.connectionId === body.connectionId && current.publisherSessionId === publisherSessionId) {
-                await rpc.saveSfuParticipantState({
+                const invalidated = {
                   ...current,
                   generation: current.generation + 1,
                   publisherSessionId: undefined,
                   publishedTracks: [],
                   pendingPublishedTracks: [],
+                };
+                await rpc.saveSfuParticipantState(invalidated);
+                logPublisherLifecycle("publisher-state-cleared", {
+                  meetingId: mediaTrackCloseMatch[1],
+                  participantId: current.participantId,
+                  userIdSuffix: safeIdentitySuffix(session.userId),
+                  reason: `track-close-${error.upstreamStatus}-${error.errorCode}`,
+                  generation: invalidated.generation,
                 });
               }
             }
@@ -5447,15 +5613,26 @@ const routeHandler = {
     const mediaRecoverMatch = /^\/api\/meetings\/([^/]+)\/media\/recover$/.exec(url.pathname);
 
     if (mediaRecoverMatch && request.method === "POST") {
-      const body = await parseJsonBody<{ connectionId?: string; direction?: string }>(request);
+      const body = await parseJsonBody<{ connectionId?: string; direction?: string; reason?: string }>(request);
       const { session } = await getOrCreateSession(request, env);
-      if (!body || !validateMediaConnectionId(body.connectionId) || (body.direction !== "publisher" && body.direction !== "subscriber")) {
+      if (!body || !validateMediaConnectionId(body.connectionId) || (body.direction !== "publisher" && body.direction !== "subscriber") ||
+        (body.reason !== undefined && !["stale-sfu-session", "connection-ready-timeout", "connection-failed", "connection-disconnected", "publisher-recovery"].includes(body.reason))) {
         return withSessionCookie(jsonResponse({ ok: false, error: "A valid media connection and direction are required." }, 400), request, session);
       }
       try {
-        await requireJoinedMediaMember(env, mediaRecoverMatch[1], session.userId);
+        const meeting = await requireJoinedMediaMember(env, mediaRecoverMatch[1], session.userId);
         const rpc = getMeetingStateRpc(env, mediaRecoverMatch[1]);
         const state = await rpc.getSfuParticipantState(session.userId);
+        if (body.direction === "publisher") {
+          logPublisherLifecycle("publisher-recovery-started", {
+            meetingId: meeting.id,
+            participantId: state?.participantId ?? meeting.participants.find((participant) => participant.userId === session.userId)?.id,
+            userIdSuffix: safeIdentitySuffix(session.userId),
+            publisherSessionPresent: Boolean(state?.publisherSessionId),
+            generation: state?.generation ?? 0,
+            reason: body.reason ?? "publisher-recovery",
+          });
+        }
         if (!state) return withSessionCookie(jsonResponse({ ok: true, data: { recovered: true, direction: body.direction } }), request, session);
         if (state.connectionId !== body.connectionId) {
           return withSessionCookie(jsonResponse({ ok: false, error: "Media connection is no longer current." }, 409), request, session);
@@ -5490,6 +5667,15 @@ const routeHandler = {
               pendingSubscriptions: undefined,
             };
         await rpc.saveSfuParticipantState(recoveredState);
+        if (body.direction === "publisher") {
+          logPublisherLifecycle("publisher-state-cleared", {
+            meetingId: meeting.id,
+            participantId: recoveredState.participantId ?? meeting.participants.find((participant) => participant.userId === session.userId)?.id,
+            userIdSuffix: safeIdentitySuffix(session.userId),
+            reason: body.reason ?? "publisher-recovery",
+            generation: recoveredState.generation,
+          });
+        }
         return withSessionCookie(jsonResponse({ ok: true, data: { recovered: true, direction: body.direction } }), request, session);
       } catch (error) {
         return withSessionCookie(jsonResponse(mediaErrorPayload(error), mediaApiErrorStatus(error)), request, session);
@@ -5512,6 +5698,13 @@ const routeHandler = {
         const rpc = getMeetingStateRpc(env, mediaCloseMatch[1]);
         const state = await rpc.getSfuParticipantState(session.userId);
         if (state && state.connectionId === body.connectionId) {
+          logPublisherLifecycle("publisher-state-cleared", {
+            meetingId: mediaCloseMatch[1],
+            participantId: state.participantId ?? meeting.participants.find((participant) => participant.userId === session.userId)?.id,
+            userIdSuffix: safeIdentitySuffix(session.userId),
+            reason: "media-transport-closed",
+            generation: state.generation,
+          });
           await closeSfuTransport(getCloudflareRealtimeClient(env), state);
           await rpc.deleteSfuParticipantState(session.userId);
         }

@@ -24,6 +24,7 @@ class FakePeerConnection {
   static negotiationViolations: string[] = [];
   static subscriberIceTimeouts = 0;
   static subscriberTimeoutSdp = "browser-answer-sdp";
+  static holdPublisherConnection = false;
   public connectionState = "new";
   public iceConnectionState = "new";
   public iceGatheringState = "complete";
@@ -78,7 +79,9 @@ class FakePeerConnection {
     if (description.type === "offer" && this.signalingState !== "stable") FakePeerConnection.negotiationViolations.push(`remote offer while ${this.signalingState}`);
     this.remoteDescription = description;
     this.signalingState = "stable";
-    this.setConnectionStates("connected", "connected");
+    if (!(description.type === "answer" && FakePeerConnection.holdPublisherConnection && !this.ontrack)) {
+      this.setConnectionStates("connected", "connected");
+    }
     if (description.type === "offer" && this.ontrack && !/removal|screen/.test(String(description.sdp))) {
       this.emitTrack("remote-0", createFakeRemoteTrack("remote-initial-track", FakePeerConnection.initialRemoteTrackKind));
     }
@@ -160,6 +163,8 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
   const subscribeQueue: unknown[] = [];
   let discoveryRevision = 0;
   let nextSubscribeError: string | null = null;
+  let locallyPublishedTracks: Array<{ trackName: string; mid: string }> = [];
+  const locallyReadyTrackNames = new Set<string>();
   let registrationResponse = createResponse({
     ok: true,
     data: { account: { email: "jane@example.com" }, emailVerificationRequired: true },
@@ -260,11 +265,32 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
 
     if (url.endsWith("/media/publish") && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}"));
+      locallyPublishedTracks = [
+        ...locallyPublishedTracks.filter((existing) => !body.tracks.some((track: { trackName: string }) => track.trackName === existing.trackName)),
+        ...body.tracks,
+      ];
       return createResponse({
         ok: true,
         data: {
           sessionDescription: { type: "answer", sdp: "sfu-publish-answer" },
           tracks: body.tracks,
+        },
+      });
+    }
+
+    if (url.endsWith("/media/publish/ready") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      const readyNames = new Set(body.trackNames as string[]);
+      readyNames.forEach((trackName) => locallyReadyTrackNames.add(trackName));
+      return createResponse({
+        ok: true,
+        data: {
+          ready: [...readyNames],
+          publisherDiagnostics: {
+            publisherSessionPresent: true,
+            publishedTracks: locallyPublishedTracks.filter((track) => locallyReadyTrackNames.has(track.trackName)),
+            pendingPublishedTracks: locallyPublishedTracks.filter((track) => !locallyReadyTrackNames.has(track.trackName)),
+          },
         },
       });
     }
@@ -530,6 +556,7 @@ afterEach(() => {
   FakePeerConnection.negotiationViolations.length = 0;
   FakePeerConnection.subscriberIceTimeouts = 0;
   FakePeerConnection.subscriberTimeoutSdp = "browser-answer-sdp";
+  FakePeerConnection.holdPublisherConnection = false;
   FakePeerConnection.initialRemoteTrackKind = "video";
   vi.restoreAllMocks();
 });
@@ -2566,6 +2593,77 @@ describe("BT-V0-018 production media stabilization", () => {
     expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
     expect(calls.filter((url) => url.endsWith("/media/publish")).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("publishes an admitted guest's ready tracks without waiting for publisher ICE connection", async () => {
+    const { window, document, getUserMediaMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    FakePeerConnection.holdPublisherConnection = true;
+    const meeting = hostSnapshot();
+    let guestId = "";
+    let approved = false;
+    const guestFetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/media/publish")) {
+        const body = JSON.parse(String(init?.body));
+        return createResponse({ ok: true, data: {
+          sessionDescription: { type: "answer", sdp: "a" },
+          tracks: body.tracks,
+          publisherGeneration: 1,
+          publisherDiagnostics: {
+            participantId: "approved",
+            userIdSuffix: guestId.slice(-6),
+            publisherSessionPresent: true,
+            publishedTracks: [],
+            pendingPublishedTracks: body.tracks,
+          },
+        } });
+      }
+      if (url.endsWith("/media/publish/ready")) return createResponse({ ok: true, data: {
+        ready: ["microphone", "camera"],
+        publisherDiagnostics: {
+          participantId: "approved",
+          userIdSuffix: guestId.slice(-6),
+          publisherSessionPresent: true,
+          publishedTracks: [{ trackName: "microphone", mid: "0" }, { trackName: "camera", mid: "1" }],
+          pendingPublishedTracks: [],
+        },
+      } });
+      if (url.endsWith("/media/subscribe")) return createResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } });
+      if (url.endsWith("/media/publications")) return createResponse({ ok: true, data: { publications: [], diagnostics: { discovered: 0 } } });
+      if (init?.method === "POST" && url.endsWith("/admission/request")) {
+        guestId = JSON.parse(String(init.body)).userId;
+        return createResponse({ ok: true, data: { id: "waiting", userId: guestId, status: "WAITING", displayName: "Waiting guest" } });
+      }
+      return createResponse({ ok: true, data: approved ? {
+        ...meeting,
+        participants: [...meeting.participants, { id: "approved", userId: guestId, role: "PARTICIPANT", state: "JOINED", displayName: "Waiting guest" }],
+      } : meeting });
+    });
+    installFetch(window, guestFetchMock);
+    (document.getElementById("meetingIdInput") as HTMLInputElement).value = meeting.id;
+    document.getElementById("resolveMeetingButton")?.click(); await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Waiting guest";
+    document.getElementById("joinNowButton")?.click(); await flush();
+    approved = true;
+    await new Promise((resolve) => setTimeout(resolve, 3150));
+    await flush();
+
+    const publishBodies = bodiesFor(guestFetchMock, "/media/publish");
+    const readyBodies = bodiesFor(guestFetchMock, "/media/publish/ready");
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(publishBodies.length).toBeGreaterThan(0);
+    expect(readyBodies.flatMap((body) => body.trackNames)).toEqual(expect.arrayContaining(["microphone", "camera"]));
+    expect(FakePeerConnection.instances.some((peer) => peer.getTransceivers().length > 0 && peer.connectionState === "new")).toBe(true);
+    expect((window as any).btMediaDiagnostics()).toMatchObject({
+      participantId: "approved",
+      userIdSuffix: guestId.slice(-6),
+      publishAttemptCount: publishBodies.length,
+      publisherSessionPresent: true,
+      readyPublishedTrackNamesAndMids: expect.arrayContaining([
+        expect.objectContaining({ trackName: "microphone", mid: "0" }),
+        expect.objectContaining({ trackName: "camera", mid: "1" }),
+      ]),
+    });
   });
 
   it("reports no-publication when the server sees no remote publication", async () => {

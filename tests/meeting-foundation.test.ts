@@ -1401,7 +1401,10 @@ describe("MeetingService lifecycle", () => {
       });
       const publishPayload = await publish.json();
       expect(publish.status).toBe(200);
+      const admittedParticipant = joinedSnapshot.data.participants.find((entry: { userId: string }) => entry.userId === guest.userId);
       expect(publishPayload.data.publisherDiagnostics).toMatchObject({
+        participantId: admittedParticipant.id,
+        userIdSuffix: guest.userId.slice(-6),
         publisherSessionPresent: true,
         publishedTracks: [],
         pendingPublishedTracks: [{ trackName: "microphone", mid: "0" }, { trackName: "camera", mid: "1" }],
@@ -1411,6 +1414,15 @@ describe("MeetingService lifecycle", () => {
         trackNames: ["microphone", "camera"],
       });
       expect(ready.status).toBe(200);
+      expect((await ready.json()).data.publisherDiagnostics).toMatchObject({
+        participantId: admittedParticipant.id,
+        userIdSuffix: guest.userId.slice(-6),
+        publisherSessionPresent: true,
+        publishedTracks: expect.arrayContaining([
+          { trackName: "microphone", mid: "0" },
+          { trackName: "camera", mid: "1" },
+        ]),
+      });
       await api.request(`/api/meetings/${meeting.id}`, "GET", guest.cookie);
 
       const subscribe = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, {
@@ -1426,6 +1438,54 @@ describe("MeetingService lifecycle", () => {
             { trackName: "camera", mid: "1", included: true, reason: "included" },
           ]),
         });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("repopulates a recovered guest publisher under the same admitted participant identity", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const initialSnapshot = await (await api.request(`/api/meetings/${meeting.id}`, "GET", participant.cookie)).json();
+      const participantId = initialSnapshot.data.participants.find((entry: { userId: string }) => entry.userId === participant.userId).id;
+      const publish = (sdp: string, mids: [string, string]) => api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", participant.cookie, {
+        connectionId: "recovered-guest-publisher",
+        sessionDescription: { type: "offer", sdp },
+        tracks: [{ trackName: "microphone", mid: mids[0] }, { trackName: "camera", mid: mids[1] }],
+      });
+      const ready = () => api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", participant.cookie, {
+        connectionId: "recovered-guest-publisher",
+        trackNames: ["microphone", "camera"],
+      });
+
+      expect((await publish("guest-initial", ["0", "1"])).status).toBe(200);
+      expect((await ready()).status).toBe(200);
+      expect((await api.request(`/api/meetings/${meeting.id}`, "GET", participant.cookie)).status).toBe(200);
+      expect((await api.request(`/api/meetings/${meeting.id}/media/recover`, "POST", participant.cookie, {
+        connectionId: "recovered-guest-publisher",
+        direction: "publisher",
+        reason: "connection-failed",
+      })).status).toBe(200);
+
+      expect((await publish("guest-recovered", ["2", "3"])).status).toBe(200);
+      const recoveredReady = await (await ready()).json();
+      expect(recoveredReady.data.publisherDiagnostics).toMatchObject({
+        participantId,
+        userIdSuffix: participant.userId.slice(-6),
+        publisherSessionPresent: true,
+        publishedTracks: expect.arrayContaining([
+          { trackName: "microphone", mid: "2" },
+          { trackName: "camera", mid: "3" },
+        ]),
+      });
+      await api.request(`/api/meetings/${meeting.id}`, "GET", participant.cookie);
+      const hostSubscribe = await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, {
+        connectionId: "host-sees-recovered-guest",
+      })).json();
+      expect(hostSubscribe.data.tracks.map((track: { publisherUserId: string; trackName: string }) => [track.publisherUserId, track.trackName]))
+        .toEqual(expect.arrayContaining([[participant.userId, "microphone"], [participant.userId, "camera"]]));
     } finally {
       vi.unstubAllGlobals();
     }
