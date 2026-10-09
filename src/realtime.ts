@@ -60,6 +60,8 @@ export class CloudflareRealtimeSessionError extends Error {
   constructor(
     public readonly upstreamStatus: number,
     message = `Cloudflare Realtime session creation failed. HTTP status: ${upstreamStatus}.`,
+    public readonly errorCode?: string,
+    public readonly errorDescription?: string,
   ) {
     super(message);
     this.name = "CloudflareRealtimeSessionError";
@@ -135,7 +137,14 @@ export class CloudflareRealtimeConnectionClient {
     });
 
     if (!response.ok) {
-      throw new CloudflareRealtimeSessionError(response.status);
+      let errorCode: string | undefined;
+      let errorDescription: string | undefined;
+      try {
+        const detail = await response.json() as { errorCode?: unknown; errorDescription?: unknown };
+        if (typeof detail.errorCode === "string" || typeof detail.errorCode === "number") errorCode = String(detail.errorCode).slice(0, 80);
+        if (typeof detail.errorDescription === "string") errorDescription = detail.errorDescription.slice(0, 300);
+      } catch { /* upstream body is not JSON */ }
+      throw new CloudflareRealtimeSessionError(response.status, undefined, errorCode, errorDescription);
     }
 
     return response.json() as Promise<T>;

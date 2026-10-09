@@ -179,8 +179,37 @@ async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?
 }
 
 export class MeetingStateDurableObject extends DurableObject<unknown> {
+  private readonly sfuMutationLocks = new Map<string, { token: string; expiresAt: number; released: Promise<void>; release: () => void }>();
+
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env);
+  }
+
+  // One SFU mutation per participant at a time; a lease keeps a crashed holder from blocking forever.
+  async acquireSfuMutation(key: string, leaseMs = 25_000): Promise<string> {
+    for (;;) {
+      const held = this.sfuMutationLocks.get(key);
+      if (!held) break;
+      const remaining = held.expiresAt - Date.now();
+      if (remaining <= 0) {
+        this.sfuMutationLocks.delete(key);
+        held.release();
+        break;
+      }
+      await Promise.race([held.released, new Promise((resolve) => setTimeout(resolve, remaining))]);
+    }
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const token = crypto.randomUUID();
+    this.sfuMutationLocks.set(key, { token, expiresAt: Date.now() + leaseMs, released, release });
+    return token;
+  }
+
+  async releaseSfuMutation(key: string, token: string): Promise<void> {
+    const held = this.sfuMutationLocks.get(key);
+    if (!held || held.token !== token) return;
+    this.sfuMutationLocks.delete(key);
+    held.release();
   }
 
   async saveMeeting(meeting: Meeting): Promise<number> {
@@ -551,7 +580,11 @@ async function closeSfuTransport(
 
 function mediaErrorMessage(error: unknown): string {
   if (error instanceof CloudflareRealtimeSessionError) {
-    return `Cloudflare Realtime request failed. HTTP status: ${error.upstreamStatus}.`;
+    const detail = [
+      error.errorCode ? ` errorCode: ${error.errorCode}.` : "",
+      error.errorDescription ? ` errorDescription: ${error.errorDescription}` : "",
+    ].join("");
+    return `Cloudflare Realtime request failed. HTTP status: ${error.upstreamStatus}.${detail}`;
   }
   return error instanceof Error ? error.message : "Unable to update media transport.";
 }
@@ -1922,9 +1955,37 @@ function meetingUiTemplate(): string {
       const mediaDiagnostics = {
         publishers: {}, discovered: 0, subscribed: 0, lastError: '',
         subscriptionResultCount: 0, ontrackCount: 0, droppedTrackCount: 0, iceTimeoutCount: 0,
-        subscriberRecoveryCount: 0, lastPlay: 'none',
+        subscriberRecoveryCount: 0, lastPlay: 'none', subscriberMutations: [],
       };
       let subscriberFailureCount = 0;
+      let subscriberSessionLabel = 0;
+      let queuedSubscriberRefresh = null;
+      let subscriberMutationSeq = 0;
+
+      // The upstream session id stays server-side; this label identifies the browser-side subscriber PeerConnection.
+      function beginSubscriberMutation(type, peer, pendingOperationId) {
+        const entry = {
+          seq: ++subscriberMutationSeq, type, session: 'subscriber-' + subscriberSessionLabel,
+          startedAt: new Date().toISOString(), endedAt: '', signalingBefore: peer.signalingState, signalingAfter: '',
+          pendingOperationId: pendingOperationId || '', httpStatus: 0, errorCode: '', errorDescription: '', error: '',
+        };
+        mediaDiagnostics.subscriberMutations.push(entry);
+        if (mediaDiagnostics.subscriberMutations.length > 50) mediaDiagnostics.subscriberMutations.shift();
+        return entry;
+      }
+
+      function finishSubscriberMutation(entry, peer, errorMessage) {
+        entry.endedAt = new Date().toISOString();
+        entry.signalingAfter = peer.signalingState;
+        if (!errorMessage) return;
+        entry.error = errorMessage;
+        const code = /errorCode: ([^.]*)\\./.exec(errorMessage);
+        const description = /errorDescription: (.*)$/.exec(errorMessage);
+        const upstream = /HTTP status: (\\d+)/.exec(errorMessage);
+        if (upstream) entry.httpStatus = Number(upstream[1]);
+        if (code) entry.errorCode = code[1];
+        if (description) entry.errorDescription = description[1];
+      }
       const MAX_SUBSCRIBER_FAILURES = 3;
       const DEV_TOOLS_ENABLED = __DEV_TOOLS_FLAG__;
 
@@ -1951,12 +2012,16 @@ function meetingUiTemplate(): string {
           mediaStreamTrackCount: streamTrackCount,
           videoSrcObjectAssigned: videos.length > 0 && videos.every((video) => Boolean(video.srcObject)),
           lastPlay: mediaDiagnostics.lastPlay,
+          subscriberMutations: mediaDiagnostics.subscriberMutations.map((entry) => ({ ...entry })),
         };
       }
       window.btMediaDiagnostics = snapshotMediaDiagnostics;
 
       function logMediaDiagnostics(event) {
-        console.info('[billiontalks media]', event, snapshotMediaDiagnostics());
+        const snapshot = snapshotMediaDiagnostics();
+        const lastMutation = snapshot.subscriberMutations[snapshot.subscriberMutations.length - 1];
+        delete snapshot.subscriberMutations;
+        console.info('[billiontalks media]', event, snapshot, lastMutation);
       }
 
       function isSimulatedMeeting() {
@@ -2198,6 +2263,7 @@ function meetingUiTemplate(): string {
         peer.onconnectionstatechange = () => handleMediaPeerState(direction, peer);
         peer.oniceconnectionstatechange = () => handleMediaPeerState(direction, peer);
         if (direction === 'subscriber') {
+          subscriberSessionLabel += 1;
           // A closed predecessor must never write tracks into the recovered subscriber's streams.
           peer.ontrack = (event) => {
             if (peer !== subscriberPeerConnection) return;
@@ -2577,19 +2643,25 @@ function meetingUiTemplate(): string {
 
       function refreshSfuSubscriptions() {
         if (mediaRecoveryInProgress || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
-        return enqueueMediaOperation('subscriber', async () => {
+        if (queuedSubscriberRefresh) return queuedSubscriberRefresh;
+        queuedSubscriberRefresh = enqueueMediaOperation('subscriber', async () => {
+          queuedSubscriberRefresh = null;
           if (mediaRecoveryInProgress) return;
           const peer = ensureSubscriberPeerConnection();
           if (!peer) return;
+          let mutation = null;
           try {
+            mutation = beginSubscriberMutation('subscribe', peer);
             const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/subscribe', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ connectionId: ensureMediaConnectionId() }),
             });
             const payload = await response.json();
+            mutation.httpStatus = response.status;
             if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to subscribe to media.');
             const data = payload.data;
+            mutation.pendingOperationId = data && data.operationId || '';
             if (data && data.diagnostics) {
               mediaDiagnostics.publishers = data.diagnostics.publishers || {};
               mediaDiagnostics.discovered = data.diagnostics.discovered || 0;
@@ -2597,9 +2669,16 @@ function meetingUiTemplate(): string {
               mediaDiagnostics.lastError = '';
               updateRemoteTileDiagnostics();
             }
-            if (!data || !data.sessionDescription || !data.operationId || !Array.isArray(data.tracks)) return;
+            if (!data || !data.sessionDescription || !data.operationId || !Array.isArray(data.tracks)) {
+              finishSubscriberMutation(mutation, peer);
+              return;
+            }
             const removed = Array.isArray(data.removed) ? data.removed : [];
-            if (!data.tracks.length && !removed.length) return;
+            if (!data.tracks.length && !removed.length) {
+              finishSubscriberMutation(mutation, peer);
+              return;
+            }
+            if (!data.tracks.length) mutation.type = 'tracks/close';
             for (const track of data.tracks) remoteTrackByMid.set(track.mid, track);
             mediaDiagnostics.subscriptionResultCount = data.tracks.length;
             if (peer.signalingState !== 'stable') await peer.setLocalDescription({ type: 'rollback' });
@@ -2607,6 +2686,8 @@ function meetingUiTemplate(): string {
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
             await waitForIceGatheringComplete(peer, { allowPartial: true });
+            finishSubscriberMutation(mutation, peer);
+            mutation = beginSubscriberMutation('renegotiate', peer, data.operationId);
             const renegotiated = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/renegotiate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2617,7 +2698,10 @@ function meetingUiTemplate(): string {
               }),
             });
             const renegotiatedPayload = await renegotiated.json();
+            mutation.httpStatus = renegotiated.status;
             if (!renegotiated.ok || !renegotiatedPayload.ok) throw new Error(renegotiatedPayload.error || 'Unable to complete media negotiation.');
+            finishSubscriberMutation(mutation, peer);
+            mutation = null;
             if (data.tracks.length) await waitForPeerConnectionConnected(peer, 15000, 'Subscriber');
             subscriberFailureCount = 0;
             if (removed.length) {
@@ -2629,12 +2713,13 @@ function meetingUiTemplate(): string {
             logMediaDiagnostics('subscriber-negotiated');
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to receive media';
+            if (mutation) finishSubscriberMutation(mutation, peer, message);
             mediaDiagnostics.lastError = message;
             updateMediaStatus(message);
             logMediaDiagnostics('subscriber-error ' + message);
-            // A half-negotiated subscriber (unsent answer, stale operation, no transport) cannot be reused.
+            // A 406 means the upstream session may be mid-exchange; the outcome is unknown, so replace the session instead of retrying.
             const unrecoverableNegotiation = (error instanceof Error && error.name === 'IceGatheringTimeout') ||
-              /no longer current|Subscriber media connection/.test(message);
+              /no longer current|Subscriber media connection|HTTP status: 406/.test(message);
             if (isStaleSfuSessionError(error) || unrecoverableNegotiation) {
               subscriberFailureCount += 1;
               if (subscriberFailureCount > MAX_SUBSCRIBER_FAILURES) {
@@ -2645,6 +2730,7 @@ function meetingUiTemplate(): string {
             }
           }
         });
+        return queuedSubscriberRefresh;
       }
 
       function closeRealtimeTransports(meetingId) {
@@ -4419,7 +4505,7 @@ function meetingUiTemplate(): string {
 </html>`;
 }
 
-export default {
+const routeHandler = {
   async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
     const url = new URL(request.url);
 
@@ -4898,7 +4984,8 @@ export default {
             publisherDisplayName: member.displayName,
             trackName: track.trackName,
           }));
-        });
+        }).filter((publication, index, all) =>
+          all.findIndex((entry) => entry.publisherSessionId === publication.publisherSessionId && entry.trackName === publication.trackName) === index);
 
         const publishersByUser: Record<string, string[]> = {};
         for (const publication of publications) (publishersByUser[publication.publisherUserId] ??= []).push(publication.trackName);
@@ -5092,7 +5179,9 @@ export default {
           try {
             await getCloudflareRealtimeClient(env).closeTracks(sessionId, [...new Set(trackMids)]);
           } catch (error) {
-            if (!(error instanceof CloudflareRealtimeSessionError) || ![404, 410].includes(error.upstreamStatus)) throw error;
+            // The session is being replaced, so an upstream failure here (including 406) must not block recovery.
+            if (!(error instanceof CloudflareRealtimeSessionError)) throw error;
+            console.warn("Media recovery close failed", body.direction, error.upstreamStatus, error.errorCode, error.errorDescription);
           }
         }
 
@@ -5483,5 +5572,36 @@ export default {
       },
       404,
     );
+  },
+};
+
+const SFU_MUTATION_ROUTE = /^\/api\/meetings\/([^/]+)\/media\/(?:publish|publish\/ready|subscribe|renegotiate|tracks\/close|recover|close)$/;
+
+export default {
+  async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
+    const route = request.method === "POST" ? SFU_MUTATION_ROUTE.exec(new URL(request.url).pathname) : null;
+    const sessionId = route ? getSessionIdFromRequest(request) : null;
+    let rpc: MeetingStateDurableObject | undefined;
+    let token: string | undefined;
+    if (route && sessionId) {
+      try {
+        rpc = getMeetingStateRpc(env, route[1]);
+        token = await rpc.acquireSfuMutation(sessionId);
+      } catch (error) {
+        console.error("Unable to acquire SFU mutation lock", error);
+        return jsonResponse({ ok: false, error: "Media mutation is temporarily unavailable." }, 503);
+      }
+    }
+    try {
+      return await routeHandler.fetch(request, env);
+    } finally {
+      if (rpc && token && sessionId) {
+        try {
+          await rpc.releaseSfuMutation(sessionId, token);
+        } catch (error) {
+          console.error("Unable to release SFU mutation lock", error);
+        }
+      }
+    }
   },
 };

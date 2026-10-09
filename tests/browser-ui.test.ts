@@ -1496,6 +1496,149 @@ describe("BillionTalks browser UI regression tests", () => {
     });
   });
 
+  describe("subscriber session mutation ordering", () => {
+    const subscribePayload = (operationId: string) => ({
+      ok: true,
+      data: {
+        operationId,
+        sessionDescription: { type: "offer", sdp: operationId },
+        tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "remote-camera" }],
+        diagnostics: { discovered: 1, subscribed: 0, publishers: {} },
+      },
+    });
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const settle = async () => { for (let index = 0; index < 5; index += 1) await wait(40); };
+    const subscriberPeers = () => FakePeerConnection.instances.filter((peer) => Boolean(peer.ontrack));
+    const remoteVideo = (document: Document) => document.querySelector('#videoStage .tile[data-user-id="remote-user"] video.remote-media') as HTMLVideoElement | null;
+    const upstream406 = "Cloudflare Realtime request failed. HTTP status: 406. errorCode: negotiation_in_progress. errorDescription: Previous exchange incomplete";
+
+    // Server model: one pending offer per session generation; recovery starts a new generation; records overlap of subscriber mutations.
+    async function setup(options: { renegotiateDelayMs?: number; fail406?: "subscribe" | "renegotiate" } = {}) {
+      const page = await loadRenderedPage();
+      Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+      Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
+      page.setIncludeRemoteParticipant();
+      const original = page.fetchMock.getMockImplementation()!;
+      const events: string[] = [];
+      let generation = 0;
+      let negotiated = -1;
+      let inFlight = 0;
+      const stats = { maxInFlight: 0 };
+      let pending406 = options.fail406 ?? null;
+      page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const kind = ["/media/subscribe", "/media/renegotiate", "/media/recover"].find((suffix) => url.endsWith(suffix))?.slice(7);
+        if (!kind) return original(input, init);
+        const subscriberRecover = kind === "recover" && JSON.parse(String(init?.body)).direction === "subscriber";
+        if (kind === "recover" && !subscriberRecover) return original(input, init);
+        inFlight += 1;
+        stats.maxInFlight = Math.max(stats.maxInFlight, inFlight);
+        events.push(kind + ":start");
+        try {
+          if (kind === "renegotiate") {
+            await wait(options.renegotiateDelayMs ?? 0);
+            if (pending406 === "renegotiate") { pending406 = null; return createResponse({ ok: false, error: upstream406 }, false, 502); }
+            negotiated = generation;
+            return createResponse({ ok: true, data: { connected: true } });
+          }
+          if (kind === "recover") { generation += 1; return createResponse({ ok: true, data: { recovered: true, direction: "subscriber" } }); }
+          if (pending406 === "subscribe") { pending406 = null; return createResponse({ ok: false, error: upstream406 }, false, 502); }
+          if (negotiated === generation) return createResponse({ ok: true, data: { operationId: null, sessionDescription: null, tracks: [] } });
+          return createResponse(subscribePayload("op-" + generation));
+        } finally {
+          inFlight -= 1;
+          events.push(kind + ":end");
+        }
+      });
+      await joinHostMeeting(page.document, "Mutation ordering");
+      return { ...page, events, stats };
+    }
+
+    const countOf = (events: string[], entry: string) => events.filter((event) => event === entry).length;
+
+    it("keeps simultaneous join, initial subscription and refreshes to one subscriber mutation at a time", async () => {
+      const { window, document, events, stats } = await setup({ renegotiateDelayMs: 80 });
+      await wait(20);
+      (window as any).refreshSfuSubscriptions();
+      (window as any).refreshSfuSubscriptions();
+      await settle();
+      await settle();
+
+      expect(stats.maxInFlight).toBe(1);
+      expect(countOf(events, "renegotiate:start")).toBe(1);
+      const firstRenegotiationStart = events.indexOf("renegotiate:start");
+      const firstRenegotiationEnd = events.indexOf("renegotiate:end");
+      expect(events.slice(firstRenegotiationStart, firstRenegotiationEnd)).not.toContain("subscribe:start");
+      expect(subscriberPeers()).toHaveLength(1);
+      expect(((remoteVideo(document)!.srcObject as unknown as FakeMediaStream).getTracks())).toHaveLength(1);
+    });
+
+    it("waits for a pending renegotiation before recovery touches the subscriber session", async () => {
+      const { events, stats, document } = await setup({ renegotiateDelayMs: 150 });
+      for (let attempt = 0; attempt < 20 && !events.includes("renegotiate:start"); attempt += 1) await wait(10);
+      expect(events).toContain("renegotiate:start");
+      expect(events).not.toContain("renegotiate:end");
+      subscriberPeers()[0].setConnectionStates("failed", "failed");
+      await settle();
+      await settle();
+
+      expect(stats.maxInFlight).toBe(1);
+      expect(countOf(events, "recover:start")).toBe(1);
+      expect(events.indexOf("recover:start")).toBeGreaterThan(events.indexOf("renegotiate:end"));
+      expect(subscriberPeers()).toHaveLength(2);
+      expect(((remoteVideo(document)!.srcObject as unknown as FakeMediaStream).getTracks())).toHaveLength(1);
+    });
+
+    it("replaces the subscriber session after a 406 from tracks/new without retrying the same mutation", async () => {
+      const { window, document, events, fetchMock } = await setup({ fail406: "subscribe" });
+      await settle();
+      await settle();
+
+      expect(countOf(events, "recover:start")).toBe(1);
+      expect(events.slice(0, 4)).toEqual(["subscribe:start", "subscribe:end", "recover:start", "recover:end"]);
+      const subscribeBodies = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/subscribe"));
+      expect(subscribeBodies.length).toBeGreaterThanOrEqual(2);
+      expect(subscriberPeers()).toHaveLength(2);
+      expect(((remoteVideo(document)!.srcObject as unknown as FakeMediaStream).getTracks())).toHaveLength(1);
+      const failed = (window as any).btMediaDiagnostics().subscriberMutations.find((entry: any) => entry.httpStatus === 406);
+      expect(failed).toEqual(expect.objectContaining({ type: "subscribe", errorCode: "negotiation_in_progress", errorDescription: "Previous exchange incomplete" }));
+    });
+
+    it("replaces the subscriber session and re-subscribes once after a 406 from renegotiate without duplicate tracks", async () => {
+      const { window, document, events } = await setup({ fail406: "renegotiate" });
+      await settle();
+      await settle();
+
+      expect(countOf(events, "recover:start")).toBe(1);
+      expect(countOf(events, "renegotiate:start")).toBe(2);
+      const peers = subscriberPeers();
+      expect(peers).toHaveLength(2);
+      expect(peers[0].connectionState).toBe("closed");
+      const tile = document.querySelector('#videoStage .tile[data-user-id="remote-user"]')!;
+      expect(tile.querySelectorAll("video.remote-media")).toHaveLength(1);
+      expect((remoteVideo(document)!.srcObject as unknown as FakeMediaStream).getTracks()).toHaveLength(1);
+      expect((window as any).btMediaDiagnostics().mediaStreamTrackCount).toBe(1);
+
+      const mutations = (window as any).btMediaDiagnostics().subscriberMutations as any[];
+      const failedRenegotiation = mutations.find((entry) => entry.type === "renegotiate" && entry.httpStatus === 406);
+      expect(failedRenegotiation).toEqual(expect.objectContaining({
+        session: "subscriber-1",
+        pendingOperationId: "op-0",
+        errorCode: "negotiation_in_progress",
+        errorDescription: "Previous exchange incomplete",
+      }));
+      expect(mutations.some((entry) => entry.session === "subscriber-2" && entry.type === "renegotiate" && entry.pendingOperationId === "op-1")).toBe(true);
+      mutations.forEach((entry) => {
+        expect(entry.seq).toBeGreaterThan(0);
+        expect(entry.startedAt).toBeTruthy();
+        expect(entry.endedAt).toBeTruthy();
+        expect(entry.signalingBefore).toBeTruthy();
+        expect(entry.signalingAfter).toBeTruthy();
+      });
+      expect(mutations.map((entry) => entry.seq)).toEqual([...mutations.map((entry) => entry.seq)].sort((a, b) => a - b));
+    });
+  });
+
   it("recovers a stale subscriber session after SFU returns 410", async () => {
     const { window, document, fetchMock, setNextSubscribePayload, setNextSubscribeError, setIncludeRemoteParticipant } = await loadRenderedPage();
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });

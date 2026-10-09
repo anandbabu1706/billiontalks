@@ -58,9 +58,12 @@ function createSessionNamespace(durableStorage: Map<string, unknown>) {
 }
 
 function createDurableObjectNamespace(backingStorage = new Map<string, Map<string, unknown>>()) {
+  const instances = new Map<string, MeetingStateDurableObject>();
   return {
     idFromName: (name: string) => name,
     get: (id: string) => {
+      const existing = instances.get(id);
+      if (existing) return existing;
       let values = backingStorage.get(id);
       if (!values) {
         values = new Map<string, unknown>();
@@ -72,7 +75,9 @@ function createDurableObjectNamespace(backingStorage = new Map<string, Map<strin
         put: async (key: string, value: unknown) => { values!.set(key, value); },
         delete: async (key: string) => values!.delete(key),
       };
-      return new MeetingStateDurableObject({ storage } as any, {});
+      const instance = new MeetingStateDurableObject({ storage } as any, {});
+      instances.set(id, instance);
+      return instance;
     },
   };
 }
@@ -173,8 +178,8 @@ function createChatApiFixture(namespace = createDurableObjectNamespace()) {
   };
 }
 
-async function createJoinedChatRoom() {
-  const api = createChatApiFixture();
+async function createJoinedChatRoom(namespace = createDurableObjectNamespace()) {
+  const api = createChatApiFixture(namespace);
   const host = await api.createSession();
   const meeting = await api.createOpenMeeting(host.cookie);
   const participant = await api.createSession();
@@ -995,6 +1000,160 @@ describe("MeetingService lifecycle", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  describe("subscriber session mutation ordering", () => {
+    async function roomWithHostMedia() {
+      const namespace = createDurableObjectNamespace();
+      const room = await createJoinedChatRoom(namespace);
+      const sfu = createSfuFetchMock();
+      vi.stubGlobal("fetch", sfu.fetcher);
+      const publish = await room.api.request(`/api/meetings/${room.meeting.id}/media/publish`, "POST", room.host.cookie, {
+        connectionId: "host-publisher-connection",
+        sessionDescription: { type: "offer", sdp: "publisher-offer" },
+        tracks: [{ trackName: "camera", mid: "0" }, { trackName: "microphone", mid: "1" }],
+      });
+      expect(publish.status).toBe(200);
+      expect((await room.api.request(`/api/meetings/${room.meeting.id}/media/publish/ready`, "POST", room.host.cookie, {
+        connectionId: "host-publisher-connection",
+        trackNames: ["camera", "microphone"],
+      })).status).toBe(200);
+      const subscribe = () => room.api.request(`/api/meetings/${room.meeting.id}/media/subscribe`, "POST", room.participant.cookie, { connectionId: "participant-subscriber-connection" });
+      const renegotiate = (operationId: string) => room.api.request(`/api/meetings/${room.meeting.id}/media/renegotiate`, "POST", room.participant.cookie, {
+        connectionId: "participant-subscriber-connection",
+        operationId,
+        sessionDescription: { type: "answer", sdp: "subscriber-answer" },
+      });
+      const recover = () => room.api.request(`/api/meetings/${room.meeting.id}/media/recover`, "POST", room.participant.cookie, {
+        connectionId: "participant-subscriber-connection",
+        direction: "subscriber",
+      });
+      return { ...room, namespace, sfu, subscribe, renegotiate, recover };
+    }
+    const remoteCreates = (calls: Array<{ url: string; body: any }>) => calls.filter((call) => call.url.endsWith("/tracks/new") && call.body?.tracks?.[0]?.location === "remote");
+    const upstreamError = (status: number, errorCode: string, errorDescription: string) => Response.json({ errorCode, errorDescription }, { status });
+
+    it("never lets simultaneous subscribe requests reach one Cloudflare session together", async () => {
+      const { sfu, subscribe } = await roomWithHostMedia();
+      let inFlight = 0;
+      let maxInFlight = 0;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const isMutation = url.endsWith("/tracks/new") || url.endsWith("/renegotiate") || url.endsWith("/tracks/close");
+        if (isMutation) { inFlight += 1; maxInFlight = Math.max(maxInFlight, inFlight); }
+        try {
+          if (isMutation) await new Promise((resolve) => setTimeout(resolve, 20));
+          return await sfu.fetcher(input, init);
+        } finally {
+          if (isMutation) inFlight -= 1;
+        }
+      }));
+      try {
+        const [first, second] = await Promise.all([subscribe(), subscribe()]);
+        const firstPayload = await first.json();
+        const secondPayload = await second.json();
+        expect(maxInFlight).toBe(1);
+        expect(remoteCreates(sfu.calls)).toHaveLength(1);
+        expect(secondPayload.data.operationId).toBe(firstPayload.data.operationId);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("fails closed when the participant media lock cannot be acquired", async () => {
+      const baseNamespace = createDurableObjectNamespace();
+      const namespace = {
+        idFromName: baseNamespace.idFromName,
+        get: (id: string) => new Proxy(baseNamespace.get(id), {
+          get(target, property, receiver) {
+            if (property === "acquireSfuMutation") return async () => { throw new Error("lock unavailable"); };
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        }),
+      };
+      const { api, participant, meeting } = await createJoinedChatRoom(namespace);
+      const response = await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", participant.cookie, {
+        connectionId: "participant-subscriber-connection",
+      });
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toBe("Media mutation is temporarily unavailable.");
+    });
+
+    it("deduplicates publication locators before subscribing", async () => {
+      const { sfu, subscribe, namespace, meeting, host } = await roomWithHostMedia();
+      vi.stubGlobal("fetch", sfu.fetcher);
+      try {
+        const rpc = namespace.get(meeting.id);
+        const hostState = (await rpc.getSfuParticipantState(host.userId))!;
+        await rpc.saveSfuParticipantState({ ...hostState, publishedTracks: [...hostState.publishedTracks, ...hostState.publishedTracks] });
+        const payload = await (await subscribe()).json();
+        expect(payload.data.tracks.map((track: { trackName: string }) => track.trackName)).toEqual(["camera", "microphone"]);
+        expect(remoteCreates(sfu.calls)[0].body.tracks).toHaveLength(2);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("reports Cloudflare errorCode and errorDescription for a 406 from tracks/new without saving a pending operation", async () => {
+      const { sfu, subscribe } = await roomWithHostMedia();
+      let failed = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (!failed && url.endsWith("/tracks/new") && String(init?.body).includes('"remote"')) {
+          failed = true;
+          return upstreamError(406, "negotiation_in_progress", "Previous exchange incomplete");
+        }
+        return sfu.fetcher(input, init);
+      }));
+      try {
+        const response = await subscribe();
+        const payload = await response.json();
+        expect(response.status).toBe(502);
+        expect(payload.error).toContain("HTTP status: 406");
+        expect(payload.error).toContain("errorCode: negotiation_in_progress");
+        expect(payload.error).toContain("errorDescription: Previous exchange incomplete");
+        const retry = await (await subscribe()).json();
+        expect(retry.data.tracks).toHaveLength(2);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("replaces the subscriber session once after a 406 from renegotiate and does not duplicate tracks", async () => {
+      const { sfu, subscribe, renegotiate, recover } = await roomWithHostMedia();
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        const firstSubscriberSession = "sfu-session-2-secretish";
+        if (url.includes(firstSubscriberSession) && (url.endsWith("/renegotiate") || url.endsWith("/tracks/close"))) {
+          sfu.calls.push({ url, method: "PUT", headers: new Headers(), body });
+          return upstreamError(406, "negotiation_in_progress", "Previous exchange incomplete");
+        }
+        return sfu.fetcher(input, init);
+      }));
+      try {
+        const first = await (await subscribe()).json();
+        const failedRenegotiation = await renegotiate(first.data.operationId);
+        expect(failedRenegotiation.status).toBe(502);
+        expect((await failedRenegotiation.json()).error).toContain("errorCode: negotiation_in_progress");
+
+        // Uncertain outcome: the old session cannot even be closed, yet recovery must still succeed.
+        expect((await recover()).status).toBe(200);
+        const replacement = await (await subscribe()).json();
+        expect(replacement.data.tracks.map((track: { trackName: string }) => track.trackName)).toEqual(["camera", "microphone"]);
+        expect((await renegotiate(replacement.data.operationId)).status).toBe(200);
+
+        const afterReplacement = await (await subscribe()).json();
+        expect(afterReplacement.data.tracks).toEqual([]);
+        const creates = remoteCreates(sfu.calls);
+        expect(creates).toHaveLength(2);
+        expect(creates[1].url).toContain("sfu-session-3-secretish");
+        expect(creates[1].body.tracks).toHaveLength(2);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   it("allows a participant microphone publication to be discovered and subscribed by the host", async () => {
