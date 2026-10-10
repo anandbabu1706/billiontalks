@@ -2244,6 +2244,38 @@ function meetingUiTemplate(): string {
       const mediaDisconnectTimers = new Map();
       const mediaRecoveryResetTimers = new Map();
       let remotePlaybackBlocked = false;
+      // Remembers an explicit user gesture and a successful unmuted play(), so later stream attachments retry playback quietly.
+      let userInteractedWithMeeting = false;
+      let remotePlaybackAuthorized = false;
+      let fastPollUntil = 0;
+      let hiddenSinceMs = 0;
+      let remoteRetryCount = 0;
+      let remoteRetryTimer = null;
+      const recoveryRetryTimers = new Map();
+      const inflightMediaRequests = { publisher: new Set(), subscriber: new Set() };
+      const mediaWaitAborts = new Set();
+      // Every wait in the media path is bounded by one of these; they were previously 10s ICE, 15s connect and a 3s poll in series.
+      const MEDIA_TIMING = {
+        iceGatheringHardMs: 5000,
+        iceCandidateGraceMs: 1000,
+        iceCandidatePollMs: 100,
+        peerConnectedWaitMs: 8000,
+        mediaRequestTimeoutMs: 10000,
+        disconnectGraceMs: 2000,
+        recoveryQueueDrainMs: 1500,
+        meetingPollMs: 3000,
+        meetingPollFastMs: 1000,
+        fastPollWindowMs: 20000,
+        unmuteGraceMs: 800,
+        hiddenSubscriberRebuildMs: 15000,
+        recoveryRetryBackoffMs: [500, 1500],
+        remoteRetryBackoffMs: [400, 1200],
+      };
+      const RECONNECTING_STATUS = 'Reconnecting media…';
+      const mediaTimings = {
+        resumeDetected: 0, recoveryStarted: 0, publisherReady: 0, publicationDiscovered: 0,
+        subscriberNegotiated: 0, firstRemoteTrack: 0, firstMediaPlayback: 0, trigger: '',
+      };
       let publishedLocalTracks = new Map();
       let remoteTrackByMid = new Map();
       let remoteStreams = new Map();
@@ -2337,6 +2369,8 @@ function meetingUiTemplate(): string {
         }
         const videos = Array.from(document.querySelectorAll('#videoStage video.remote-media'));
         return {
+          mediaTimings: { ...mediaTimings },
+          remotePlaybackAuthorized,
           participantId: publisherParticipantId || state.meeting?.participants.find((participant) => participant.userId === state.currentUserId)?.id || '',
           userIdSuffix: publisherUserIdSuffix || String(state.currentUserId || '').slice(-6),
           publisherSessionPresent,
@@ -2464,15 +2498,67 @@ function meetingUiTemplate(): string {
         return state.mediaConnectionId;
       }
 
-      // With allowPartial, a timeout still resolves when the local description already carries candidates; otherwise it rejects.
+      function markMediaTiming(name) {
+        if (mediaTimings[name]) return;
+        const now = Date.now();
+        mediaTimings[name] = now;
+        const origin = mediaTimings.resumeDetected || mediaTimings.recoveryStarted || now;
+        console.info('[billiontalks media timing]', name, '+' + (now - origin) + 'ms', mediaTimings.trigger);
+      }
+
+      function beginMediaTimingEpoch(name, trigger) {
+        Object.keys(mediaTimings).forEach((key) => { mediaTimings[key] = key === 'trigger' ? trigger : 0; });
+        if (name) markMediaTiming(name);
+        fastPollUntil = Date.now() + MEDIA_TIMING.fastPollWindowMs;
+        if (state.route === 'meeting') scheduleMeetingRefresh();
+      }
+
+      function abortedMediaError(message) {
+        const error = new Error(message);
+        error.aborted = true;
+        return error;
+      }
+
+      // Aborts waits and requests that belong to a session about to be replaced, so recovery never queues behind their timeouts.
+      function abortInFlightMedia(direction) {
+        for (const controller of Array.from(inflightMediaRequests[direction])) controller.abort();
+        for (const entry of Array.from(mediaWaitAborts)) if (entry.direction === direction) entry.abort();
+      }
+
+      function mediaFetch(direction, url, init) {
+        if (typeof AbortController !== 'function') return fetch(url, init);
+        const controller = new AbortController();
+        inflightMediaRequests[direction].add(controller);
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; controller.abort(); }, MEDIA_TIMING.mediaRequestTimeoutMs);
+        return fetch(url, { ...(init || {}), signal: controller.signal }).catch((error) => {
+          if (!controller.signal.aborted) throw error;
+          const abortError = abortedMediaError(timedOut ? 'Media request timed out.' : 'Media request superseded by recovery.');
+          abortError.aborted = !timedOut;
+          throw abortError;
+        }).finally(() => {
+          clearTimeout(timer);
+          inflightMediaRequests[direction].delete(controller);
+        });
+      }
+
+      // With allowPartial, gathering resolves once candidates exist and a short grace passes, or at the hard bound if candidates exist; otherwise it rejects.
       function waitForIceGatheringComplete(peer, options) {
         const allowPartial = Boolean(options && options.allowPartial);
-        const timeoutMs = window.btIceGatheringTimeoutMs || 10000;
+        const timeoutMs = window.btIceGatheringTimeoutMs || MEDIA_TIMING.iceGatheringHardMs;
+        const graceMs = typeof window.btIceCandidateGraceMs === 'number' ? window.btIceCandidateGraceMs : MEDIA_TIMING.iceCandidateGraceMs;
         if (peer.iceGatheringState === 'complete') return Promise.resolve();
+        const direction = peer === subscriberPeerConnection ? 'subscriber' : 'publisher';
         return new Promise((resolve, reject) => {
           let timeoutId = null;
+          let pollId = null;
+          let graceId = null;
+          const entry = { direction, abort: () => { cleanup(); reject(abortedMediaError('ICE gathering superseded by recovery.')); } };
           const cleanup = () => {
             if (timeoutId !== null) clearTimeout(timeoutId);
+            if (pollId !== null) clearInterval(pollId);
+            if (graceId !== null) clearTimeout(graceId);
+            mediaWaitAborts.delete(entry);
             peer.removeEventListener('icegatheringstatechange', check);
           };
           const finish = () => {
@@ -2482,13 +2568,20 @@ function meetingUiTemplate(): string {
           const check = () => {
             if (peer.iceGatheringState === 'complete') finish();
           };
+          const hasCandidates = () => /a=candidate:/.test(String(peer.localDescription && peer.localDescription.sdp || ''));
+          mediaWaitAborts.add(entry);
           peer.addEventListener('icegatheringstatechange', check);
+          if (allowPartial) {
+            pollId = setInterval(() => {
+              if (graceId === null && hasCandidates()) graceId = setTimeout(finish, graceMs);
+            }, MEDIA_TIMING.iceCandidatePollMs);
+          }
           timeoutId = setTimeout(() => {
+            const candidates = hasCandidates();
             cleanup();
             mediaDiagnostics.iceTimeoutCount += 1;
-            const hasCandidates = /a=candidate:/.test(String(peer.localDescription && peer.localDescription.sdp || ''));
-            logMediaDiagnostics('ice-gathering-timeout candidates=' + hasCandidates);
-            if (allowPartial && hasCandidates) {
+            logMediaDiagnostics('ice-gathering-timeout candidates=' + candidates);
+            if (allowPartial && candidates) {
               resolve();
               return;
             }
@@ -2499,12 +2592,15 @@ function meetingUiTemplate(): string {
         });
       }
 
-      function waitForPeerConnectionConnected(peer, timeoutMs = 15000, label = 'Publisher') {
+      function waitForPeerConnectionConnected(peer, timeoutMs = MEDIA_TIMING.peerConnectedWaitMs, label = 'Publisher') {
         if (peer.connectionState === 'connected') return Promise.resolve();
+        const direction = label === 'Subscriber' ? 'subscriber' : 'publisher';
         return new Promise((resolve, reject) => {
           let timeoutId = null;
+          const entry = { direction, abort: () => { cleanup(); reject(abortedMediaError(label + ' media wait superseded by recovery.')); } };
           const cleanup = () => {
             if (timeoutId !== null) clearTimeout(timeoutId);
+            mediaWaitAborts.delete(entry);
             peer.removeEventListener('connectionstatechange', check);
           };
           const check = () => {
@@ -2516,6 +2612,7 @@ function meetingUiTemplate(): string {
               reject(new Error(label + ' media connection ' + peer.connectionState + ' before becoming ready.'));
             }
           };
+          mediaWaitAborts.add(entry);
           peer.addEventListener('connectionstatechange', check);
           timeoutId = setTimeout(() => {
             cleanup();
@@ -2525,12 +2622,26 @@ function meetingUiTemplate(): string {
         });
       }
 
+      // Low-level protocol detail belongs in the console; the meeting UI only shows a concise reconnecting state while recovery is active.
+      function isLowLevelMediaMessage(value) {
+        return /valid local tracks are required|HTTP status|did not accept any|no longer current|media connection (?:failed|closed|did not become ready)|timed out|superseded|ICE candidate|negotiation was incomplete|subscription response was incomplete|Unable to (?:publish|subscribe|complete|discover|confirm)/i.test(String(value));
+      }
+
+      function mediaRecoveryActive() {
+        return publisherRecoveryPending || subscriberRecoveryPending || remoteRetryTimer !== null || recoveryRetryTimers.size > 0;
+      }
+
       function updateMediaStatus(value) {
-        state.mediaStatus = value;
+        let shown = value;
+        if (isLowLevelMediaMessage(value)) {
+          console.info('[billiontalks media] detail:', value);
+          shown = mediaRecoveryActive() || /valid local tracks are required/i.test(String(value)) ? RECONNECTING_STATUS : value;
+        }
+        state.mediaStatus = shown;
         const status = document.getElementById('mediaStatus');
         if (status) status.textContent = remotePlaybackBlocked
           ? 'Remote media playback may require user interaction. Select Enable playback.'
-          : value;
+          : shown;
       }
 
       function activePeerConnection(direction) {
@@ -2557,7 +2668,7 @@ function meetingUiTemplate(): string {
         if (connectionState === 'failed' || iceState === 'failed') {
           clearMediaDisconnectTimer(direction);
           clearMediaRecoveryResetTimer(direction);
-          updateMediaStatus(direction + ' media transport failed; recovering.');
+          updateMediaStatus(RECONNECTING_STATUS);
           void requestMediaRecovery(direction, 'failed connection state');
           return;
         }
@@ -2583,7 +2694,7 @@ function meetingUiTemplate(): string {
         }
         if (connectionState === 'disconnected' || iceState === 'disconnected') {
           if (mediaDisconnectTimers.has(direction)) return;
-          updateMediaStatus(direction + ' media temporarily disconnected; waiting for recovery.');
+          updateMediaStatus(RECONNECTING_STATUS);
           const timer = window.setTimeout(() => {
             mediaDisconnectTimers.delete(direction);
             const transportReconnected = peer.connectionState === 'connected' || peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed';
@@ -2591,7 +2702,7 @@ function meetingUiTemplate(): string {
               (peer.connectionState === 'disconnected' || peer.iceConnectionState === 'disconnected')) {
               void requestMediaRecovery(direction, 'connection remained disconnected');
             }
-          }, 2000);
+          }, MEDIA_TIMING.disconnectGraceMs);
           mediaDisconnectTimers.set(direction, timer);
           return;
         }
@@ -2672,16 +2783,27 @@ function meetingUiTemplate(): string {
         const userId = state.currentUserId;
         const connectionId = state.mediaConnectionId;
         if (direction === 'publisher') lastPublisherInvalidationReason = publisherInvalidationReason;
-        updateMediaStatus('Recovering ' + direction + ' media transport: ' + reason);
+        console.info('[billiontalks media] recovery started:', direction, reason);
+        if (mediaTimings.firstMediaPlayback || (!mediaTimings.recoveryStarted && !mediaTimings.resumeDetected)) {
+          beginMediaTimingEpoch('', 'recovery:' + direction);
+        }
+        markMediaTiming('recoveryStarted');
+        fastPollUntil = Date.now() + MEDIA_TIMING.fastPollWindowMs;
+        abortInFlightMedia(direction);
+        updateMediaStatus(RECONNECTING_STATUS);
 
         const recovery = mediaRecoveryQueue.then(async () => {
-          await (direction === 'publisher' ? publisherOperationQueue : subscriberOperationQueue);
+          // Aborted operations settle immediately; the bound only guards an operation stuck on something that cannot be aborted.
+          await Promise.race([
+            direction === 'publisher' ? publisherOperationQueue : subscriberOperationQueue,
+            new Promise((resolve) => setTimeout(resolve, MEDIA_TIMING.recoveryQueueDrainMs)),
+          ]);
           if (meetingId !== state.meetingId || userId !== state.currentUserId || state.route !== 'meeting' || mediaTransportClosing) return false;
           if (reason === 'connection remained disconnected') {
             const peer = activePeerConnection(direction);
             if (peer && (peer.connectionState === 'connected' || peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed')) return false;
           }
-          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/media/recover', {
+          const response = await mediaFetch(direction, '/api/meetings/' + encodeURIComponent(meetingId) + '/media/recover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ connectionId, direction, ...(direction === 'publisher' ? { reason: publisherInvalidationReason } : {}) }),
@@ -2740,7 +2862,7 @@ function meetingUiTemplate(): string {
               }
               if (published) break;
               if (attempt > 0 || lastPublisherInvalidationReason !== 'stale-sfu-session') break;
-              const retryResponse = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/media/recover', {
+              const retryResponse = await mediaFetch('publisher', '/api/meetings/' + encodeURIComponent(meetingId) + '/media/recover', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ connectionId, direction: 'publisher', reason: 'stale-sfu-session' }),
@@ -2766,10 +2888,11 @@ function meetingUiTemplate(): string {
             publisherFailureCount = 0;
             publisherRecoveryEndedAt = new Date().toISOString();
             if (publisherResumeRecoveryRequested) resumeRecoveryResult = 'ready';
-            updateMediaStatus('Publisher resumed and media is ready.');
+            markMediaTiming('publisherReady');
+            updateMediaStatus('Media connected');
             logMediaDiagnostics('publisher-recovered');
           } else {
-            updateMediaStatus(direction + ' media transport recovered. Reconnecting active media.');
+            updateMediaStatus(RECONNECTING_STATUS);
             logMediaDiagnostics(direction + '-recovered');
           }
           return true;
@@ -2782,7 +2905,17 @@ function meetingUiTemplate(): string {
             resultingPublisherSessionPresent = publisherSessionPresent;
             resultingPublishedTrackNames = readyPublishedPublications.map((entry) => entry.trackName);
           }
-          updateMediaStatus(error instanceof Error ? error.message : 'Unable to recover media transport.');
+          console.warn('[billiontalks media] recovery failed:', direction, error instanceof Error ? error.message : error);
+          const attempts = direction === 'publisher' ? publisherFailureCount : subscriberFailureCount;
+          if (attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing) {
+            updateMediaStatus(RECONNECTING_STATUS);
+            scheduleRecoveryRetry(direction, attempts, {
+              ...(republishAfterRecovery ? { republishAfterRecovery: true } : {}),
+              ...(direction === 'publisher' && publisherResumeRecoveryRequested ? { resume: true } : {}),
+            }, meetingId, userId);
+          } else {
+            updateMediaStatus(direction + ' media could not connect. Check your network connection and rejoin the meeting.');
+          }
           return false;
         }).then((recovered) => {
           const republished = direction === 'publisher' && publisherRecoveryRepublishRequired;
@@ -2801,12 +2934,30 @@ function meetingUiTemplate(): string {
             mediaRecoveryNeedsReconcile = false;
             if (shouldReconcile) window.setTimeout(() => reconcileMediaAfterRecovery(meetingId, userId), 0);
           }
+          if (recovered && direction === 'publisher' && republished) {
+            // Rediscover right away instead of waiting for the next poll tick.
+            lastSubscriberPublicationSet = null;
+            void refreshSfuSubscriptions();
+          }
           return recovered;
         });
         mediaRecoveryQueue = settled.then(() => undefined);
         if (direction === 'publisher') publisherRecoveryPromise = settled;
         else subscriberRecoveryPromise = settled;
         return settled;
+      }
+
+      // Bounded: requestMediaRecovery refuses once MAX_MEDIA_RECOVERY_ATTEMPTS is consumed and then shows the terminal message.
+      function scheduleRecoveryRetry(direction, attempts, options, meetingId, userId) {
+        if (recoveryRetryTimers.has(direction)) return;
+        const delays = MEDIA_TIMING.recoveryRetryBackoffMs;
+        const delay = delays[Math.min(Math.max(attempts - 1, 0), delays.length - 1)];
+        const timer = window.setTimeout(() => {
+          recoveryRetryTimers.delete(direction);
+          if (meetingId !== state.meetingId || userId !== state.currentUserId || state.route !== 'meeting' || mediaTransportClosing) return;
+          void requestMediaRecovery(direction, 'automatic retry', options);
+        }, delay);
+        recoveryRetryTimers.set(direction, timer);
       }
 
       function createMediaPeerConnection(direction) {
@@ -2904,11 +3055,12 @@ function meetingUiTemplate(): string {
             await waitForIceGatheringComplete(peer, { allowPartial: true });
             if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || (publisherRecoveryPending && !duringRecovery)) return false;
             const localDescription = peer.localDescription;
+            if (!localDescription || !localDescription.sdp) return false;
             pendingLocalPublications = added.map((entry) => ({
               trackName: entry.trackName,
               mid: entry.transceiver.mid,
             }));
-            const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish', {
+            const response = await mediaFetch('publisher', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -2942,7 +3094,7 @@ function meetingUiTemplate(): string {
               track.trackName === entry.trackName && track.mid === entry.transceiver.mid));
             if (!accepted.length) throw new Error('Cloudflare Realtime did not accept any local tracks.');
             publishReadyAttemptCount += 1;
-            const readyResponse = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish/ready', {
+            const readyResponse = await mediaFetch('publisher', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish/ready', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -2984,16 +3136,22 @@ function meetingUiTemplate(): string {
               try { entry.transceiver.stop(); } catch { /* already stopped */ }
             });
             const message = error instanceof Error ? error.message : 'Unable to publish media';
+            if (error && error.aborted) {
+              if (requireReady) throw error;
+              return false;
+            }
             if (isStaleSfuSessionError(error)) {
               publisherSessionPresent = false;
               pendingLocalPublications = [];
               readyPublishedPublications = [];
               lastPublisherInvalidationReason = 'stale-sfu-session';
             }
-            updateMediaStatus(message);
-            if (isStaleSfuSessionError(error) || /Publisher media connection (?:failed|closed)|did not become ready/.test(message)) {
+            const recoverPublisher = isStaleSfuSessionError(error) || /Publisher media connection (?:failed|closed)|did not become ready|Media request timed out/.test(message);
+            if (recoverPublisher) {
               void requestMediaRecovery('publisher', message, { republishAfterRecovery: true });
-            } else if (/pending media negotiation/.test(message) && publishRetryCount < 3) {
+            }
+            updateMediaStatus(message);
+            if (!recoverPublisher && /pending media negotiation/.test(message) && publishRetryCount < 3) {
               // A subscriber negotiation was in flight; finish it, then publish again.
               publishRetryCount += 1;
               void refreshSfuSubscriptions().then(() => publishCurrentLocalTracks());
@@ -3022,7 +3180,7 @@ function meetingUiTemplate(): string {
               await waitForIceGatheringComplete(peer, { allowPartial: true });
               offer = peer.localDescription;
             }
-            const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/tracks/close', {
+            const response = await mediaFetch('publisher', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/tracks/close', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ connectionId: state.mediaConnectionId, trackNames: closing, ...(offer ? { sessionDescription: offer } : {}) }),
@@ -3039,8 +3197,9 @@ function meetingUiTemplate(): string {
               try { await peer.setLocalDescription({ type: 'rollback' }); } catch { /* peer already closed */ }
             }
             const message = error instanceof Error ? error.message : 'Unable to stop published media';
-            updateMediaStatus(message);
+            if (error && error.aborted) return;
             if (isStaleSfuSessionError(error)) void requestMediaRecovery('publisher', message);
+            updateMediaStatus(message);
           }
         });
       }
@@ -3079,6 +3238,7 @@ function meetingUiTemplate(): string {
         if (previousTrack) targetStream.removeTrack(previousTrack);
         if (!targetStream.getTracks().includes(event.track)) targetStream.addTrack(event.track);
         remote.tracks.set(publication.publicationKey, event.track);
+        markMediaTiming('firstRemoteTrack');
         if (previousTrack && previousTrack.readyState !== 'ended') {
           try { previousTrack.stop(); } catch { /* obsolete remote track */ }
         }
@@ -3131,18 +3291,12 @@ function meetingUiTemplate(): string {
             if (!hasVideo) element.style.display = 'none';
             tile.appendChild(element);
           }
-          element.srcObject = remote.stream;
+          if (element.srcObject !== remote.stream) element.srcObject = remote.stream;
           const screenActive = remote.screenStream.getTracks().some((track) => track.readyState !== 'ended');
           if (hasVideo) element.style.display = '';
           const placeholder = tile.querySelector('.placeholder');
           if (placeholder) placeholder.style.display = hasVideo || screenActive ? 'none' : 'block';
-          const showPlaybackButton = () => {
-            remotePlaybackBlocked = true;
-            updateMediaStatus(state.mediaStatus || 'Receiving media');
-            const playbackButton = document.getElementById('enableRemotePlaybackBtn');
-            if (playbackButton) playbackButton.style.display = 'inline-flex';
-          };
-          startRemotePlayback(element, showPlaybackButton);
+          startRemotePlayback(element);
         }
         syncPresentationLayout();
         updateRemoteTileDiagnostics();
@@ -3187,8 +3341,8 @@ function meetingUiTemplate(): string {
           return;
         }
 
-        video.srcObject = activePresentation.stream;
-        video.muted = activePresentation.source === 'local';
+        if (video.srcObject !== activePresentation.stream) video.srcObject = activePresentation.stream;
+        video.muted = activePresentation.source === 'local' || Boolean(video.dataset.autoMuted);
         video.classList.toggle('remote-screen-media', activePresentation.source === 'remote');
         video.classList.toggle('local-screen-media', activePresentation.source === 'local');
         video.dataset.presentationSource = activePresentation.source;
@@ -3204,13 +3358,7 @@ function meetingUiTemplate(): string {
             : 'Focus / Full Screen';
           button.setAttribute('aria-pressed', String(document.fullscreenElement === stage || stage.classList.contains('presentation-focused')));
         }
-        const showPlaybackButton = () => {
-          remotePlaybackBlocked = true;
-          updateMediaStatus(state.mediaStatus || 'Receiving media');
-          const playbackButton = document.getElementById('enableRemotePlaybackBtn');
-          if (playbackButton) playbackButton.style.display = 'inline-flex';
-        };
-        if (activePresentation.source === 'remote') startRemotePlayback(video, showPlaybackButton);
+        if (activePresentation.source === 'remote') startRemotePlayback(video);
         else void video.play().catch(() => undefined);
       }
 
@@ -3239,16 +3387,42 @@ function meetingUiTemplate(): string {
         syncPresentationLayout();
       }
 
+      function showRemotePlaybackWarning() {
+        remotePlaybackBlocked = true;
+        updateMediaStatus(state.mediaStatus || 'Receiving media');
+        const playbackButton = document.getElementById('enableRemotePlaybackBtn');
+        if (playbackButton) playbackButton.style.display = 'inline-flex';
+      }
+
+      function clearRemotePlaybackWarningIfResolved() {
+        if (!remotePlaybackBlocked) return;
+        const pending = Array.from(document.querySelectorAll('#videoStage .remote-media, #videoStage .remote-screen-media'))
+          .some((entry) => entry.dataset.playback === 'blocked' || entry.dataset.autoMuted);
+        if (pending) return;
+        remotePlaybackBlocked = false;
+        const playbackButton = document.getElementById('enableRemotePlaybackBtn');
+        if (playbackButton) playbackButton.style.display = 'none';
+        updateMediaStatus(state.mediaStatus || 'Receiving media');
+      }
+
       // Autoplay policies block unmuted playback; video still renders muted until the user enables audio.
-      function startRemotePlayback(element, onBlocked) {
+      function startRemotePlayback(element, _unused, attempt = 0) {
         const markPlaying = () => {
           mediaDiagnostics.lastPlay = 'success';
           element.dataset.playback = element.dataset.autoMuted ? 'muted' : 'playing';
+          if (!element.dataset.autoMuted) remotePlaybackAuthorized = remotePlaybackAuthorized || userInteractedWithMeeting;
+          markMediaTiming('firstMediaPlayback');
           updateRemoteTileDiagnostics();
+          clearRemotePlaybackWarningIfResolved();
         };
         void element.play().then(markPlaying).catch((error) => {
           mediaDiagnostics.lastPlay = 'failure:' + (error && error.name || 'unknown');
-          onBlocked();
+          // AbortError means a newer load interrupted play(); it is not a policy rejection.
+          if (error && error.name === 'AbortError') {
+            if (attempt < 2 && element.isConnected) setTimeout(() => startRemotePlayback(element, undefined, attempt + 1), 150);
+            return;
+          }
+          showRemotePlaybackWarning();
           if (element.tagName !== 'VIDEO' || element.muted) {
             element.dataset.playback = 'blocked';
             updateRemoteTileDiagnostics();
@@ -3262,6 +3436,32 @@ function meetingUiTemplate(): string {
           });
         });
       }
+
+      // A real user gesture is the only time the browser may allow unmuted playback; try it for every remote element.
+      function unlockRemotePlaybackFromGesture() {
+        userInteractedWithMeeting = true;
+        const elements = Array.from(document.querySelectorAll('#videoStage .remote-media, #videoStage .remote-screen-media'));
+        for (const element of elements) {
+          if (!element.dataset.autoMuted && element.dataset.playback !== 'blocked') continue;
+          const wasAutoMuted = Boolean(element.dataset.autoMuted);
+          if (wasAutoMuted) element.muted = false;
+          void element.play().then(() => {
+            delete element.dataset.autoMuted;
+            element.dataset.playback = 'playing';
+            remotePlaybackAuthorized = true;
+            updateRemoteTileDiagnostics();
+            clearRemotePlaybackWarningIfResolved();
+          }).catch(() => {
+            if (wasAutoMuted) element.muted = true;
+          });
+        }
+      }
+      ['pointerdown', 'keydown', 'touchend', 'click'].forEach((type) => {
+        document.addEventListener(type, () => {
+          userInteractedWithMeeting = true;
+          if (remotePlaybackBlocked) unlockRemotePlaybackFromGesture();
+        }, { capture: true, passive: true });
+      });
 
       // Records the first stage at which a remote participant's media is missing, for tests and live debugging.
       function remoteMediaStage(userId) {
@@ -3342,12 +3542,13 @@ function meetingUiTemplate(): string {
           let peer = null;
           try {
             const connectionId = ensureMediaConnectionId();
-            const discoveryResponse = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publications');
+            const discoveryResponse = await mediaFetch('subscriber', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publications');
             const discoveryPayload = await discoveryResponse.json();
             if (!discoveryResponse.ok || !discoveryPayload.ok || !Array.isArray(discoveryPayload.data && discoveryPayload.data.publications)) {
               throw new Error(discoveryPayload.error || 'Unable to discover remote publications.');
             }
             const publications = discoveryPayload.data.publications;
+            markMediaTiming('publicationDiscovered');
             const publicationSet = JSON.stringify(publications.map((publication) => [
               publication.participantId, publication.generation, publication.trackName, publication.mid,
             ]).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
@@ -3360,14 +3561,14 @@ function meetingUiTemplate(): string {
             peer = ensureSubscriberPeerConnection();
             if (!peer) return;
             mutation = beginSubscriberMutation('subscribe', peer);
-            const response = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/subscribe', {
+            const response = await mediaFetch('subscriber', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/subscribe', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ connectionId }),
             });
             const payload = await response.json();
             mutation.httpStatus = response.status;
-            if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to subscribe to media.');
+            if (!response.ok || !payload.ok) throw mediaRequestError(payload, response.status, 'Unable to subscribe to media.');
             const data = payload.data;
             mutation.pendingOperationId = data && data.operationId || '';
             if (data && data.diagnostics) {
@@ -3400,7 +3601,7 @@ function meetingUiTemplate(): string {
             await waitForIceGatheringComplete(peer, { allowPartial: true });
             finishSubscriberMutation(mutation, peer);
             mutation = beginSubscriberMutation('renegotiate', peer, data.operationId);
-            const renegotiated = await fetch('/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/renegotiate', {
+            const renegotiated = await mediaFetch('subscriber', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/renegotiate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -3411,29 +3612,55 @@ function meetingUiTemplate(): string {
             });
             const renegotiatedPayload = await renegotiated.json();
             mutation.httpStatus = renegotiated.status;
-            if (!renegotiated.ok || !renegotiatedPayload.ok) throw new Error(renegotiatedPayload.error || 'Unable to complete media negotiation.');
+            if (!renegotiated.ok || !renegotiatedPayload.ok) throw mediaRequestError(renegotiatedPayload, renegotiated.status, 'Unable to complete media negotiation.');
             finishSubscriberMutation(mutation, peer);
             mutation = null;
-            if (data.tracks.length) await waitForPeerConnectionConnected(peer, 15000, 'Subscriber');
+            markMediaTiming('subscriberNegotiated');
+            if (data.tracks.length) await waitForPeerConnectionConnected(peer, MEDIA_TIMING.peerConnectedWaitMs, 'Subscriber');
             cachePublicationSet();
+            remoteRetryCount = 0;
             if (removed.length) {
               removeRemotePublications(removed);
               void refreshSfuSubscriptions();
             }
-            updateMediaStatus('Receiving media');
+            updateMediaStatus('Media connected');
             updateRemoteTileDiagnostics();
             logMediaDiagnostics('subscriber-negotiated');
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to receive media';
             if (mutation) finishSubscriberMutation(mutation, peer, message);
+            if (error && error.aborted) return;
             mediaDiagnostics.lastError = message;
-            updateMediaStatus(message);
             logMediaDiagnostics('subscriber-error ' + message);
             // A 406 means the upstream session may be mid-exchange; the outcome is unknown, so replace the session instead of retrying.
             const unrecoverableNegotiation = Boolean(error && error.name === 'IceGatheringTimeout') ||
               /ICE candidate gathering timed out/i.test(message) ||
-              /no longer current|Subscriber media connection|HTTP status: 406/.test(message);
-            if (isStaleSfuSessionError(error) || unrecoverableNegotiation) void requestMediaRecovery('subscriber', message);
+              /no longer current|Subscriber media connection|HTTP status: 406|Media request timed out/.test(message);
+            const noTracksAccepted = /did not accept any remote tracks/i.test(message);
+            if (isStaleSfuSessionError(error) || unrecoverableNegotiation) {
+              updateMediaStatus(RECONNECTING_STATUS);
+              void requestMediaRecovery('subscriber', message);
+            } else if (noTracksAccepted && remoteRetryCount < MEDIA_TIMING.remoteRetryBackoffMs.length) {
+              // The media server rejected stale track locators: re-discover current publications before trying again.
+              const delay = MEDIA_TIMING.remoteRetryBackoffMs[remoteRetryCount];
+              remoteRetryCount += 1;
+              updateMediaStatus(RECONNECTING_STATUS);
+              if (remoteRetryTimer) clearTimeout(remoteRetryTimer);
+              remoteRetryTimer = setTimeout(() => {
+                remoteRetryTimer = null;
+                lastSubscriberPublicationSet = null;
+                void refreshSfuSubscriptions();
+              }, delay);
+            } else if (noTracksAccepted && remoteRetryCount === MEDIA_TIMING.remoteRetryBackoffMs.length) {
+              // Re-discovery did not help; replace the subscriber session once. A further failure is terminal.
+              remoteRetryCount += 1;
+              updateMediaStatus(RECONNECTING_STATUS);
+              void requestMediaRecovery('subscriber', message);
+            } else if (noTracksAccepted) {
+              updateMediaStatus('subscriber media could not connect. Check your network connection and rejoin the meeting.');
+            } else {
+              updateMediaStatus(message);
+            }
           }
         });
         return queuedSubscriberRefresh;
@@ -3448,6 +3675,13 @@ function meetingUiTemplate(): string {
         clearMediaDisconnectTimer('subscriber');
         clearMediaRecoveryResetTimer('publisher');
         clearMediaRecoveryResetTimer('subscriber');
+        for (const timer of recoveryRetryTimers.values()) clearTimeout(timer);
+        recoveryRetryTimers.clear();
+        if (remoteRetryTimer) clearTimeout(remoteRetryTimer);
+        remoteRetryTimer = null;
+        remoteRetryCount = 0;
+        abortInFlightMedia('publisher');
+        abortInFlightMedia('subscriber');
         const closeRequest = connectionId && meetingId
           ? fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/media/close', {
               method: 'POST',
@@ -3965,7 +4199,7 @@ function meetingUiTemplate(): string {
         meetingRefreshTimer = setTimeout(async () => {
           await refreshMeetingState();
           scheduleMeetingRefresh();
-        }, 3000);
+        }, Date.now() < fastPollUntil ? MEDIA_TIMING.meetingPollFastMs : MEDIA_TIMING.meetingPollMs);
       }
 
       async function runHostAction(path, body) {
@@ -4385,6 +4619,14 @@ function meetingUiTemplate(): string {
             actions[device.name] = 'reused';
             continue;
           }
+          if (tracks.some((track) => track.readyState === 'live')) {
+            // Mobile browsers often unmute a live track within a moment of resuming; avoid a needless re-capture.
+            await new Promise((resolve) => setTimeout(resolve, MEDIA_TIMING.unmuteGraceMs));
+            if (device.getTracks(localMediaState[device.stream]).some((track) => track.readyState === 'live' && track.muted !== true)) {
+              actions[device.name] = 'reused';
+              continue;
+            }
+          }
           actions[device.name] = 'reacquired';
           if (stream) Object.assign(localMediaState, stopLocalMediaStream(localMediaState, device.device));
           await device.capture();
@@ -4416,9 +4658,32 @@ function meetingUiTemplate(): string {
         });
       }
 
+      function handleMediaResume(trigger) {
+        if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId || isSimulatedMeeting()) return Promise.resolve(false);
+        const unprocessed = Boolean(lastBackgroundAt) && lastProcessedBackgroundAt !== lastBackgroundAt;
+        if (unprocessed) beginMediaTimingEpoch('resumeDetected', trigger);
+        const hiddenFor = hiddenSinceMs ? Date.now() - hiddenSinceMs : 0;
+        hiddenSinceMs = 0;
+        const subscriberState = subscriberPeerConnection ? (subscriberPeerConnection.connectionState || subscriberPeerConnection.iceConnectionState) : '';
+        const subscriberUnhealthy = Boolean(subscriberPeerConnection) && ['failed', 'closed', 'disconnected'].includes(subscriberState);
+        if (subscriberUnhealthy || (unprocessed && subscriberPeerConnection && hiddenFor >= MEDIA_TIMING.hiddenSubscriberRebuildMs)) {
+          void requestMediaRecovery('subscriber', 'page resumed with unhealthy subscriber');
+        } else if (unprocessed) {
+          lastSubscriberPublicationSet = null;
+          void refreshSfuSubscriptions();
+        }
+        const publisherState = publisherPeerConnection ? (publisherPeerConnection.connectionState || publisherPeerConnection.iceConnectionState) : '';
+        if (!unprocessed && ['failed', 'closed'].includes(publisherState) && !publisherRecoveryPending) {
+          void requestMediaRecovery('publisher', 'publisher unhealthy on resume', { republishAfterRecovery: true });
+          return Promise.resolve(false);
+        }
+        return recoverPublisherAfterResume(trigger);
+      }
+
       function recordBackgroundTransition() {
         if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return;
         lastBackgroundAt = new Date().toISOString();
+        hiddenSinceMs = hiddenSinceMs || Date.now();
         resumeTrackStates = resumeTrackStateSnapshot();
       }
 
@@ -4426,15 +4691,15 @@ function meetingUiTemplate(): string {
         if (document.visibilityState === 'hidden') {
           recordBackgroundTransition();
         } else if (document.visibilityState === 'visible') {
-          void recoverPublisherAfterResume('visibilitychange');
+          void handleMediaResume('visibilitychange');
         }
       });
       window.addEventListener('pageshow', (event) => {
         if (event.persisted && !lastBackgroundAt) recordBackgroundTransition();
-        if (document.visibilityState === 'visible') void recoverPublisherAfterResume('pageshow');
+        if (document.visibilityState === 'visible') void handleMediaResume('pageshow');
       });
       window.addEventListener('focus', () => {
-        if (document.visibilityState === 'visible') void recoverPublisherAfterResume('focus');
+        if (document.visibilityState === 'visible') void handleMediaResume('focus');
       });
       window.addEventListener('offline', () => {
         if (state.route === 'meeting') {
@@ -4444,7 +4709,7 @@ function meetingUiTemplate(): string {
       });
       window.addEventListener('online', () => {
         if (state.route === 'meeting' && !lastBackgroundAt && lastOfflineAt) lastBackgroundAt = lastOfflineAt;
-        if (document.visibilityState === 'visible') void recoverPublisherAfterResume('online');
+        if (document.visibilityState === 'visible') void handleMediaResume('online');
       });
 
       function syncMeetingRoleUi() {

@@ -2119,7 +2119,7 @@ describe("BillionTalks browser UI regression tests", () => {
       return createResponse({ ok: true, data: null });
     });
 
-    const browserWindow = document.defaultView as Window & typeof globalThis;
+    const browserWindow = document.defaultView as any;
     Object.defineProperty(browserWindow, "fetch", { value: fetchWithAdmission, configurable: true });
     Object.defineProperty(globalThis, "fetch", { value: fetchWithAdmission, configurable: true });
 
@@ -2180,7 +2180,7 @@ describe("BillionTalks browser UI regression tests", () => {
       return createResponse({ ok: true, data: null });
     });
 
-    const browserWindow = document.defaultView as Window & typeof globalThis;
+    const browserWindow = document.defaultView as any;
     Object.defineProperty(browserWindow, "fetch", { value: fetchWithCreatorHost, configurable: true });
     Object.defineProperty(globalThis, "fetch", { value: fetchWithCreatorHost, configurable: true });
 
@@ -2265,7 +2265,7 @@ describe("BillionTalks browser UI regression tests", () => {
       return createResponse({ ok: true, data: null });
     });
 
-    const browserWindow = document.defaultView as Window & typeof globalThis;
+    const browserWindow = document.defaultView as any;
     Object.defineProperty(browserWindow, "fetch", { value: fetchWithAdmission, configurable: true });
     Object.defineProperty(globalThis, "fetch", { value: fetchWithAdmission, configurable: true });
 
@@ -3194,5 +3194,258 @@ describe("BT-V0-018 production media stabilization", () => {
       expect(document.getElementById("participantList")?.textContent).not.toContain("Ava");
       expect(document.getElementById("participantList")?.textContent).toContain("Host");
     });
+  });
+});
+
+describe("BT-V0-027 recovery latency and playback hardening", () => {
+  const remoteCameraPayload = (operationId: string) => ({
+    ok: true,
+    data: {
+      operationId,
+      sessionDescription: { type: "offer", sdp: operationId },
+      tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "remote-camera" }],
+    },
+  });
+  const urlOf = (input: RequestInfo | URL) => (typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+  const recoverCalls = (fetchMock: ReturnType<typeof vi.fn>, direction: string) => fetchMock.mock.calls.filter(([url, init]) =>
+    String(url).endsWith("/media/recover") && init?.method === "POST" && JSON.parse(String(init.body)).direction === direction);
+  const setVisibility = (window: any, document: Document, value: "hidden" | "visible") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+  };
+  const subscriberPeers = () => FakePeerConnection.instances.filter((peer) => Boolean(peer.ontrack));
+
+  it("recovers immediately on a known 410 and shows reconnecting instead of the raw error", async () => {
+    const { window, document, fetchMock, setNextSubscribePayload, setNextSubscribeError, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    setNextSubscribeError("Cloudflare Realtime request failed. HTTP status: 410.");
+    setNextSubscribePayload(remoteCameraPayload("fresh-after-410"));
+    await joinHostMeeting(document, "Immediate 410");
+    const started = Date.now();
+    await flush();
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(recoverCalls(fetchMock, "subscriber")).toHaveLength(1);
+    expect(document.getElementById("mediaStatus")?.textContent).not.toContain("HTTP status: 410");
+    expect((window as any).btMediaDiagnostics().mediaTimings.recoveryStarted).toBeGreaterThan(0);
+  });
+
+  it("validates subscriber health immediately when the page becomes visible", async () => {
+    const { window, document, fetchMock, setNextSubscribePayload, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    setNextSubscribePayload(remoteCameraPayload("resume-initial"));
+    await joinHostMeeting(document, "Resume health check");
+    expect(recoverCalls(fetchMock, "subscriber")).toHaveLength(0);
+    setVisibility(window, document, "hidden");
+    subscriberPeers().at(-1)!.setConnectionStates("failed", "failed");
+    setNextSubscribePayload(remoteCameraPayload("resume-recovered"));
+    setVisibility(window, document, "visible");
+    await flush();
+    expect(recoverCalls(fetchMock, "subscriber")).toHaveLength(1);
+    expect((window as any).btMediaDiagnostics().mediaTimings).toMatchObject({ trigger: "visibilitychange" });
+    expect((window as any).btMediaDiagnostics().mediaTimings.resumeDetected).toBeGreaterThan(0);
+  });
+
+  it("rediscovers publications right after publisher-ready without waiting for the poll", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Rediscovery after ready");
+    setVisibility(window, document, "hidden");
+    setVisibility(window, document, "visible");
+    await flush();
+    const calls = fetchMock.mock.calls.map(([url]) => String(url));
+    const lastReady = calls.lastIndexOf(calls.filter((url) => url.endsWith("/media/publish/ready")).at(-1)!);
+    expect(calls.slice(lastReady + 1).some((url) => url.endsWith("/media/publications"))).toBe(true);
+    const timings = (window as any).btMediaDiagnostics().mediaTimings;
+    expect(timings.publisherReady).toBeGreaterThanOrEqual(timings.recoveryStarted);
+    expect(timings.publicationDiscovered).toBeGreaterThan(0);
+  });
+
+  describe("playback", () => {
+    async function joinWithRemoteAudio(playImpl: (element: HTMLMediaElement, window: any) => Promise<void>) {
+      const page = await loadRenderedPage();
+      const { window, document, setNextSubscribePayload, setIncludeRemoteParticipant } = page;
+      Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+      Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+      FakePeerConnection.initialRemoteTrackKind = "audio";
+      setIncludeRemoteParticipant();
+      setNextSubscribePayload({
+        ok: true,
+        data: {
+          operationId: "playback-op",
+          sessionDescription: { type: "offer", sdp: "playback-offer" },
+          tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "microphone", publicationKey: "remote-microphone" }],
+        },
+      });
+      const playMock = vi.fn(function (this: HTMLMediaElement) {
+        return playImpl(this, window);
+      });
+      Object.defineProperty(window.HTMLMediaElement.prototype, "play", { value: playMock, configurable: true });
+      await joinHostMeeting(document, "Playback hardening");
+      return { ...page, playMock };
+    }
+    const button = (document: Document) => document.getElementById("enableRemotePlaybackBtn") as HTMLButtonElement;
+
+    it("does not show the playback warning for an AbortError", async () => {
+      let first = true;
+      const { document } = await joinWithRemoteAudio(async (element, window) => {
+        if (element.classList.contains("remote-media") && first) {
+          first = false;
+          throw new window.DOMException("interrupted by a new load", "AbortError");
+        }
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(button(document).style.display).not.toBe("inline-flex");
+      expect(document.getElementById("mediaStatus")?.textContent).not.toContain("user interaction");
+    });
+
+    it("shows the warning only after a real rejection and clears it on a later user gesture", async () => {
+      let blocked = true;
+      const { window, document } = await joinWithRemoteAudio(async (element, win) => {
+        if (element.classList.contains("remote-media") && blocked) throw new win.DOMException("needs gesture", "NotAllowedError");
+      });
+      expect(button(document).style.display).toBe("inline-flex");
+      blocked = false;
+      document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+      await flush();
+      expect(button(document).style.display).toBe("none");
+      expect(document.getElementById("mediaStatus")?.textContent).not.toContain("user interaction");
+      expect((window as any).btMediaDiagnostics().remotePlaybackAuthorized).toBe(true);
+    });
+
+    it("keeps unlocked playback across subscriber replacement without re-warning", async () => {
+      const { window, document, fetchMock, setNextSubscribePayload } = await joinWithRemoteAudio(async () => undefined);
+      document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+      await flush();
+      const original = subscriberPeers().at(-1)!;
+      setNextSubscribePayload({
+        ok: true,
+        data: {
+          operationId: "playback-op-2",
+          sessionDescription: { type: "offer", sdp: "playback-offer-2" },
+          tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "microphone", publicationKey: "remote-microphone" }],
+        },
+      });
+      original.setConnectionStates("failed", "failed");
+      original.onconnectionstatechange?.();
+      await flush();
+      await flush();
+      expect(recoverCalls(fetchMock, "subscriber")).toHaveLength(1);
+      expect(button(document).style.display).not.toBe("inline-flex");
+      expect(document.querySelectorAll('#videoStage .tile[data-user-id="remote-user"] audio.remote-media')).toHaveLength(1);
+    });
+  });
+
+  describe("remote tracks not accepted by Cloudflare", () => {
+    const NOT_ACCEPTED = "Cloudflare Realtime did not accept any remote tracks.";
+
+    async function setup(failures: number) {
+      const page = await loadRenderedPage();
+      const { window, document, fetchMock, setNextSubscribePayload, setIncludeRemoteParticipant } = page;
+      Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+      Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+      setIncludeRemoteParticipant();
+      setNextSubscribePayload(remoteCameraPayload("not-accepted-op"));
+      const original = fetchMock.getMockImplementation()!;
+      const events: string[] = [];
+      let generation = 0;
+      let remainingFailures = failures;
+      fetchMock.mockImplementation(async (input, init) => {
+        const url = urlOf(input);
+        if (url.endsWith("/media/publications")) {
+          generation += 1;
+          events.push("publications:" + generation);
+          return createResponse({ ok: true, data: { publications: [{ participantId: "remote-participant", generation, trackName: "camera", mid: "0" }] } });
+        }
+        if (url.endsWith("/media/subscribe") && init?.method === "POST") {
+          events.push("subscribe:" + generation);
+          if (remainingFailures > 0) {
+            remainingFailures -= 1;
+            return createResponse({ ok: false, error: NOT_ACCEPTED }, false, 502);
+          }
+        }
+        if (url.endsWith("/media/recover")) events.push("recover");
+        return original(input, init);
+      });
+      await joinHostMeeting(document, "Tracks not accepted");
+      return { ...page, events };
+    }
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const status = (document: Document) => document.getElementById("mediaStatus")?.textContent ?? "";
+
+    it("rediscovers current publications before each bounded retry and recovers without a terminal message", async () => {
+      const { window, document, fetchMock, events } = await setup(2);
+      const peersBefore = subscriberPeers().length;
+      const seen: string[] = [];
+      const observer = new window.MutationObserver(() => seen.push(status(document)));
+      observer.observe(document.getElementById("mediaStatus")!, { childList: true, characterData: true, subtree: true });
+      await wait(2200);
+      observer.disconnect();
+
+      const subscribeIndexes = events.map((event, index) => (event.startsWith("subscribe:") ? index : -1)).filter((index) => index >= 0);
+      expect(subscribeIndexes.length).toBe(3);
+      // Every subscribe retry is preceded by a fresh discovery whose generation matches the subscribe attempt.
+      for (const index of subscribeIndexes) {
+        expect(events[index - 1]).toMatch(/^publications:/);
+        expect(events[index]!.split(":")[1]).toBe(events[index - 1]!.split(":")[1]);
+      }
+      const generations = subscribeIndexes.map((index) => Number(events[index]!.split(":")[1]));
+      expect(new Set(generations).size).toBe(3);
+      expect(recoverCalls(fetchMock, "subscriber")).toHaveLength(0);
+      expect(events).not.toContain("recover");
+      expect(subscriberPeers().length).toBe(peersBefore);
+      expect(seen.some((text) => text.includes("did not accept") || text.includes("rejoin"))).toBe(false);
+      expect(status(document)).not.toContain("rejoin");
+      expect(document.querySelector('#videoStage .tile[data-user-id="remote-user"] video.remote-media')).not.toBeNull();
+    });
+
+    it("replaces the subscriber session once after bounded retries and only then reports terminal failure", async () => {
+      const { document, fetchMock, events } = await setup(100);
+      const peersBefore = subscriberPeers().length;
+      await wait(700);
+      expect(status(document)).toContain("Reconnecting media");
+      expect(status(document)).not.toContain("rejoin");
+      await wait(2500);
+
+      const subscribeCount = events.filter((event) => event.startsWith("subscribe:")).length;
+      expect(recoverCalls(fetchMock, "subscriber")).toHaveLength(1);
+      const recoverIndex = events.indexOf("recover");
+      expect(events.slice(0, recoverIndex).filter((event) => event.startsWith("subscribe:")).length).toBeGreaterThanOrEqual(3);
+      expect(events.slice(0, recoverIndex).filter((event) => event.startsWith("subscribe:")).length).toBeLessThanOrEqual(5);
+      expect(subscribeCount).toBeGreaterThan(3);
+      expect(subscriberPeers().length).toBeGreaterThan(peersBefore);
+      expect(status(document)).toContain("subscriber media could not connect");
+      // Ordinary meeting polls may keep probing, but the session is never replaced again.
+      await wait(2500);
+      expect(recoverCalls(fetchMock, "subscriber")).toHaveLength(1);
+      expect(status(document)).toContain("subscriber media could not connect");
+    }, 15000);
+  });
+
+  it("never exposes the low-level prerequisite error during automatic recovery and stays bounded", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Transient message");
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (urlOf(input).endsWith("/media/publish")) {
+        return createResponse({ ok: false, error: "A media connection, offer, and valid local tracks are required." }, false, 400);
+      }
+      return original(input, init);
+    });
+    const seen: string[] = [];
+    const observer = new window.MutationObserver(() => seen.push(document.getElementById("mediaStatus")?.textContent ?? ""));
+    observer.observe(document.getElementById("mediaStatus")!, { childList: true, characterData: true, subtree: true });
+    const publisher = FakePeerConnection.instances.find((peer) => peer.getTransceivers().some((entry) => entry.direction === "sendonly"))!;
+    publisher.setConnectionStates("failed", "failed");
+    publisher.onconnectionstatechange?.();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    observer.disconnect();
+    expect(seen.some((text) => text.includes("valid local tracks are required"))).toBe(false);
+    expect(seen.some((text) => text.includes("Reconnecting media"))).toBe(true);
+    expect(recoverCalls(fetchMock, "publisher").length).toBeLessThanOrEqual(3);
   });
 });
