@@ -6003,6 +6003,14 @@ function meetingUiTemplate(): string {
 const routeHandler = {
   async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
     const url = new URL(request.url);
+    // Reject cross-origin browser writes to account endpoints, including authenticated cookie actions.
+    if (url.pathname.startsWith("/api/accounts/") && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+      const origin = request.headers.get("Origin");
+      const fetchSite = request.headers.get("Sec-Fetch-Site");
+      if ((origin && origin !== url.origin) || fetchSite === "cross-site") {
+        return Response.json({ ok: false, error: "Cross-origin account updates are not permitted." }, { status: 403, headers: { "Cache-Control": "no-store" } });
+      }
+    }
 
     if (request.method === "POST" && url.pathname === "/api/accounts/register") {
       return handleAccountRegistration(request, env.ACCOUNT_DB, createAccountEmailSender(env));
