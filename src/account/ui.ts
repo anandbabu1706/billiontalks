@@ -23,7 +23,7 @@ small{color:#9ab0cc}a.back{display:inline-block;margin-top:18px}.password{displa
 <form id="register"><label>Full name<input name="fullName" autocomplete="name" maxlength="200" required></label>
 <label>Email<input name="email" type="email" autocomplete="email" required></label>
 <label>Country (ISO two-letter code)<input name="country" autocomplete="country" minlength="2" maxlength="2" placeholder="IN" pattern="[A-Za-z]{2}" required></label>
-<label>Mobile number (E.164)<input name="mobileNumber" autocomplete="tel" placeholder="+919876543210" pattern="\\+[1-9][0-9]{1,14}" required></label>
+<label>Mobile number (E.164)<input name="mobileNumber" autocomplete="tel" placeholder="+919876543210" pattern="[+][1-9][0-9]{1,14}" required></label>
 <label>Password (8 characters minimum)<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
 <label>Confirm password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required></label>
 <div class="toggle"><input id="terms" name="acceptedTerms" type="checkbox" required><label for="terms">I agree to the Terms of Service and Privacy Policy.</label></div>
