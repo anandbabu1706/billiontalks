@@ -18,6 +18,8 @@ function createResponse(payload: unknown, ok = true, status = 200) {
   };
 }
 
+const recordingFailurePath = /\/recording\/[^/]+\/fail$/;
+
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   static initialRemoteTrackKind: "audio" | "video" = "video";
@@ -421,7 +423,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
       });
     }
 
-    if (url.endsWith("/recording/fail")) {
+    if (recordingFailurePath.test(url)) {
       const body = JSON.parse(String(init?.body ?? "{}"));
       return createResponse({
         ok: true,
@@ -889,7 +891,7 @@ describe("BillionTalks browser UI regression tests", () => {
 
     expect(page.recordingOutputTracks[0].stop).toHaveBeenCalledTimes(1);
     expect(FakeAudioContext.instances.at(-1)?.state).toBe("closed");
-    expect(page.fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/recording/rec-test-1/fail") && init?.method === "POST")).toBe(true);
+    expect(page.fetchMock.mock.calls.some(([input, init]) => recordingFailurePath.test(String(input)) && init?.method === "POST")).toBe(true);
     expect(page.micStreams[0].getAudioTracks()[0].stop).not.toHaveBeenCalled();
   });
 
@@ -907,7 +909,7 @@ describe("BillionTalks browser UI regression tests", () => {
 
     expect(page.recordingOutputTracks[0].stop).toHaveBeenCalledTimes(1);
     expect(FakeAudioContext.instances.at(-1)?.state).toBe("closed");
-    expect(page.fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/recording/rec-test-1/fail") && init?.method === "POST")).toBe(true);
+    expect(page.fetchMock.mock.calls.some(([input, init]) => recordingFailurePath.test(String(input)) && init?.method === "POST")).toBe(true);
     expect(page.micStreams[0].getAudioTracks()[0].stop).not.toHaveBeenCalled();
   });
 
@@ -934,12 +936,13 @@ describe("BillionTalks browser UI regression tests", () => {
       page.micStreams[0].getAudioTracks = () => [replacementTrack];
       await new Promise((resolve) => setTimeout(resolve, 350));
 
-      expect(page.fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/recording/rec-test-1/fail") && init?.method === "POST")).toBe(true);
+      const failureCalls = page.fetchMock.mock.calls.filter(([input, init]) => recordingFailurePath.test(String(input)) && init?.method === "POST");
+      expect(failureCalls).toHaveLength(1);
+      expect(JSON.parse(String(failureCalls[0][1]?.body ?? "{}"))).toMatchObject({ failureCode: "CAPTURE_FAILED" });
       expect(page.recordingOutputTracks[0].stop).toHaveBeenCalledTimes(1);
       expect(initialMicTrack.stop).not.toHaveBeenCalled();
-      const failCalls = page.fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/recording/fail"));
       await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(page.fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/recording/fail"))).toHaveLength(failCalls.length);
+      expect(page.fetchMock.mock.calls.filter(([input, init]) => recordingFailurePath.test(String(input)) && init?.method === "POST")).toHaveLength(1);
     });
   }
 
