@@ -1592,6 +1592,46 @@ describe("MeetingService lifecycle", () => {
     }
   });
 
+  it("resubscribes a republished camera when the subscriber never polled between OFF and ON", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const sfu = createSfuFetchMock();
+    vi.stubGlobal("fetch", sfu.fetcher);
+    try {
+      const connectionId = "participant-camera-quick-toggle";
+      const hostConnection = "host-camera-quick-toggle";
+      const publish = async (mid: string) => {
+        expect((await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", participant.cookie, {
+          connectionId, sessionDescription: { type: "offer", sdp: `camera-offer-${mid}` }, tracks: [{ trackName: "camera", mid }],
+        })).status).toBe(200);
+        expect((await api.request(`/api/meetings/${meeting.id}/media/publish/ready`, "POST", participant.cookie, { connectionId, trackNames: ["camera"] })).status).toBe(200);
+      };
+      const subscribe = async () => (await (await api.request(`/api/meetings/${meeting.id}/media/subscribe`, "POST", host.cookie, { connectionId: hostConnection })).json()).data;
+      const answer = async (operationId: string) => expect((await api.request(`/api/meetings/${meeting.id}/media/renegotiate`, "POST", host.cookie, {
+        connectionId: hostConnection, operationId, sessionDescription: { type: "answer", sdp: "host-answer" },
+      })).status).toBe(200);
+
+      await publish("0");
+      const first = await subscribe();
+      expect(first.tracks).toHaveLength(1);
+      await answer(first.operationId);
+
+      expect((await api.request(`/api/meetings/${meeting.id}/media/tracks/close`, "POST", participant.cookie, { connectionId, trackNames: ["camera"] })).status).toBe(200);
+      await publish("1");
+
+      // The publication key must change with the new mid, otherwise the host stays bound to the dead camera track.
+      const afterToggle = await subscribe();
+      expect(afterToggle.removed.map((track: { mid: string }) => track.mid)).toEqual(["remote-0"]);
+      const publications = (await (await api.request(`/api/meetings/${meeting.id}/media/publications`, "GET", host.cookie)).json()).data.publications;
+      expect(publications).toEqual([expect.objectContaining({ trackName: "camera", mid: "1" })]);
+      let current = afterToggle;
+      if (current.operationId) await answer(current.operationId);
+      if (!current.tracks.length) current = await subscribe();
+      expect(current.tracks).toEqual([expect.objectContaining({ publisherUserId: participant.userId, trackName: "camera" })]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("negotiates screen-share start/stop/restart on one subscriber session without forced closes or touching mic/camera", async () => {
     const { api, host, participant, meeting } = await createJoinedChatRoom();
     const sfu = createSfuFetchMock();

@@ -3867,3 +3867,205 @@ describe("BT-V0-029 meeting duration timer", () => {
     expect(timerText(document)).toBe(frozen);
   }, 15000);
 });
+describe("BT-V0-030 startup budget and camera OFF/ON", () => {
+  const urlOf = (input: RequestInfo | URL) => (typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+  const callsTo = (fetchMock: ReturnType<typeof vi.fn>, suffix: string) => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(suffix) && init?.method === "POST");
+  const publisherPeer = () => FakePeerConnection.instances.find((peer) => peer.getTransceivers().some((entry) => entry.direction === "sendonly"))!;
+  const remoteCamera = (operationId: string) => ({
+    ok: true,
+    data: {
+      operationId,
+      sessionDescription: { type: "offer", sdp: operationId },
+      tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote", trackName: "camera", publicationKey: "remote-camera" }],
+    },
+  });
+  const driveVideoStats = (peer: any, flowing: { video: boolean }) => {
+    let audio = 100;
+    let video = 1000;
+    peer.getStats = async () => {
+      audio += 50;
+      if (flowing.video) video += 500;
+      return new Map<string, any>([
+        ["a", { type: "outbound-rtp", kind: "audio", bytesSent: audio }],
+        ["v", { type: "outbound-rtp", kind: "video", bytesSent: video, framesEncoded: video / 100 }],
+      ]);
+    };
+  };
+  async function join(role: "host" | "guest", options: { budgetMs?: number } = {}) {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    (page.window as any).btResumeRtpProbeMs = 5;
+    if (options.budgetMs !== undefined) (page.window as any).btStartupBudgetMs = options.budgetMs;
+    page.setIncludeRemoteParticipant();
+    page.setNextSubscribePayload(remoteCamera("initial"));
+    if (role === "host") {
+      await joinHostMeeting(page.document, "Camera toggle");
+    } else {
+      (page.document.getElementById("meetingIdInput") as HTMLInputElement).value = "btm_test_123";
+      page.document.getElementById("resolveMeetingButton")?.click();
+      await flush();
+      (page.document.getElementById("displayNameInput") as HTMLInputElement).value = "Guest Gina";
+      page.document.getElementById("joinNowButton")?.click();
+      await flush();
+    }
+    await flush();
+    await flush();
+    return page;
+  }
+
+  it("normal startup completes its transaction without any recovery and exposes every diagnostic field", async () => {
+    const { window, fetchMock } = await join("guest");
+    const transaction = (window as any).btMediaDiagnostics().startupTransaction;
+    expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+    expect(transaction).toMatchObject({
+      attempts: 0, completed: true, exhausted: false, publishStatus: 200, serverPublisherSessionPresent: true,
+    });
+    expect(transaction.publisherGeneration).toBeGreaterThan(0);
+    expect(transaction.publishReadyStatus).toBe(200);
+    expect(transaction.discoveredPublications).toBeGreaterThanOrEqual(1);
+    expect(transaction.subscriberGeneration).toBeGreaterThanOrEqual(1);
+    expect(transaction.firstRemoteTrackAt).toBeGreaterThan(0);
+    expect(transaction.elapsedMs).toBeLessThan(2000);
+  });
+
+  it("stops hidden retries once the shared startup budget is spent and records one terminal diagnostic", async () => {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    (page.window as any).btStartupBudgetMs = -1;
+    const original = page.fetchMock.getMockImplementation()!;
+    page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (urlOf(input).endsWith("/media/publish") && init?.method === "POST") {
+        return createResponse({ ok: false, error: "Cloudflare Realtime request failed. HTTP status: 410. errorCode: session_error.", upstreamStatus: 410, errorCode: "session_error" }, false, 410);
+      }
+      return original(input, init);
+    });
+    const warn = vi.spyOn(page.window.console, "warn");
+    await joinHostMeeting(page.document, "Budget spent");
+    for (let attempt = 0; attempt < 12; attempt += 1) await flush();
+    const transaction = (page.window as any).btMediaDiagnostics().startupTransaction;
+    expect(transaction.exhausted).toBe(true);
+    expect(transaction.completed).toBe(false);
+    expect(callsTo(page.fetchMock, "/media/recover")).toHaveLength(0);
+    expect(callsTo(page.fetchMock, "/media/publish").length).toBeLessThanOrEqual(3);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("startup] budget exhausted"))).toHaveLength(1);
+    expect(page.document.getElementById("mediaStatus")?.textContent).not.toMatch(/Cloudflare|session_error/);
+  });
+
+  it("still recovers within the budget when a startup publish hits a dead session", async () => {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const original = page.fetchMock.getMockImplementation()!;
+    let failed = false;
+    page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!failed && urlOf(input).endsWith("/media/publish") && init?.method === "POST") {
+        failed = true;
+        return createResponse({ ok: false, error: "HTTP status: 410. errorCode: session_error.", upstreamStatus: 410, errorCode: "session_error" }, false, 410);
+      }
+      return original(input, init);
+    });
+    await joinHostMeeting(page.document, "Budget ok");
+    for (let attempt = 0; attempt < 12; attempt += 1) await flush();
+    const transaction = (page.window as any).btMediaDiagnostics().startupTransaction;
+    expect(callsTo(page.fetchMock, "/media/recover").length).toBeGreaterThanOrEqual(1);
+    expect(transaction.exhausted).toBe(false);
+    expect(transaction.attempts).toBeGreaterThanOrEqual(1);
+    expect(transaction.attempts).toBeLessThanOrEqual(3);
+  });
+
+  for (const role of ["host", "guest"] as const) {
+    it(`${role}: camera OFF keeps audio untouched and camera ON restores a fresh live track without rebuilding sessions`, async () => {
+      const { document, fetchMock, micStreams, cameraStreams, getUserMediaMock, window } = await join(role);
+      const micTrack: any = micStreams[0].getAudioTracks()[0];
+      const oldCamera: any = cameraStreams[0].getVideoTracks()[0];
+      const publisher = publisherPeer();
+      const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+      const micTransceiver = publisher.getTransceivers().find((entry) => entry.sender.track === micTrack)!;
+      const oldCameraTransceiver = publisher.getTransceivers().find((entry) => entry.sender.track === oldCamera)!;
+      driveVideoStats(publisher, { video: true });
+      const peersBefore = FakePeerConnection.instances.length;
+      const recoversBefore = callsTo(fetchMock, "/media/recover").length;
+      const camera = document.getElementById("cameraControlBtn") as HTMLButtonElement;
+
+      camera.click();
+      await flush();
+      await flush();
+      expect(oldCamera.stop).toHaveBeenCalled();
+      expect(oldCameraTransceiver.stop).toHaveBeenCalled();
+      expect(micTrack.stop).not.toHaveBeenCalled();
+      expect(micTrack.enabled).not.toBe(false);
+      expect(micTransceiver.stop).not.toHaveBeenCalled();
+      const closes = callsTo(fetchMock, "/media/tracks/close");
+      expect(closes).toHaveLength(1);
+      expect(JSON.parse(String(closes[0][1]?.body)).trackNames).toEqual(["camera"]);
+
+      const publishesBefore = callsTo(fetchMock, "/media/publish").length;
+      camera.click();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      await flush();
+      expect(getUserMediaMock).toHaveBeenCalledTimes(3);
+      const newCamera: any = cameraStreams[1].getVideoTracks()[0];
+      expect(newCamera).not.toBe(oldCamera);
+      expect(newCamera.readyState).toBe("live");
+      const publishes = callsTo(fetchMock, "/media/publish");
+      expect(publishes).toHaveLength(publishesBefore + 1);
+      expect(JSON.parse(String(publishes.at(-1)![1]?.body)).tracks.map((track: any) => track.trackName)).toEqual(["camera"]);
+      const newTransceiver = publisher.getTransceivers().find((entry) => entry.sender.track === newCamera)!;
+      expect(newTransceiver).toBeDefined();
+      expect(newTransceiver).not.toBe(oldCameraTransceiver);
+      expect(callsTo(fetchMock, "/media/publish/ready").at(-1) && JSON.parse(String(callsTo(fetchMock, "/media/publish/ready").at(-1)![1]?.body)).trackNames).toEqual(["camera"]);
+      expect(micTrack.stop).not.toHaveBeenCalled();
+      expect(micTransceiver.stop).not.toHaveBeenCalled();
+
+      expect(callsTo(fetchMock, "/media/recover").length).toBe(recoversBefore);
+      expect(FakePeerConnection.instances.length).toBe(peersBefore);
+      expect(publisherPeer()).toBe(publisher);
+      expect(FakePeerConnection.instances.find((peer) => peer.ontrack)).toBe(subscriber);
+      expect((window as any).btMediaDiagnostics().videoHealth.classification).toBe("healthy");
+      expect(newTransceiver.sender.replaceTrack).not.toHaveBeenCalled();
+    });
+
+    it(`${role}: camera ON verifies video RTP and repairs the new sender with replaceTrack when frames stay flat`, async () => {
+      const { document, cameraStreams, window } = await join(role);
+      const publisher = publisherPeer();
+      driveVideoStats(publisher, { video: false });
+      const camera = document.getElementById("cameraControlBtn") as HTMLButtonElement;
+      camera.click();
+      await flush();
+      await flush();
+      camera.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      await flush();
+      const newCamera: any = cameraStreams[1].getVideoTracks()[0];
+      const newTransceiver = publisher.getTransceivers().find((entry) => entry.sender.track === newCamera)!;
+      expect(newTransceiver.sender.replaceTrack).toHaveBeenCalledWith(newCamera);
+      expect((window as any).btMediaDiagnostics().videoHealth.actions).toContain("camera-replace-track");
+    });
+
+    it(`${role}: a re-published camera replaces the stale remote stream track and never leaves the element on an ended track`, async () => {
+      const { document, fetchMock, queueSubscribePayload, window } = await join(role);
+      const remoteVideo = () => document.querySelector("#videoStage video.remote-media") as HTMLVideoElement;
+      const firstSource: any = remoteVideo().srcObject;
+      const staleTrack: any = firstSource.getVideoTracks()[0];
+      expect(staleTrack).toBeDefined();
+      const publicationsBefore = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publications")).length;
+
+      // The remote peer toggled its camera: the old publication is removed and a new mid is subscribed.
+      queueSubscribePayload({ ok: true, data: { operationId: "remote-off", sessionDescription: { type: "offer", sdp: "removal" }, tracks: [], removed: [
+        { mid: "remote-0", publisherUserId: "remote-user", trackName: "camera", publicationKey: "remote-camera" },
+      ] } });
+      queueSubscribePayload({ ok: true, data: { operationId: "remote-on", sessionDescription: { type: "offer", sdp: "remote-new-camera" }, tracks: [
+        { mid: "remote-1", publisherUserId: "remote-user", publisherDisplayName: "Remote", trackName: "camera", publicationKey: "remote-camera-2" },
+      ] } });
+      (window as any).btMediaDiagnostics();
+      await new Promise((resolve) => setTimeout(resolve, 3200));
+      await flush();
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/publications")).length).toBeGreaterThan(publicationsBefore);
+      const current = remoteVideo();
+      const source: any = current?.srcObject;
+      const liveVideo = source?.getVideoTracks().filter((track: any) => track.readyState === "live") ?? [];
+      expect(source ? source.getVideoTracks().every((track: any) => track.readyState !== "ended") : true).toBe(true);
+      expect(liveVideo.length).toBeLessThanOrEqual(1);
+    }, 15000);
+  }
+});

@@ -618,7 +618,7 @@ const participants = meeting.participants.map((member) => {
   const publications: DiscoveredMediaPublication[] = participants.flatMap(({ member, publisher, exclusionReason }) => {
     if (exclusionReason || !publisher?.publisherSessionId) return [];
     return publisher.publishedTracks.map((track) => ({
-      key: `${publisher.userId}:${publisher.generation}:${track.trackName}`,
+      key: `${publisher.userId}:${publisher.generation}:${track.trackName}:${track.mid ?? ""}`,
       publisherSessionId: publisher.publisherSessionId!,
       publisherUserId: publisher.userId,
       publisherParticipantId: member.id,
@@ -2273,8 +2273,13 @@ function meetingUiTemplate(): string {
         resumeRtpProbeMs: 700,
         recoveryRetryBackoffMs: [500, 1500],
         remoteRetryBackoffMs: [400, 1200],
+        // Publisher and subscriber recoveries each stay bounded, but in series they summed to minutes; startup shares this one budget.
+        startupBudgetMs: 30000,
       };
-      const RECONNECTING_STATUS = 'Reconnecting media…';
+      const startupTransaction = {
+        attempts: 0, completed: false, exhausted: false, exhaustedAtMs: 0, terminalReason: '', firstRemoteTrackAt: 0, discovered: 0,
+              };
+              const RECONNECTING_STATUS = 'Reconnecting media…';
       const mediaTimings = {
         resumeDetected: 0, recoveryStarted: 0, publisherReady: 0, publicationDiscovered: 0,
         subscriberNegotiated: 0, firstRemoteTrack: 0, firstMediaPlayback: 0, trigger: '',
@@ -2381,6 +2386,20 @@ function meetingUiTemplate(): string {
         return {
           mediaTimings: { ...mediaTimings },
           startupTimings: { ...startupTimings },
+          startupTransaction: {
+            attempts: startupTransaction.attempts,
+            elapsedMs: startupTimings.joined ? (startupTransaction.completed || startupTransaction.exhausted ? (startupTransaction.firstRemoteTrackAt || startupTimings.publisherSessionPersisted || Date.now()) : Date.now()) - startupTimings.joined : 0,
+            completed: startupTransaction.completed,
+            exhausted: startupTransaction.exhausted,
+            terminalReason: startupTransaction.terminalReason,
+            publisherGeneration: publisherSessionGeneration,
+            publishStatus: lastPublishHttpStatus,
+            publishReadyStatus: publishReadyHttpStatus,
+            serverPublisherSessionPresent: publisherSessionPresent,
+            discoveredPublications: Math.max(startupTransaction.discovered, mediaDiagnostics.discovered),
+            subscriberGeneration: subscriberSessionLabel,
+            firstRemoteTrackAt: startupTransaction.firstRemoteTrackAt,
+          },
           remotePlaybackAuthorized,
           participantId: publisherParticipantId || state.meeting?.participants.find((participant) => participant.userId === state.currentUserId)?.id || '',
           userIdSuffix: publisherUserIdSuffix || String(state.currentUserId || '').slice(-6),
@@ -2515,6 +2534,38 @@ function meetingUiTemplate(): string {
         const now = Date.now();
         startupTimings[name] = now;
         console.info('[billiontalks media startup]', name, startupTimings.joined ? '+' + (now - startupTimings.joined) + 'ms' : '');
+        if (name === 'joined') {
+          startupTransaction.attempts = 0;
+          startupTransaction.completed = false;
+          startupTransaction.exhausted = false;
+          startupTransaction.exhaustedAtMs = 0;
+          startupTransaction.terminalReason = '';
+          startupTransaction.firstRemoteTrackAt = 0;
+        }
+        evaluateStartupCompletion();
+      }
+
+      // Startup is complete once the local publisher is persisted and any discovered remote media has produced a track.
+      function evaluateStartupCompletion() {
+        if (startupTransaction.completed || !startupTimings.joined || !startupTimings.publisherSessionPersisted) return;
+        if (startupTimings.firstRemotePublicationDiscovered && !startupTransaction.firstRemoteTrackAt) return;
+        startupTransaction.completed = true;
+      }
+
+      // Returns true when recovery must not continue because the startup budget is spent; records one terminal diagnostic.
+      function startupBudgetSpent(reason) {
+        if (!startupTimings.joined || startupTransaction.completed) return false;
+        const budget = typeof window.btStartupBudgetMs === 'number' ? window.btStartupBudgetMs : MEDIA_TIMING.startupBudgetMs;
+        const elapsed = Date.now() - startupTimings.joined;
+        if (!startupTransaction.exhausted && elapsed <= budget) return false;
+        if (!startupTransaction.exhausted) {
+          startupTransaction.exhausted = true;
+          startupTransaction.exhaustedAtMs = elapsed;
+          startupTransaction.terminalReason = String(reason || '').slice(0, 200);
+          console.warn('[billiontalks media startup] budget exhausted after ' + elapsed + 'ms attempts=' + startupTransaction.attempts, startupTransaction.terminalReason);
+        }
+        updateMediaStatus('Media could not connect. Check your network connection and rejoin the meeting.');
+        return true;
       }
 
       function markMediaTiming(name) {
@@ -2777,8 +2828,8 @@ function meetingUiTemplate(): string {
           return Promise.resolve(false);
         }
         const failureCount = direction === 'publisher' ? publisherFailureCount : subscriberFailureCount;
-        if (failureCount >= MAX_MEDIA_RECOVERY_ATTEMPTS) {
-          updateMediaStatus(direction + ' media could not connect. Check your network connection and rejoin the meeting.');
+        if (failureCount >= MAX_MEDIA_RECOVERY_ATTEMPTS || startupBudgetSpent(direction + ' recovery: ' + reason)) {
+          if (failureCount >= MAX_MEDIA_RECOVERY_ATTEMPTS) updateMediaStatus(direction + ' media could not connect. Check your network connection and rejoin the meeting.');
           if (direction === 'publisher' && publisherRecoveryRepublishRequired) {
             publisherRecoveryEndedAt = new Date().toISOString();
             if (publisherResumeRecoveryRequested) resumeRecoveryResult = 'failed';
@@ -2789,6 +2840,7 @@ function meetingUiTemplate(): string {
         }
         if (direction === 'publisher') publisherFailureCount += 1;
         else subscriberFailureCount += 1;
+        if (startupTimings.joined && !startupTransaction.completed) startupTransaction.attempts += 1;
         const republishAfterRecovery = direction === 'publisher' && publisherRecoveryRepublishRequired;
 
         const publisherInvalidationReason = direction !== 'publisher' ? '' :
@@ -2926,7 +2978,7 @@ function meetingUiTemplate(): string {
           }
           console.warn('[billiontalks media] recovery failed:', direction, error instanceof Error ? error.message : error);
           const attempts = direction === 'publisher' ? publisherFailureCount : subscriberFailureCount;
-          if (attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing) {
+          if (attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing && !startupBudgetSpent(direction + ' retry: ' + (error instanceof Error ? error.message : error))) {
             updateMediaStatus(RECONNECTING_STATUS);
             scheduleRecoveryRetry(direction, attempts, {
               ...(republishAfterRecovery ? { republishAfterRecovery: true } : {}),
@@ -3264,6 +3316,10 @@ function meetingUiTemplate(): string {
         if (!targetStream.getTracks().includes(event.track)) targetStream.addTrack(event.track);
         remote.tracks.set(publication.publicationKey, event.track);
         markMediaTiming('firstRemoteTrack');
+        if (!startupTransaction.firstRemoteTrackAt) {
+          startupTransaction.firstRemoteTrackAt = Date.now();
+          evaluateStartupCompletion();
+        }
         if (previousTrack && previousTrack.readyState !== 'ended') {
           try { previousTrack.stop(); } catch { /* obsolete remote track */ }
         }
@@ -3575,6 +3631,7 @@ function meetingUiTemplate(): string {
             const publications = discoveryPayload.data.publications;
             markMediaTiming('publicationDiscovered');
             if (publications.length) markStartupTiming('firstRemotePublicationDiscovered');
+            startupTransaction.discovered = publications.length;
             const publicationSet = JSON.stringify(publications.map((publication) => [
               publication.participantId, publication.generation, publication.trackName, publication.mid,
             ]).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
@@ -3663,6 +3720,9 @@ function meetingUiTemplate(): string {
               /ICE candidate gathering timed out/i.test(message) ||
               /no longer current|Subscriber media connection|HTTP status: 406|Media request timed out/.test(message);
             const noTracksAccepted = /did not accept any remote tracks|did not return a subscription offer/i.test(message);
+            if ((isStaleSfuSessionError(error) || unrecoverableNegotiation || noTracksAccepted) && startupBudgetSpent('subscriber: ' + message)) {
+              return;
+            }
             if (isStaleSfuSessionError(error) || unrecoverableNegotiation) {
               updateMediaStatus(RECONNECTING_STATUS);
               void requestMediaRecovery('subscriber', message);
@@ -4501,8 +4561,38 @@ function meetingUiTemplate(): string {
         renderLocalState();
       }
 
+      let cameraRestorePending = false;
+
+      // After an explicit camera OFF→ON, confirm video RTP actually advances; repair the new sender with replaceTrack, then republish once.
+      async function verifyRestoredCamera(publishing, stopToken) {
+        let published = false;
+        try { published = await publishing; } catch { return; }
+        const camera = publishedLocalTracks.get('camera');
+        const peer = publisherPeerConnection;
+        if (!published || !camera || !peer || stopToken !== deviceStopToken.camera) return;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const probe = await probeRtp(peer, 'outbound-rtp');
+          if (peer !== publisherPeerConnection || stopToken !== deviceStopToken.camera) return;
+          if (probe.video !== false) {
+            recordVideoHealth('camera-restore', 'healthy');
+            return;
+          }
+          recordVideoHealth('camera-restore', 'publisher-video-rtp-stalled', attempt === 0 ? 'camera-replace-track' : 'camera-republish');
+          if (attempt === 0) {
+            const repaired = await repairPublishedCamera(camera).catch(() => false);
+            if (!repaired) attempt = 1;
+          }
+          if (attempt === 1) {
+            await closePublishedLocalTracks(['camera']);
+            await publishCurrentLocalTracks();
+            return;
+          }
+        }
+      }
+
       function stopLocalCamera() {
         deviceStopToken.camera += 1;
+        cameraRestorePending = state.route === 'meeting';
         void closePublishedLocalTracks(['camera']);
         Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'camera'));
         state.localDevice.cameraEnabled = false;
@@ -4627,7 +4717,12 @@ function meetingUiTemplate(): string {
           state.localDevice.cameraEnabled = true;
           renderLocalState();
           setError(null);
-          if (state.route === 'meeting') void publishCurrentLocalTracks();
+          if (state.route === 'meeting') {
+            const restoring = cameraRestorePending;
+            cameraRestorePending = false;
+            const publishing = publishCurrentLocalTracks();
+            if (restoring) void verifyRestoredCamera(publishing, stopToken);
+          }
         } catch (error) {
           if (captureGeneration !== localCaptureGeneration) return;
           state.localDevice.cameraEnabled = false;
