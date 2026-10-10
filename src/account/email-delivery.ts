@@ -19,6 +19,7 @@ export function createAccountEmailSender(config: AccountEmailConfig): AccountEma
   async function deliver(to: string, subject: string, path: string, token: string): Promise<void> {
     const link = new URL(path, base);
     link.searchParams.set("token", token);
+    if (subject.includes("password")) link.searchParams.set("flow", "reset");
     // Keep token in email body only, never request logs or provider-specific API errors.
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
