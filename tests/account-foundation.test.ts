@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Account, AccountId } from "../src/account/domain";
 import { D1EmailVerificationRepository, EmailVerificationService } from "../src/account/email-verification";
@@ -16,12 +16,19 @@ import {
 } from "../src/account/validation";
 import app from "../src/index";
 
-vi.mock("../src/account/email-delivery", () => ({
-  createAccountEmailSender: () => ({
-    sendVerification: async () => {},
-    sendPasswordReset: async () => {},
-  }),
+const emailSenderMock = vi.hoisted(() => ({
+  sendVerification: vi.fn(async () => {}),
+  sendPasswordReset: vi.fn(async () => {}),
 }));
+
+vi.mock("../src/account/email-delivery", () => ({
+  createAccountEmailSender: () => emailSenderMock,
+}));
+
+beforeEach(() => {
+  emailSenderMock.sendVerification.mockClear();
+  emailSenderMock.sendPasswordReset.mockClear();
+});
 
 async function accountFetch(request: Request, env: Record<string, unknown> = {}): Promise<Response> {
   return app.fetch(request, env);
@@ -624,6 +631,32 @@ describe("account registration API", () => {
     expect(payload.data.account.marketingConsentAt).toBeNull();
   });
 
+  it("keeps a failed-delivery registration recoverable through resend without exposing the token", async () => {
+    const fixture = createAccountDatabaseFixture();
+    emailSenderMock.sendVerification.mockRejectedValueOnce(new Error("provider unavailable"));
+
+    const failed = await accountFetch(registrationRequest(validRegistration()), { ACCOUNT_DB: fixture.database });
+    expect(failed.status).toBe(503);
+    expect(fixture.accounts.size).toBe(1);
+    expect([...fixture.accounts.values()][0]?.status).toBe("PENDING_EMAIL_VERIFICATION");
+    expect(fixture.tokens.size).toBe(1);
+
+    const initialToken = [...fixture.tokens.values()][0];
+    initialToken.created_at = "2020-01-01T00:00:00.000Z";
+    const resent = await accountFetch(accountRequest("/api/accounts/resend-verification", { email: "jane.doe@example.com" }), {
+      ACCOUNT_DB: fixture.database,
+    });
+    const resendPayload = await resent.json();
+    expect(resent.status).toBe(202);
+    expect(resendPayload).toEqual({
+      ok: true,
+      data: { message: "If an unverified account matches that address, the request has been accepted." },
+    });
+    expect(emailSenderMock.sendVerification).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(resendPayload)).not.toContain("token");
+    expect(fixture.tokens.size).toBe(2);
+  });
+
   it.each([
     ["invalid country", { country: "ZZ" }],
     ["invalid mobile", { mobileNumber: "4155550100" }],
@@ -1041,6 +1074,24 @@ describe("account profile APIs", () => {
 });
 
 describe("password reset APIs", () => {
+  it("returns the generic response when reset-email delivery fails after issuing a token", async () => {
+    const fixture = createAccountDatabaseFixture();
+    const account = seedVerifiedAccount(fixture);
+    emailSenderMock.sendPasswordReset.mockRejectedValueOnce(new Error("provider unavailable"));
+
+    const response = await accountFetch(forgotPasswordRequest(account.email), { ACCOUNT_DB: fixture.database });
+    const payload = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(payload).toEqual({
+      ok: true,
+      data: { message: "If an active account matches that address, password reset instructions will be sent." },
+    });
+    expect(fixture.resetTokens.size).toBe(1);
+    expect(JSON.stringify(payload)).not.toContain("token");
+    expect(emailSenderMock.sendPasswordReset).toHaveBeenCalledTimes(1);
+  });
+
   it("creates an internal reset token for known accounts but returns the same generic response for unknown addresses", async () => {
     const fixture = createAccountDatabaseFixture();
     const account = seedVerifiedAccount(fixture);

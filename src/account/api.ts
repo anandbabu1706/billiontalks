@@ -1,3 +1,4 @@
+import type { Account } from "./domain";
 import type { AccountEmailSender } from "./email-delivery";
 import { AccountIdentityConflictError, D1AccountRepository, type D1AccountDatabase } from "./repository";
 import { AccountService } from "./service";
@@ -96,10 +97,12 @@ export async function handleAccountRegistration(request: Request, database?: D1A
     return jsonResponse({ ok: false, error: "Registration request is invalid." }, 400);
   }
 
+  const accounts = new D1AccountRepository(database);
+  const verification = new EmailVerificationService(accounts, new D1EmailVerificationRepository(database));
+  let account: Account | null = null;
+  let verificationToken: string;
   try {
-    const accounts = new D1AccountRepository(database);
-    const verification = new EmailVerificationService(accounts, new D1EmailVerificationRepository(database));
-    const { account, verificationToken } = await new AccountService(accounts).createWithVerification({
+    const created = await new AccountService(accounts).createWithVerification({
       fullName: value.fullName,
       email: value.email,
       countryCode: value.country,
@@ -109,14 +112,8 @@ export async function handleAccountRegistration(request: Request, database?: D1A
       termsVersion: CURRENT_TERMS_VERSION,
       marketingConsent: value.marketingConsent,
     }, (accountId, createdAt) => verification.prepareToken(accountId, createdAt));
-    await mailer.sendVerification(account.email, verificationToken);
-    return jsonResponse({
-      ok: true,
-      data: {
-        account,
-        emailVerificationRequired: true,
-      },
-    }, 201);
+    account = created.account;
+    verificationToken = created.verificationToken;
   } catch (error) {
     if (error instanceof AccountValidationError) {
       return jsonResponse({ ok: false, error: error.message }, 400);
@@ -126,6 +123,21 @@ export async function handleAccountRegistration(request: Request, database?: D1A
     }
     return jsonResponse({ ok: false, error: "Account registration failed." }, 500);
   }
+  if (!account) {
+    return jsonResponse({ ok: false, error: "Account registration failed." }, 500);
+  }
+  try {
+    await mailer.sendVerification(account.email, verificationToken);
+  } catch {
+    return jsonResponse({ ok: false, error: "Account registration is temporarily unavailable." }, 503);
+  }
+  return jsonResponse({
+    ok: true,
+    data: {
+      account,
+      emailVerificationRequired: true,
+    },
+  }, 201);
 }
 
 const GENERIC_RESEND_RESPONSE = {
