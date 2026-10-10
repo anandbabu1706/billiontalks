@@ -184,6 +184,8 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     data: { account: { email: "jane@example.com" }, emailVerificationRequired: true },
   }, true, 201);
   let includeRemoteParticipant = false;
+  const meetingCreatedAt = new Date(Date.now() - 3_723_000).toISOString();
+  let meetingEndedAt = "";
   let additionalRemoteParticipant: { id: string; userId: string; displayName: string; role: string; state: string } | null = null;
   const remoteParticipants = () => [
     ...(includeRemoteParticipant ? [{
@@ -428,6 +430,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
           id: "btm_test_123",
           title: body.title || "Sprint review",
           status: "active",
+          createdAt: meetingCreatedAt,
           hostId: "host-123",
           participants: [
             { id: "host-123", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED" },
@@ -458,7 +461,9 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
         data: {
           id: "btm_test_123",
           title: "Sprint review",
-          status: "active",
+          status: meetingEndedAt ? "ended" : "active",
+          createdAt: meetingCreatedAt,
+          ...(meetingEndedAt ? { endedAt: meetingEndedAt } : {}),
           hostId: "host-123",
           participants: includeRemoteParticipant || additionalRemoteParticipant
             ? [{ id: "host-123", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED" }, ...remoteParticipants()]
@@ -493,6 +498,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     setNextSubscribeError(message: string) { nextSubscribeError = message; },
     setRegistrationResponse(payload: unknown, ok = true, status = 201) { registrationResponse = createResponse(payload, ok, status); },
     setIncludeRemoteParticipant() { includeRemoteParticipant = true; },
+    setMeetingEndedAt(value: string) { meetingEndedAt = value; },
     setAdditionalRemoteParticipant(userId: string, displayName: string) {
       additionalRemoteParticipant = { id: "participant-" + userId, userId, displayName, role: "PARTICIPANT", state: "JOINED" };
     },
@@ -3704,4 +3710,160 @@ describe("BT-V0-028 mic mute isolation and independent video health", () => {
     expect(document.getElementById("mediaStatus")?.textContent).not.toMatch(/Cloudflare|Realtime/);
     expect(document.getElementById("mediaStatus")?.textContent).not.toContain("could not connect");
   });
+});
+
+describe("BT-V0-029 initial guest publisher startup", () => {
+  const urlOf = (input: RequestInfo | URL) => (typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+  const callsTo = (fetchMock: ReturnType<typeof vi.fn>, suffix: string) => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(suffix) && init?.method === "POST");
+  const remoteCamera = (operationId: string) => ({
+    ok: true,
+    data: {
+      operationId,
+      sessionDescription: { type: "offer", sdp: operationId },
+      tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Host", trackName: "camera", publicationKey: "remote-camera" }],
+    },
+  });
+  async function joinAsGuestWithHost() {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    page.setIncludeRemoteParticipant();
+    page.setNextSubscribePayload(remoteCamera("initial"));
+    return page;
+  }
+
+  it("starts publisher setup right after join with one microphone+camera publish and records startup timings in order", async () => {
+    const { document, window, fetchMock } = await joinAsGuestWithHost();
+    await joinHostMeeting(document, "Guest startup");
+    await flush();
+    const publishes = callsTo(fetchMock, "/media/publish");
+    expect(publishes).toHaveLength(1);
+    expect(JSON.parse(String(publishes[0][1]?.body)).tracks.map((track: any) => track.trackName)).toEqual(["microphone", "camera"]);
+    const t = (window as any).btMediaDiagnostics().startupTimings;
+    const order = ["joined", "captureRequested", "captureReady", "publishStarted", "publishHttpResponse", "answerApplied",
+      "publishReadyStarted", "publishReadyCompleted", "publisherSessionPersisted"];
+    order.forEach((name) => expect(t[name], name).toBeGreaterThan(0));
+    for (let index = 1; index < order.length; index += 1) expect(t[order[index]]).toBeGreaterThanOrEqual(t[order[index - 1]]);
+    expect(t.publishReadyCompleted - t.joined).toBeLessThan(1500);
+  });
+
+  it("does not wait for the subscriber queue: publish and publish-ready complete while renegotiation is still pending", async () => {
+    const { document, window, fetchMock } = await joinAsGuestWithHost();
+    const original = fetchMock.getMockImplementation()!;
+    let releaseRenegotiate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseRenegotiate = resolve; });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (urlOf(input).endsWith("/media/renegotiate") && init?.method === "POST") await gate;
+      return original(input, init);
+    });
+    await joinHostMeeting(document, "Subscriber blocked");
+    await flush();
+    await flush();
+    expect(callsTo(fetchMock, "/media/publish").length).toBeGreaterThanOrEqual(1);
+    expect(callsTo(fetchMock, "/media/publish/ready")).toHaveLength(1);
+    expect(JSON.parse(String(callsTo(fetchMock, "/media/publish/ready")[0][1]?.body)).trackNames).toEqual(["microphone", "camera"]);
+    expect((window as any).btMediaDiagnostics().startupTimings.publisherSessionPersisted).toBeGreaterThan(0);
+    expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+    releaseRenegotiate();
+    await flush();
+  });
+
+  it("never publishes through the recovery path or long waits in the normal startup", async () => {
+    const { document, window, fetchMock } = await joinAsGuestWithHost();
+    const started = Date.now();
+    await joinHostMeeting(document, "No long waits");
+    await flush();
+    expect(Date.now() - started).toBeLessThan(2000);
+    const diagnostics = (window as any).btMediaDiagnostics();
+    expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+    expect(diagnostics.mediaTimings.recoveryStarted).toBe(0);
+    expect(diagnostics.startupTimings.publisherSessionPersisted).toBeGreaterThan(0);
+  });
+
+  it("discovers the remote publication promptly without a recovery timeout", async () => {
+    const { document, window, fetchMock } = await joinAsGuestWithHost();
+    await joinHostMeeting(document, "Prompt discovery");
+    await flush();
+    const t = (window as any).btMediaDiagnostics().startupTimings;
+    expect(t.firstRemotePublicationDiscovered).toBeGreaterThan(0);
+    expect(t.firstRemotePublicationDiscovered - t.joined).toBeLessThan(1500);
+    expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+  });
+
+  it("masks and bounds a legacy pending-negotiation 409 on the initial publish", async () => {
+    const { document, fetchMock } = await joinAsGuestWithHost();
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (urlOf(input).endsWith("/media/publish") && init?.method === "POST") {
+        return createResponse({ ok: false, error: "Finish the pending media negotiation before publishing." }, false, 409);
+      }
+      return original(input, init);
+    });
+    await joinHostMeeting(document, "Pending 409");
+    for (let attempt = 0; attempt < 10; attempt += 1) await flush();
+    expect(callsTo(fetchMock, "/media/publish").length).toBeLessThanOrEqual(8);
+    expect(document.getElementById("mediaStatus")?.textContent).not.toContain("pending media negotiation");
+  });
+
+  it("uses bounded recovery, not a silent delay, when the initial publish hits a dead session", async () => {
+    const { document, fetchMock } = await joinAsGuestWithHost();
+    const original = fetchMock.getMockImplementation()!;
+    let failed = false;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!failed && urlOf(input).endsWith("/media/publish") && init?.method === "POST") {
+        failed = true;
+        return createResponse({
+          ok: false,
+          error: "Cloudflare Realtime request failed. HTTP status: 410. errorCode: session_error.",
+          upstreamStatus: 410,
+          errorCode: "session_error",
+        }, false, 410);
+      }
+      return original(input, init);
+    });
+    await joinHostMeeting(document, "Initial publish failure");
+    for (let attempt = 0; attempt < 12; attempt += 1) await flush();
+    expect(callsTo(fetchMock, "/media/recover").length).toBeLessThanOrEqual(2);
+    expect(callsTo(fetchMock, "/media/recover").length).toBeGreaterThanOrEqual(1);
+    expect(callsTo(fetchMock, "/media/publish").length).toBeLessThanOrEqual(4);
+    expect(document.getElementById("mediaStatus")?.textContent).not.toMatch(/Cloudflare|session_error/);
+  });
+});
+describe("BT-V0-029 meeting duration timer", () => {
+  const timerText = (document: Document) => document.getElementById("meetingDurationTimer")?.textContent ?? "";
+
+  it("shows HH:MM:SS from the authoritative meeting start, not from local join time, and keeps advancing", async () => {
+    const { document } = await loadRenderedPage();
+    await joinHostMeeting(document, "Timer");
+    expect(timerText(document)).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(timerText(document)).toMatch(/^01:02:0[3-9]$/);
+    const before = timerText(document);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(timerText(document)).not.toBe(before);
+    expect(document.getElementById("meetingDurationTimer")?.closest(".meeting-header")).not.toBeNull();
+  });
+
+  it("does not touch the media lifecycle while ticking", async () => {
+    const { window, document, fetchMock } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Timer media");
+    await flush();
+    const peers = FakePeerConnection.instances.length;
+    const mediaCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/media/")).length;
+    const before = mediaCalls();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(FakePeerConnection.instances.length).toBe(peers);
+    expect(mediaCalls()).toBe(before);
+  });
+
+  it("freezes at the authoritative end time when the meeting ends", async () => {
+    const { document, setMeetingEndedAt } = await loadRenderedPage();
+    await joinHostMeeting(document, "Timer end");
+    setMeetingEndedAt(new Date(Date.now() - 3_000_000).toISOString());
+    await new Promise((resolve) => setTimeout(resolve, 3600));
+    const frozen = timerText(document);
+    expect(frozen).toMatch(/^00:12:03$/);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(timerText(document)).toBe(frozen);
+  }, 15000);
 });

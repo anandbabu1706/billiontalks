@@ -1904,6 +1904,7 @@ function meetingUiTemplate(): string {
               </div>
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span class="meeting-id" id="meetingIdBadge">Loading...</span>
+                <span class="meeting-id" id="meetingDurationTimer" role="timer" aria-label="Meeting duration" style="font-variant-numeric: tabular-nums;">00:00:00</span>
                 <span id="mediaStatus" class="media-status" aria-live="polite">Media not connected</span>
                 <button id="enableRemotePlaybackBtn" type="button" class="ghost" style="display:none;">Enable playback</button>
                 <button class="ghost" id="copyMeetingIdBtn">Copy meeting link</button>
@@ -2278,6 +2279,12 @@ function meetingUiTemplate(): string {
         resumeDetected: 0, recoveryStarted: 0, publisherReady: 0, publicationDiscovered: 0,
         subscriberNegotiated: 0, firstRemoteTrack: 0, firstMediaPlayback: 0, trigger: '',
       };
+      // First-occurrence epoch milliseconds for the initial join-to-publish path; 0 means not reached.
+      const startupTimings = {
+        joined: 0, captureRequested: 0, captureReady: 0, publishStarted: 0, publishHttpResponse: 0,
+        answerApplied: 0, publishReadyStarted: 0, publishReadyCompleted: 0, publisherSessionPersisted: 0,
+        firstRemotePublicationDiscovered: 0,
+      };
       let publishedLocalTracks = new Map();
       let remoteTrackByMid = new Map();
       let remoteStreams = new Map();
@@ -2373,6 +2380,7 @@ function meetingUiTemplate(): string {
         const videos = Array.from(document.querySelectorAll('#videoStage video.remote-media'));
         return {
           mediaTimings: { ...mediaTimings },
+          startupTimings: { ...startupTimings },
           remotePlaybackAuthorized,
           participantId: publisherParticipantId || state.meeting?.participants.find((participant) => participant.userId === state.currentUserId)?.id || '',
           userIdSuffix: publisherUserIdSuffix || String(state.currentUserId || '').slice(-6),
@@ -2502,6 +2510,13 @@ function meetingUiTemplate(): string {
         return state.mediaConnectionId;
       }
 
+      function markStartupTiming(name) {
+        if (startupTimings[name]) return;
+        const now = Date.now();
+        startupTimings[name] = now;
+        console.info('[billiontalks media startup]', name, startupTimings.joined ? '+' + (now - startupTimings.joined) + 'ms' : '');
+      }
+
       function markMediaTiming(name) {
         if (mediaTimings[name]) return;
         const now = Date.now();
@@ -2628,7 +2643,7 @@ function meetingUiTemplate(): string {
 
       // Low-level protocol detail belongs in the console; the meeting UI only shows a concise reconnecting state while recovery is active.
       function isLowLevelMediaMessage(value) {
-        return /valid local tracks are required|HTTP status|did not accept any|did not return|Cloudflare|Realtime|session_error|errorCode|no longer current|media connection (?:failed|closed|did not become ready)|timed out|superseded|ICE candidate|negotiation was incomplete|subscription response was incomplete|Unable to (?:publish|subscribe|complete|discover|confirm)/i.test(String(value));
+        return /valid local tracks are required|pending media negotiation|HTTP status|did not accept any|did not return|Cloudflare|Realtime|session_error|errorCode|no longer current|media connection (?:failed|closed|did not become ready)|timed out|superseded|ICE candidate|negotiation was incomplete|subscription response was incomplete|Unable to (?:publish|subscribe|complete|discover|confirm)/i.test(String(value));
       }
 
       function mediaRecoveryActive() {
@@ -2639,7 +2654,7 @@ function meetingUiTemplate(): string {
         let shown = value;
         if (isLowLevelMediaMessage(value)) {
           console.info('[billiontalks media] detail:', value);
-          shown = mediaRecoveryActive() || /valid local tracks are required|Cloudflare|Realtime|did not return|session_error|errorCode/i.test(String(value)) ? RECONNECTING_STATUS : value;
+          shown = mediaRecoveryActive() || /valid local tracks are required|pending media negotiation|Cloudflare|Realtime|did not return|session_error|errorCode/i.test(String(value)) ? RECONNECTING_STATUS : value;
         }
         state.mediaStatus = shown;
         const status = document.getElementById('mediaStatus');
@@ -3064,6 +3079,7 @@ function meetingUiTemplate(): string {
               trackName: entry.trackName,
               mid: entry.transceiver.mid,
             }));
+            markStartupTiming('publishStarted');
             const response = await mediaFetch('publisher', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -3074,6 +3090,7 @@ function meetingUiTemplate(): string {
               }),
             });
             const payload = await response.json();
+            markStartupTiming('publishHttpResponse');
             lastPublishHttpStatus = response.status;
             publishHttpStatuses.push(response.status);
             if (publishHttpStatuses.length > 20) publishHttpStatuses.shift();
@@ -3093,11 +3110,13 @@ function meetingUiTemplate(): string {
               mid: entry.transceiver.mid,
             }))).map((entry) => ({ trackName: entry.trackName, mid: entry.mid }));
             await peer.setRemoteDescription(payload.data.sessionDescription);
+            markStartupTiming('answerApplied');
             if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || (publisherRecoveryPending && !duringRecovery)) return false;
             const accepted = added.filter((entry) => (payload.data.tracks ?? []).some((track) =>
               track.trackName === entry.trackName && track.mid === entry.transceiver.mid));
             if (!accepted.length) throw new Error('Cloudflare Realtime did not accept any local tracks.');
             publishReadyAttemptCount += 1;
+            markStartupTiming('publishReadyStarted');
             const readyResponse = await mediaFetch('publisher', '/api/meetings/' + encodeURIComponent(state.meetingId) + '/media/publish/ready', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -3112,6 +3131,8 @@ function meetingUiTemplate(): string {
             if (!readyResponse.ok || !readyPayload.ok) throw mediaRequestError(readyPayload, readyResponse.status, 'Unable to confirm published media readiness.');
             if (peer !== publisherPeerConnection || peerGeneration !== publisherPeerGeneration || (publisherRecoveryPending && !duringRecovery)) return false;
             publisherSessionPresent = Boolean(readyPayload.data.publisherDiagnostics?.publisherSessionPresent ?? publisherSessionPresent);
+            markStartupTiming('publishReadyCompleted');
+            if (publisherSessionPresent) markStartupTiming('publisherSessionPersisted');
             publisherParticipantId = readyPayload.data.publisherDiagnostics?.participantId || publisherParticipantId;
             publisherUserIdSuffix = readyPayload.data.publisherDiagnostics?.userIdSuffix || publisherUserIdSuffix;
             pendingLocalPublications = (readyPayload.data.publisherDiagnostics?.pendingPublishedTracks ?? []).map((entry) => ({
@@ -3553,6 +3574,7 @@ function meetingUiTemplate(): string {
             }
             const publications = discoveryPayload.data.publications;
             markMediaTiming('publicationDiscovered');
+            if (publications.length) markStartupTiming('firstRemotePublicationDiscovered');
             const publicationSet = JSON.stringify(publications.map((publication) => [
               publication.participantId, publication.generation, publication.trackName, publication.mid,
             ]).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
@@ -3791,6 +3813,7 @@ function meetingUiTemplate(): string {
       function applyMeetingSnapshot(meeting) {
         const changed = JSON.stringify(state.meeting) !== JSON.stringify(meeting);
         state.meeting = meeting;
+        syncMeetingDurationTimer();
         if (meeting.status !== 'active') {
           finishLocalSession('The host ended this meeting.');
           return;
@@ -4182,6 +4205,8 @@ function meetingUiTemplate(): string {
           const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId));
           const payload = await response.json();
           if (!response.ok || !payload.ok || !payload.data) throw new Error(payload.error || 'Unable to refresh meeting.');
+          const serverDate = response.headers && typeof response.headers.get === 'function' ? Date.parse(response.headers.get('Date') || '') : NaN;
+          if (!Number.isNaN(serverDate)) meetingClockOffsetMs = serverDate - Date.now();
           if (meetingId === state.meetingId && userId === state.currentUserId && actionVersion === hostActionVersion && !hostActionPending && ['meeting', 'prejoin'].includes(state.route)) {
             applyMeetingSnapshot(payload.data);
             if (state.route === 'meeting') {
@@ -4241,7 +4266,7 @@ function meetingUiTemplate(): string {
         state.route = name;
         if (name === 'home') void refreshMeetingHistory();
         if (name === 'meeting') {
-          // Every route into the meeting (direct join, host approval, rejoin) must capture and publish the devices shown as ON.
+          markStartupTiming('joined'); // Every route into the meeting (direct join, host approval, rejoin) must capture and publish the devices shown as ON.
           acquireDesiredLocalMedia();
           void publishCurrentLocalTracks();
           void refreshMeetingChat();
@@ -4528,7 +4553,9 @@ function meetingUiTemplate(): string {
         const stopToken = deviceStopToken.mic;
         try {
           localMediaState.micRequestInFlight = true;
+          markStartupTiming('captureRequested');
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          markStartupTiming('captureReady');
           if (captureGeneration !== localCaptureGeneration || stopToken !== deviceStopToken.mic) {
             stream.getTracks().forEach((track) => track.stop());
             return;
@@ -5091,10 +5118,41 @@ function meetingUiTemplate(): string {
         return (participant.displayName || '').trim().toLowerCase() === (state.displayName || '').trim().toLowerCase();
       }
 
+      // Duration is derived from the server-set meeting createdAt (never from local join time) and a server clock offset from the Date header.
+      let meetingClockOffsetMs = 0;
+      let meetingDurationInterval = null;
+
+      function formatMeetingDuration(totalMs) {
+        const seconds = Math.max(0, Math.floor(totalMs / 1000));
+        const pad = (value) => String(value).padStart(2, '0');
+        return pad(Math.floor(seconds / 3600)) + ':' + pad(Math.floor((seconds % 3600) / 60)) + ':' + pad(seconds % 60);
+      }
+
+      function updateMeetingDurationTimer() {
+        const node = document.getElementById('meetingDurationTimer');
+        const meeting = state.meeting;
+        const startMs = meeting && meeting.createdAt ? Date.parse(meeting.createdAt) : NaN;
+        if (!node || Number.isNaN(startMs)) return;
+        const endMs = meeting.status !== 'active' && meeting.endedAt ? Date.parse(meeting.endedAt) : Date.now() + meetingClockOffsetMs;
+        node.textContent = formatMeetingDuration((Number.isNaN(endMs) ? Date.now() + meetingClockOffsetMs : endMs) - startMs);
+        if (meeting.status !== 'active' && meetingDurationInterval !== null) {
+          clearInterval(meetingDurationInterval);
+          meetingDurationInterval = null;
+        }
+      }
+
+      function syncMeetingDurationTimer() {
+        updateMeetingDurationTimer();
+        if (state.meeting && state.meeting.status === 'active' && meetingDurationInterval === null) {
+          meetingDurationInterval = setInterval(updateMeetingDurationTimer, 1000);
+        }
+      }
+
       function renderMeetingRoom() {
         if (!state.meeting) {
           return;
         }
+        syncMeetingDurationTimer();
 
         const meetingTitleText = document.getElementById('meetingTitleText');
         const meetingIdBadge = document.getElementById('meetingIdBadge');
@@ -6102,10 +6160,8 @@ const routeHandler = {
             await rpc.saveSfuParticipantState(state);
           }
         }
-        if (state.pendingSubscriptions) {
-          return withSessionCookie(jsonResponse({ ok: false, error: "Finish the pending media negotiation before publishing." }, 409), request, session);
-        }
-
+        // Publisher and subscriber use separate Cloudflare sessions and the per-user mutation lock already serializes state writes,
+        // so a pending subscriber negotiation must not block the first publish (it delayed guest startup by tens of seconds).
         if (!state.publisherSessionId) {
           const created = await client.createSession();
           state = { ...state, publisherSessionId: created.sessionId };
