@@ -4085,6 +4085,19 @@ describe("BT-V0-030 startup budget and camera OFF/ON", () => {
 
   it("resets the shared episode only after both directions stabilize", async () => {
     const page = await join("guest", { recoveryStabilizationMs: 20 });
+    const publisher = publisherPeer();
+    publisher.setConnectionStates("failed", "failed");
+    await flush();
+    expect((page.window as any).btMediaDiagnostics().recoveryEpisode.attempts).toBeGreaterThan(0);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    FakePeerConnection.instances
+      .filter((peer) => peer.getTransceivers().some((entry) => entry.direction === "sendonly"))
+      .at(-1)
+      ?.setConnectionStates("connected", "completed");
+    FakePeerConnection.instances.find((peer) => peer.ontrack)?.setConnectionStates("connected", "connected");
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect((page.window as any).btMediaDiagnostics().recoveryEpisode).toMatchObject({
       startedAt: 0,

@@ -2780,7 +2780,7 @@ function meetingUiTemplate(): string {
             return;
           }
           const healthyForMs = Date.now() - mediaRecoveryHealthySince;
-          if (healthyForMs < 30000) {
+          if (healthyForMs < stabilizationMs) {
             scheduleMediaRecoveryReset();
             return;
           }
