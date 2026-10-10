@@ -1,3 +1,4 @@
+import type { AccountEmailSender } from "./email-delivery";
 import { AccountIdentityConflictError, D1AccountRepository, type D1AccountDatabase } from "./repository";
 import { AccountService } from "./service";
 import { D1EmailVerificationRepository, EmailVerificationService } from "./email-verification";
@@ -68,8 +69,8 @@ async function readBoundedBody(request: Request): Promise<{ body: string; tooLar
   return { body: body + decoder.decode(), tooLarge: false };
 }
 
-export async function handleAccountRegistration(request: Request, database?: D1AccountDatabase): Promise<Response> {
-  if (!database) {
+export async function handleAccountRegistration(request: Request, database?: D1AccountDatabase, mailer?: AccountEmailSender | null): Promise<Response> {
+  if (!database || !mailer) {
     return jsonResponse({ ok: false, error: "Account registration is temporarily unavailable." }, 503);
   }
 
@@ -98,7 +99,7 @@ export async function handleAccountRegistration(request: Request, database?: D1A
   try {
     const accounts = new D1AccountRepository(database);
     const verification = new EmailVerificationService(accounts, new D1EmailVerificationRepository(database));
-    const { account } = await new AccountService(accounts).createWithVerification({
+    const { account, verificationToken } = await new AccountService(accounts).createWithVerification({
       fullName: value.fullName,
       email: value.email,
       countryCode: value.country,
@@ -108,6 +109,7 @@ export async function handleAccountRegistration(request: Request, database?: D1A
       termsVersion: CURRENT_TERMS_VERSION,
       marketingConsent: value.marketingConsent,
     }, (accountId, createdAt) => verification.prepareToken(accountId, createdAt));
+    await mailer.sendVerification(account.email, verificationToken);
     return jsonResponse({
       ok: true,
       data: {
@@ -131,7 +133,7 @@ const GENERIC_RESEND_RESPONSE = {
   data: { message: "If an unverified account matches that address, the request has been accepted." },
 };
 
-export async function handleEmailVerification(request: Request, database?: D1AccountDatabase): Promise<Response> {
+export async function handleEmailVerification(request: Request, database?: D1AccountDatabase, mailer?: AccountEmailSender | null): Promise<Response> {
   if (!database) {
     return jsonResponse({ ok: false, error: "Email verification is temporarily unavailable." }, 503);
   }
@@ -177,7 +179,8 @@ export async function handleEmailVerification(request: Request, database?: D1Acc
   if (request.method === "POST" && path === "/api/accounts/resend-verification") {
     if (typeof body.email === "string") {
       try {
-        await verification.resend(body.email);
+        const token = mailer ? await verification.resend(body.email) : null;
+        if (token) await mailer!.sendVerification(body.email.trim(), token);
       } catch {
         return jsonResponse(GENERIC_RESEND_RESPONSE, 202);
       }
@@ -256,7 +259,7 @@ const GENERIC_PASSWORD_RESET_RESPONSE = {
   data: { message: "If an active account matches that address, password reset instructions will be sent." },
 };
 
-export async function handleForgotPassword(request: Request, database?: D1AccountDatabase): Promise<Response> {
+export async function handleForgotPassword(request: Request, database?: D1AccountDatabase, mailer?: AccountEmailSender | null): Promise<Response> {
   if (!database) return jsonResponse(GENERIC_PASSWORD_RESET_RESPONSE, 202);
   try {
     if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) {
@@ -271,7 +274,9 @@ export async function handleForgotPassword(request: Request, database?: D1Accoun
 
     const accounts = new D1AccountRepository(database);
     const reset = new PasswordResetService(accounts, new D1PasswordResetRepository(database));
-    await reset.requestReset((value as { email: string }).email, request.headers.get("CF-Connecting-IP") ?? "unknown");
+    const email = (value as { email: string }).email;
+    const token = mailer ? await reset.requestReset(email, request.headers.get("CF-Connecting-IP") ?? "unknown") : null;
+    if (token) await mailer!.sendPasswordReset(email.trim(), token);
   } catch {
     return jsonResponse(GENERIC_PASSWORD_RESET_RESPONSE, 202);
   }
