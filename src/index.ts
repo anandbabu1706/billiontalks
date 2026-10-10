@@ -2265,7 +2265,8 @@ function meetingUiTemplate(): string {
       let subscriberRecoveryPromise = null;
       let mediaTransportClosing = false;
       const mediaDisconnectTimers = new Map();
-      const mediaRecoveryResetTimers = new Map();
+      let mediaRecoveryResetTimer = null;
+      let mediaRecoveryHealthySince = 0;
       let remotePlaybackBlocked = false;
       // Remembers an explicit user gesture and a successful unmuted play(), so later stream attachments retry playback quietly.
       let userInteractedWithMeeting = false;
@@ -2423,6 +2424,7 @@ function meetingUiTemplate(): string {
             subscriberGeneration: subscriberSessionLabel,
             firstRemoteTrackAt: startupTransaction.firstRemoteTrackAt,
           },
+          recoveryEpisode: { ...recoveryEpisode },
           remotePlaybackAuthorized,
           participantId: publisherParticipantId || state.meeting?.participants.find((participant) => participant.userId === state.currentUserId)?.id || '',
           userIdSuffix: publisherUserIdSuffix || String(state.currentUserId || '').slice(-6),
@@ -2583,12 +2585,17 @@ function meetingUiTemplate(): string {
         if (!startupTransaction.exhausted && elapsed <= budget) return false;
         if (!startupTransaction.exhausted) {
           startupTransaction.exhausted = true;
+          recoveryEpisode.exhausted = true;
           startupTransaction.exhaustedAtMs = elapsed;
           startupTransaction.terminalReason = String(reason || '').slice(0, 200);
           console.warn('[billiontalks media startup] budget exhausted after ' + elapsed + 'ms attempts=' + startupTransaction.attempts, startupTransaction.terminalReason);
         }
         updateMediaStatus('Media could not connect. Check your network connection and rejoin the meeting.');
         return true;
+      }
+
+      function mediaRecoveryTerminal() {
+        return startupTransaction.exhausted || recoveryEpisode.exhausted;
       }
 
       function markMediaTiming(name) {
@@ -2748,9 +2755,40 @@ function meetingUiTemplate(): string {
       }
 
       function clearMediaRecoveryResetTimer(direction) {
-        const timer = mediaRecoveryResetTimers.get(direction);
-        if (timer !== undefined) window.clearTimeout(timer);
-        mediaRecoveryResetTimers.delete(direction);
+        if (mediaRecoveryResetTimer !== null) window.clearTimeout(mediaRecoveryResetTimer);
+        mediaRecoveryResetTimer = null;
+        mediaRecoveryHealthySince = 0;
+      }
+
+      function isMediaPeerHealthy(direction) {
+        const peer = activePeerConnection(direction);
+        return Boolean(peer && (peer.connectionState === 'connected' || peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed'));
+      }
+
+      function scheduleMediaRecoveryReset() {
+        const stabilizationMs = typeof window.btRecoveryStabilizationMs === 'number' ? window.btRecoveryStabilizationMs : 30000;
+        if (!isMediaPeerHealthy('publisher') || !isMediaPeerHealthy('subscriber')) {
+          clearMediaRecoveryResetTimer();
+          return;
+        }
+        if (!mediaRecoveryHealthySince) mediaRecoveryHealthySince = Date.now();
+        if (mediaRecoveryResetTimer !== null) window.clearTimeout(mediaRecoveryResetTimer);
+        mediaRecoveryResetTimer = window.setTimeout(() => {
+          mediaRecoveryResetTimer = null;
+          if (!isMediaPeerHealthy('publisher') || !isMediaPeerHealthy('subscriber')) {
+            mediaRecoveryHealthySince = 0;
+            return;
+          }
+          const healthyForMs = Date.now() - mediaRecoveryHealthySince;
+          if (healthyForMs < 30000) {
+            scheduleMediaRecoveryReset();
+            return;
+          }
+          mediaRecoveryHealthySince = 0;
+          recoveryEpisode.startedAt = 0;
+          recoveryEpisode.attempts = 0;
+          recoveryEpisode.exhausted = false;
+        }, Math.max(0, stabilizationMs - (Date.now() - mediaRecoveryHealthySince)));
       }
 
       function handleMediaPeerState(direction, peer) {
@@ -2774,17 +2812,9 @@ function meetingUiTemplate(): string {
         if (connectionState === 'connected' || iceState === 'connected' || iceState === 'completed') {
           clearMediaDisconnectTimer(direction);
           clearMediaRecoveryResetTimer(direction);
-          mediaRecoveryResetTimers.set(direction, window.setTimeout(() => {
-            mediaRecoveryResetTimers.delete(direction);
-            const activePeer = activePeerConnection(direction);
-            if (activePeer === peer && (activePeer.connectionState === 'connected' || activePeer.iceConnectionState === 'connected' || activePeer.iceConnectionState === 'completed')) {
-              if (direction === 'publisher') publisherFailureCount = 0;
-              else subscriberFailureCount = 0;
-              recoveryEpisode.startedAt = 0;
-              recoveryEpisode.attempts = 0;
-              recoveryEpisode.exhausted = false;
-            }
-          }, 30000));
+          if (direction === 'publisher') publisherFailureCount = 0;
+          else subscriberFailureCount = 0;
+          scheduleMediaRecoveryReset();
           updateMediaStatus('Media connected');
           return;
         }
@@ -2855,7 +2885,7 @@ function meetingUiTemplate(): string {
         }
         if (!recoveryEpisode.startedAt) recoveryEpisode.startedAt = Date.now();
         const episodeExpired = Date.now() - recoveryEpisode.startedAt > RECOVERY_EPISODE_BUDGET_MS;
-        if (recoveryEpisode.exhausted || recoveryEpisode.attempts >= MAX_MEDIA_RECOVERY_ATTEMPTS || episodeExpired || startupBudgetSpent(direction + ' recovery: ' + reason)) {
+        if (mediaRecoveryTerminal() || recoveryEpisode.attempts >= MAX_MEDIA_RECOVERY_ATTEMPTS || episodeExpired || startupBudgetSpent(direction + ' recovery: ' + reason)) {
           recoveryEpisode.exhausted = true;
           updateMediaStatus('Media could not connect. Check your network connection and rejoin the meeting.');
           if (direction === 'publisher' && publisherRecoveryRepublishRequired) {
@@ -3007,7 +3037,7 @@ function meetingUiTemplate(): string {
           }
           console.warn('[billiontalks media] recovery failed:', direction, error instanceof Error ? error.message : error);
           const attempts = recoveryEpisode.attempts;
-          if (!recoveryEpisode.exhausted && attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing && !startupBudgetSpent(direction + ' retry: ' + (error instanceof Error ? error.message : error))) {
+          if (!mediaRecoveryTerminal() && attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing && !startupBudgetSpent(direction + ' retry: ' + (error instanceof Error ? error.message : error))) {
             updateMediaStatus(RECONNECTING_STATUS);
             scheduleRecoveryRetry(direction, attempts, {
               ...(republishAfterRecovery ? { republishAfterRecovery: true } : {}),
@@ -3643,7 +3673,7 @@ function meetingUiTemplate(): string {
       }
 
       function refreshSfuSubscriptions() {
-        if (recoveryEpisode.exhausted || subscriberRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
+        if (mediaRecoveryTerminal() || subscriberRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
         if (queuedSubscriberRefresh) return queuedSubscriberRefresh;
         queuedSubscriberRefresh = enqueueMediaOperation('subscriber', async () => {
           queuedSubscriberRefresh = null;
@@ -6017,6 +6047,11 @@ const routeHandler = {
 
     if (request.method === "POST" && url.pathname === "/api/realtime/session") {
       return jsonResponse({ ok: false, error: "This unauthenticated media endpoint has been retired." }, 410);
+    }
+
+    const meetingRouteIdMatch = /^\/api\/meetings\/([^/]+)/.exec(url.pathname);
+    if (meetingRouteIdMatch && meetingRouteIdMatch[1] !== "history" && !isValidMeetingId(meetingRouteIdMatch[1])) {
+      return jsonResponse({ ok: false, error: "Invalid meeting identifier." }, 400);
     }
 
     if (request.method === "POST" && url.pathname === "/api/meetings") {

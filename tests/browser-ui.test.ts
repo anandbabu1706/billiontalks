@@ -3942,6 +3942,11 @@ describe("BT-V0-029 meeting duration timer", () => {
     expect((page.window as any).btMediaDiagnostics().startupTimings.joined).toBeGreaterThanOrEqual(firstJoined);
     expect(transaction.exhausted).toBe(false);
     expect(transaction.attempts).toBe(0);
+    expect((page.window as any).btMediaDiagnostics().recoveryEpisode).toMatchObject({
+      startedAt: 0,
+      attempts: 0,
+      exhausted: false,
+    });
   });
 });
 describe("BT-V0-030 startup budget and camera OFF/ON", () => {
@@ -3968,12 +3973,13 @@ describe("BT-V0-030 startup budget and camera OFF/ON", () => {
       ]);
     };
   };
-  async function join(role: "host" | "guest", options: { budgetMs?: number } = {}) {
+  async function join(role: "host" | "guest", options: { budgetMs?: number; recoveryStabilizationMs?: number } = {}) {
     const page = await loadRenderedPage();
     Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
     Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
     (page.window as any).btResumeRtpProbeMs = 5;
     if (options.budgetMs !== undefined) (page.window as any).btStartupBudgetMs = options.budgetMs;
+    if (options.recoveryStabilizationMs !== undefined) (page.window as any).btRecoveryStabilizationMs = options.recoveryStabilizationMs;
     page.setIncludeRemoteParticipant();
     page.setNextSubscribePayload(remoteCamera("initial"));
     if (role === "host") {
@@ -4045,6 +4051,46 @@ describe("BT-V0-030 startup budget and camera OFF/ON", () => {
     const before = callsTo(page.fetchMock, "/media/recover").length;
     await new Promise((resolve) => setTimeout(resolve, 1200));
     expect(callsTo(page.fetchMock, "/media/recover").length).toBe(before);
+    expect((page.window as any).btMediaDiagnostics().recoveryEpisode.exhausted).toBe(true);
+  });
+
+  async function assertHealthySideDoesNotResetEpisode(direction: "publisher" | "subscriber") {
+    const page = await join("guest");
+    (page.window as any).btRecoveryStabilizationMs = 20;
+    const original = page.fetchMock.getMockImplementation()!;
+    page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (urlOf(input).endsWith("/media/recover") && init?.method === "POST") {
+        return createResponse({ ok: false, error: "recovery failed" }, false, 503);
+      }
+      return original(input, init);
+    });
+    const publisher = publisherPeer();
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+    (direction === "publisher" ? publisher : subscriber).setConnectionStates("failed", "failed");
+    await flush();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const episode = (page.window as any).btMediaDiagnostics().recoveryEpisode;
+    expect(episode.attempts).toBeGreaterThan(0);
+    expect(episode.exhausted).toBe(false);
+    expect(direction === "publisher" ? subscriber.connectionState : publisher.connectionState).toBe("connected");
+  }
+
+  it("does not reset the shared episode while publisher is failing and subscriber is healthy", async () => {
+    await assertHealthySideDoesNotResetEpisode("publisher");
+  });
+
+  it("does not reset the shared episode while subscriber is failing and publisher is healthy", async () => {
+    await assertHealthySideDoesNotResetEpisode("subscriber");
+  });
+
+  it("resets the shared episode only after both directions stabilize", async () => {
+    const page = await join("guest", { recoveryStabilizationMs: 20 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((page.window as any).btMediaDiagnostics().recoveryEpisode).toMatchObject({
+      startedAt: 0,
+      attempts: 0,
+      exhausted: false,
+    });
   });
 
   it("still recovers within the budget when a startup publish hits a dead session", async () => {
@@ -4077,6 +4123,7 @@ describe("BT-V0-030 startup budget and camera OFF/ON", () => {
     for (let attempt = 0; attempt < 8; attempt += 1) await flush();
     const recoveries = callsTo(page.fetchMock, "/media/recover");
     expect(recoveries.length).toBeLessThanOrEqual(6);
+    expect((page.window as any).btMediaDiagnostics().recoveryEpisode.attempts).toBeLessThanOrEqual(6);
     expect(page.document.getElementById("mediaStatus")?.textContent).not.toContain("Cloudflare");
   });
 

@@ -61,11 +61,11 @@ This is a source-and-test audit plus user-supplied production evidence, not an i
 1. **Meeting privacy:** GET meeting exposed all participants and admission requests without membership checks; the participant-list route was unrestricted. Prejoin now returns room basics and only the caller's participant/admission entries; joined members see the roster, and only the host sees every admission request. Removed participants still receive their own removal state so cleanup works.
 2. **Unrestricted legacy SFU allocation:** `/api/realtime/session` allocated an upstream session without joining a meeting. It is retired with HTTP 410. Current authorized meeting media APIs remain intact.
 3. **Recording audio membership:** input sources were snapshotted once and muted tracks excluded. The recorder now owns a stable destination audio track and reconciles local/remote/screen audio inputs every 250 ms. Disabled tracks remain connected and naturally produce silence; ended/replaced inputs disconnect. Cleanup stops recording output tracks, not meeting inputs. Constructor and runtime mixing failures clean up/report failure.
-4. **Recovery composition:** after startup completion, publisher/subscriber retries had independent limits and could reset separately. A shared recovery episode now caps automatic attempts across directions (six total maximum and a 30-second retry-admission budget), guards publish/subscription polling after exhaustion, and exposes diagnostics. Healthy connection handling resets the episode; terminal exhaustion requires leaving/rejoining. This does not claim every already-running operation terminates exactly at 30 seconds.
+4. **Recovery composition:** after startup completion, publisher/subscriber retries had independent limits and could reset separately. A shared recovery episode now caps automatic attempts across directions (six total maximum and a 30-second retry-admission budget), guards publish/subscription polling after either startup or recovery terminal exhaustion, and exposes diagnostics. The shared episode resets only after both media directions remain healthy for the stabilization period; terminal exhaustion requires leaving/rejoining. This does not claim every already-running operation terminates exactly at 30 seconds.
 5. **Same-tab rejoin:** startup timing/exhaustion and failure counters survived leaving. Transport teardown now resets those values and the shared episode so a subsequent join starts a fresh attempt.
 6. **Server request lifetime:** SFU fetches had no server-side timeout. Each upstream request/body read now uses an abort signal with an 8-second deadline and a sanitized 504 timeout. Existing browser request timeout remains 10 seconds; this is not a claimed end-to-end 8-second transaction limit.
 7. **Timer cleanup:** leaving an active meeting could retain the duration interval. Leaving the meeting screen clears it; host/guest tests verify cleanup.
-8. **Malformed inputs:** malformed percent-encoded cookies could throw; invalid meeting route identifiers reached storage routing. Malformed cookies are ignored and invalid IDs rejected before routing. Required-string/session display-name handling tolerates incorrect runtime types.
+8. **Malformed inputs:** malformed percent-encoded cookies could throw; invalid meeting route identifiers reached storage routing. Malformed cookies are ignored and every meeting-specific API route now rejects invalid IDs before session, storage, Durable Object, admission, media, recording, chat, or SFU routing. Required-string/session display-name handling tolerates incorrect runtime types.
 9. **Checkpoint documentation:** README still described BT-V0-009 and a parked SFU integration. Updated the current checkpoint and directed readers to this review's scope boundary.
 
 ## V0 completed capabilities in source
@@ -94,17 +94,16 @@ Final working-tree validation:
 
 | Check | Result |
 |---|---|
-| Focused new regressions | 11 passed; latest recovery/reset refinements also passed in the complete suite |
-| Focused API/host/SFU-client suite | 81 passed |
-| `npm test` | **268 passed**, six test files; zero failures/skips in the full run; 90.51 seconds |
+| Focused affected suites | **200 passed**, browser and meeting-foundation suites |
+| `npm test` | **272 passed**, six test files; zero failures/skips in the full run |
 | `npm run typecheck` | Passed |
 | `npm run build` | Passed; script is `wrangler deploy --dry-run`, no deployment |
 | `git diff --check` | Passed |
-| Git HEAD after work | Unchanged: `21f47705f3352549e03abe351d4e410de0f31afa` |
+| Git HEAD before blocker commit | `b5ad131a11803dfc03268fdc713261a96000184a` |
 
-11 tests added above the 257-test baseline. Build output reports only the existing MEETING_STORE, ACCOUNT_DB, and RECORDINGS_BUCKET bindings. No binding file was changed.
+15 tests are now added above the 257-test baseline. Build output reports only the existing MEETING_STORE, ACCOUNT_DB, and RECORDINGS_BUCKET bindings. No binding file was changed.
 
-New coverage: outsider/waiting/approved/removed snapshot visibility; retired SFU endpoint makes no upstream call; malformed cookies; invalid meeting identifiers; server-side stalled request abortion; host and guest shared recovery exhaustion including polling and same-tab rejoin; recording muted-start/unmute, ended-track replacement and late audio input; host and guest timer origin/interval cleanup.
+New coverage: outsider/waiting/approved/removed snapshot visibility; retired SFU endpoint makes no upstream call; malformed cookies; invalid meeting identifiers across basic, admission, participant, media, recording, and chat routes with no namespace lookup; server-side stalled request abortion; host and guest shared recovery exhaustion including asymmetric health, stabilization, polling and same-tab rejoin; recording muted-start/unmute, ended-track replacement and late audio input; host and guest timer origin/interval cleanup.
 
 Four existing roster assertions now authenticate as the host. Their membership/duplicate-prevention assertions remain intact. No tests were removed or disabled. Fake AudioContext support was added to the existing browser harness.
 

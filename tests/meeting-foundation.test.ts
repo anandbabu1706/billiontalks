@@ -2146,6 +2146,28 @@ describe("MeetingService lifecycle", () => {
     expect((await invalid.json()).error).toBe("Invalid meeting identifier.");
   });
 
+  it("rejects invalid identifiers across meeting route families before any namespace lookup", async () => {
+    const idFromName = vi.fn();
+    const get = vi.fn();
+    const api = createChatApiFixture({ idFromName, get } as any);
+    const routes: Array<[string, string, unknown?]> = [
+      ["/api/meetings/not-valid", "GET"],
+      ["/api/meetings/not-valid/admission/request", "POST", { displayName: "Guest" }],
+      ["/api/meetings/not-valid/participants", "GET"],
+      ["/api/meetings/not-valid/media/publish", "POST", { connectionId: "conn", sessionDescription: {}, tracks: [] }],
+      ["/api/meetings/not-valid/recording/start", "POST"],
+      ["/api/meetings/not-valid/chat", "GET"],
+    ];
+
+    for (const [path, method, body] of routes) {
+      const response = await api.request(path, method, undefined, body);
+      expect(response.status, path).toBe(400);
+      expect((await response.json()).error, path).toBe("Invalid meeting identifier.");
+    }
+    expect(idFromName).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("rejects incorrect runtime string inputs without routing or persistence", async () => {
     const api = createChatApiFixture();
     const response = await api.rawRequest("/api/meetings", "POST", undefined, JSON.stringify({ title: 42, accessMode: "OPEN" }));
