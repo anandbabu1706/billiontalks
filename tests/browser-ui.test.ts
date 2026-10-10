@@ -576,40 +576,6 @@ function getParticipantNames(document: Document): string[] {
   return Array.from(document.querySelectorAll("#participantList li")).map((item) => item.textContent ?? "");
 }
 
-function openRegistration(document: Document): void {
-  document.getElementById("openRegistrationBtn")?.click();
-  expect(getVisibleScreen(document, "registerScreen")).toBe(true);
-}
-
-function fillRegistrationForm(document: Document, overrides: Record<string, string | boolean> = {}): void {
-  const values = {
-    fullName: "Jane Doe",
-    email: "jane@example.com",
-    country: "US",
-    mobileNumber: "+1 415 555 0100",
-    password: "a long passphrase",
-    confirmPassword: "a long passphrase",
-    terms: true,
-    marketingConsent: false,
-    ...overrides,
-  };
-  (document.getElementById("registrationFullName") as HTMLInputElement).value = String(values.fullName);
-  (document.getElementById("registrationEmail") as HTMLInputElement).value = String(values.email);
-  (document.getElementById("registrationCountry") as HTMLSelectElement).value = String(values.country);
-  (document.getElementById("registrationMobile") as HTMLInputElement).value = String(values.mobileNumber);
-  (document.getElementById("registrationPassword") as HTMLInputElement).value = String(values.password);
-  (document.getElementById("registrationConfirmPassword") as HTMLInputElement).value = String(values.confirmPassword);
-  (document.getElementById("registrationTerms") as HTMLInputElement).checked = Boolean(values.terms);
-  (document.getElementById("registrationMarketing") as HTMLInputElement).checked = Boolean(values.marketingConsent);
-}
-
-function registrationCalls(fetchMock: ReturnType<typeof vi.fn>) {
-  return fetchMock.mock.calls.filter(([input, init]) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    return url === "/api/accounts/register" && (init?.method ?? "GET").toUpperCase() === "POST";
-  });
-}
-
 async function joinHostMeeting(document: Document, title: string): Promise<void> {
   document.getElementById("startMeetingBtn")?.click();
   (document.getElementById("meetingTitle") as HTMLInputElement).value = title;
@@ -635,98 +601,18 @@ afterEach(() => {
 });
 
 describe("BillionTalks browser UI regression tests", () => {
-  it("renders the registration screen with all locked fields", async () => {
+  it("routes account creation to the standalone account surface", async () => {
     const { document } = await loadRenderedPage();
-    openRegistration(document);
-
-    for (const id of [
-      "registrationFullName",
-      "registrationEmail",
-      "registrationCountry",
-      "registrationMobile",
-      "registrationPassword",
-      "registrationConfirmPassword",
-      "registrationTerms",
-      "registrationMarketing",
-      "registrationSubmit",
-    ]) {
-      expect(document.getElementById(id)).not.toBeNull();
-    }
-    expect(document.getElementById("registrationFullName")?.getAttribute("required")).toBe("");
-    expect(document.getElementById("registrationTerms")?.getAttribute("required")).toBe("");
-    expect(document.getElementById("registrationCountry")?.querySelectorAll("option").length).toBeGreaterThan(200);
-    expect(document.body.textContent).toContain("Email verification is required after registration");
+    const link = document.getElementById("openRegistrationBtn");
+    expect(link?.tagName).toBe("A");
+    expect(link?.getAttribute("href")).toBe("/account#register");
   });
 
-  it("shows required-field, password, confirm-password, and Terms validation", async () => {
-    const { document, fetchMock } = await loadRenderedPage();
-    openRegistration(document);
-    document.getElementById("registrationSubmit")?.click();
-    await flush();
-
-    expect(document.getElementById("registrationFullNameError")?.textContent).toContain("full name");
-    expect(document.getElementById("registrationTermsError")?.textContent).toContain("Accept");
-    expect(registrationCalls(fetchMock)).toHaveLength(0);
-
-    fillRegistrationForm(document, { password: "short", confirmPassword: "different", terms: false });
-    document.getElementById("registrationSubmit")?.click();
-    await flush();
-    expect(document.getElementById("registrationPasswordError")?.textContent).toContain("8 characters");
-    expect(document.getElementById("registrationConfirmPasswordError")?.textContent).toContain("match");
-    expect(document.getElementById("registrationTermsError")?.textContent).toContain("Accept");
-    expect(registrationCalls(fetchMock)).toHaveLength(0);
-  });
-
-  it("submits the API contract and shows the verification-required success state", async () => {
-    const { document, fetchMock } = await loadRenderedPage();
-    openRegistration(document);
-    fillRegistrationForm(document, { marketingConsent: true });
-    document.getElementById("registrationSubmit")?.click();
-    await flush();
-
-    const calls = registrationCalls(fetchMock);
-    expect(calls).toHaveLength(1);
-    const [, init] = calls[0];
-    expect(init?.method).toBe("POST");
-    expect(init?.headers).toEqual({ "Content-Type": "application/json" });
-    expect(JSON.parse(String(init?.body))).toEqual({
-      fullName: "Jane Doe",
-      email: "jane@example.com",
-      country: "US",
-      mobileNumber: "+1 415 555 0100",
-      password: "a long passphrase",
-      acceptedTerms: true,
-      marketingConsent: true,
-    });
-    expect(document.getElementById("registrationFormPanel")?.hasAttribute("hidden")).toBe(true);
-    expect(document.getElementById("registrationSuccessPanel")?.hasAttribute("hidden")).toBe(false);
-    expect(document.body.textContent).toContain("Check your email to verify your account");
-    expect(document.body.textContent).not.toContain("emailVerificationToken");
-  });
-
-  it("displays API errors safely and prevents duplicate submissions", async () => {
-    const { document, fetchMock, setRegistrationResponse } = await loadRenderedPage();
-    setRegistrationResponse({ ok: false, error: "An account with these details could not be registered." }, false, 409);
-    openRegistration(document);
-    fillRegistrationForm(document);
-    const submit = document.getElementById("registrationSubmit") as HTMLButtonElement;
-    submit.click();
-    submit.click();
-    await flush();
-
-    expect(registrationCalls(fetchMock)).toHaveLength(1);
-    expect(document.getElementById("registrationError")?.textContent).toContain("could not be registered");
-    expect(document.getElementById("registrationSuccessPanel")?.hasAttribute("hidden")).toBe(true);
-  });
-
-  it("keeps the primary control present in the mobile layout", async () => {
+  it("does not expose the legacy registration screen from the meeting home", async () => {
     const { document } = await loadRenderedPage();
-    openRegistration(document);
-    expect(document.querySelector("style")?.textContent).toContain("@media (max-width: 720px)");
-    expect(document.getElementById("registrationSubmit")?.textContent).toContain("Create account");
-    expect(document.getElementById("registrationSubmit")?.getBoundingClientRect).toBeDefined();
+    expect(document.getElementById("registerScreen")?.classList.contains("visible")).toBe(false);
+    expect(document.querySelector("a[href='/account#register']")).not.toBeNull();
   });
-
   it("uses Cloudflare's DurableObject runtime base required for RPC", () => {
     expect(MeetingStateDurableObject.prototype instanceof DurableObject).toBe(true);
   });
@@ -748,23 +634,10 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("devPanel")?.textContent).toContain("Local-only");
   });
 
-  it("shows expandable read-only meeting history details on Home", async () => {
+  it("keeps Recent Meetings hidden from signed-out Home", async () => {
     const { document } = await loadRenderedPage();
-    document.getElementById("startMeetingBtn")?.click();
-    document.getElementById("backToHomeFromCreate")?.click();
-    await flush();
-
-    const historyList = document.getElementById("meetingHistoryList");
-    expect(historyList?.textContent).toContain("Quarterly review");
-    const historyDetails = historyList?.querySelector("details");
-    expect(historyDetails).not.toBeNull();
-    historyDetails?.querySelector("summary")?.dispatchEvent(new document.defaultView!.MouseEvent("click", { bubbles: true }));
-
-    expect(historyDetails?.textContent).toContain("btm_history_123");
-    expect(historyDetails?.textContent).toContain("ended");
-    expect(historyDetails?.textContent).toContain("HOST");
-    expect(historyDetails?.textContent).toContain("STOPPED");
-    expect(historyDetails?.querySelector("a, button")).toBeNull();
+    expect(document.querySelector(".history-section")?.hasAttribute("hidden")).toBe(true);
+    expect(document.getElementById("meetingHistoryList")?.textContent).toBe("");
   });
 
   it("opens the create flow and joins the room from the actual rendered UI", async () => {

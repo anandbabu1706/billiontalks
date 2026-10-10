@@ -23,19 +23,18 @@ Registration fails closed with 503 if email is not configured, to avoid creating
 
 Resend verification and forgot password return generic responses so account existence cannot be inferred. Existing D1 tokens stay short-lived and single-purpose: email verification 24 hours and password reset 45 minutes. Tokens are not written to logs and the account page has `Referrer-Policy: no-referrer`. Cookie-authenticated account mutations reject cross-origin browser writes based on Origin / Sec-Fetch-Site.
 
-## Required validation before a merge
+## Automated validation
 
-Run on an installed working copy of the branch:
+- `npm ci`: passed.
+- `npx vitest run tests/account-v1-email-ui.test.ts`: **7 tests passed**.
+- Account foundation regression suites: **56 tests passed**.
+- `npm test`: **280 tests passed**, seven test files.
+- `npm run typecheck`: passed.
+- `npm run build`: passed as Wrangler `--dry-run`; no deployment occurred.
+- `git diff --check`: passed.
 
-```sh
-npm ci
-npx vitest run tests/account-v1-email-ui.test.ts
-npm test
-npm run typecheck
-npm run build
-git diff --check main...HEAD
-```
+The V0 browser tests now assert that Home routes account creation to `/account#register` and keeps signed-out Recent Meetings hidden, matching the V1 account boundary. The account foundation harness uses an isolated fake mailer; provider configuration and API behavior remain covered separately.
 
-Then run targeted browser + D1 integration tests for both happy and failure paths, including duplicate registration, email provider failure/retry, verified/unverified login, expires/used verification and reset links, unauthorized profile access, guest join, account redirects and CSRF. Run physical V0 meeting/media regression before production deployment.
+Remaining qualification work includes real Resend delivery and provider-failure/retry integration, browser verification and reset flows, and physical V0 meeting/media regression before any production deployment.
 
-**Status: implementation in progress, NOT signed off.** No test run or production qualification has been claimed here.
+**Status: implementation in progress, NOT signed off.** Automated validation is passing; physical/browser/provider qualification is still required.

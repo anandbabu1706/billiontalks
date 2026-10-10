@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAccountEmailSender } from "../src/account/email-delivery";
 import { accountPage } from "../src/account/ui";
+import app from "../src/index";
 
 const config = { RESEND_API_KEY: "test-key", ACCOUNT_EMAIL_FROM: "BillionTalks <no-reply@example.com>", ACCOUNT_PUBLIC_ORIGIN: "https://example.com/" };
 afterEach(() => vi.unstubAllGlobals());
@@ -18,7 +19,9 @@ describe("BT-V1-001 transactional email", () => {
     const [endpoint, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(endpoint).toBe("https://api.resend.com/emails");
     expect((options.headers as Record<string, string>).Authorization).toBe("Bearer test-key");
-    const mail = JSON.parse(options.body as string) as { text: string };
+    const mail = JSON.parse(options.body as string) as { from: string; to: string[]; text: string };
+    expect(mail.from).toBe(config.ACCOUNT_EMAIL_FROM);
+    expect(mail.to).toEqual(["person@example.com"]);
     expect(mail.text).toContain("https://example.com/account?token=sample-verification-token");
     expect(mail.text).not.toContain("test-key");
   });
@@ -46,6 +49,31 @@ describe("BT-V1-001 account UI", () => {
     expect(html).toContain('name="mobileNumber"');
     expect(html).toContain('pattern="[+][1-9][0-9]{1,14}"');
     expect(html).toContain('name="confirmPassword"');
+    expect(html).toContain('data-show');
+    expect(html).toContain('autocomplete="current-password"');
+    expect(html).toContain('autocomplete="new-password"');
     expect(html).not.toContain("Recent Meetings");
+  });
+
+  it("fails closed when account email delivery is not configured", async () => {
+    const response = await app.fetch(new Request("https://example.com/api/accounts/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }), {});
+    expect(response.status).toBe(503);
+  });
+
+  it("rejects cross-origin account mutations before authentication or storage access", async () => {
+    const response = await app.fetch(new Request("https://example.com/api/accounts/me", {
+      method: "PATCH",
+      headers: {
+        Origin: "https://attacker.example",
+        "Sec-Fetch-Site": "cross-site",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ fullName: "Attacker" }),
+    }), {});
+    expect(response.status).toBe(403);
   });
 });

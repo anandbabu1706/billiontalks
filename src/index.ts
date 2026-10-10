@@ -1753,7 +1753,7 @@ function meetingUiTemplate(): string {
               <div class="actions">
                 <button class="primary" id="startMeetingBtn">Start Meeting</button>
                 <button class="secondary" id="joinMeetingBtn">Join Meeting</button>
-                <button class="ghost" id="openRegistrationBtn" type="button">Create account</button>
+                <a class="ghost" id="openRegistrationBtn" href="/account#register">Create account</a>
                 <a class="ghost" href="/account#login" style="display:inline-flex;align-items:center;padding:10px 16px;border-radius:9px;color:inherit;">Sign in</a>
               </div>
             </div>
@@ -5904,11 +5904,6 @@ function meetingUiTemplate(): string {
         showScreen('join');
       });
 
-      document.getElementById('openRegistrationBtn').addEventListener('click', () => {
-        setError(null);
-        resetRegistrationForm();
-        window.location.assign('/account#register');
-      });
       document.getElementById('registrationForm').addEventListener('submit', (event) => { void submitRegistration(event); });
       document.getElementById('backToHomeFromRegistration').addEventListener('click', (event) => {
         event.preventDefault();

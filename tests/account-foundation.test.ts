@@ -16,6 +16,17 @@ import {
 } from "../src/account/validation";
 import app from "../src/index";
 
+vi.mock("../src/account/email-delivery", () => ({
+  createAccountEmailSender: () => ({
+    sendVerification: async () => {},
+    sendPasswordReset: async () => {},
+  }),
+}));
+
+async function accountFetch(request: Request, env: Record<string, unknown> = {}): Promise<Response> {
+  return app.fetch(request, env);
+}
+
 function createAccountDatabaseFixture() {
   const emails = new Set<string>();
   const mobiles = new Set<string>();
@@ -419,7 +430,7 @@ function profilePatchRequest(body: Record<string, unknown>, cookie?: string): Re
 async function authenticatedProfileFixture() {
   const fixture = createAccountDatabaseFixture();
   const account = seedVerifiedAccount(fixture);
-  const login = await app.fetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
+  const login = await accountFetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
   return { fixture, account, cookie: accountCookie(login) };
 }
 
@@ -459,7 +470,7 @@ function validRegistration(overrides: Record<string, unknown> = {}) {
 }
 
 async function registerFixtureAccount(fixture: ReturnType<typeof createAccountDatabaseFixture>): Promise<Account> {
-  const response = await app.fetch(registrationRequest(validRegistration()), { ACCOUNT_DB: fixture.database });
+  const response = await accountFetch(registrationRequest(validRegistration()), { ACCOUNT_DB: fixture.database });
   const payload = await response.json() as { data: { account: Account } };
   if (response.status !== 201) throw new Error("Account fixture registration failed.");
   return payload.data.account;
@@ -572,7 +583,7 @@ describe("account registration API", () => {
   it("creates an unverified account and returns only safe public data", async () => {
     const fixture = createAccountDatabaseFixture();
     const password = "a long passphrase";
-    const response = await app.fetch(registrationRequest(validRegistration({ password, marketingConsent: true })), {
+    const response = await accountFetch(registrationRequest(validRegistration({ password, marketingConsent: true })), {
       ACCOUNT_DB: fixture.database,
     });
     const payload = await response.json() as { ok: boolean; data: { account: Account; emailVerificationRequired: boolean } };
@@ -606,7 +617,7 @@ describe("account registration API", () => {
 
   it("stores marketing consent as false when it is omitted", async () => {
     const fixture = createAccountDatabaseFixture();
-    const response = await app.fetch(registrationRequest(validRegistration()), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(registrationRequest(validRegistration()), { ACCOUNT_DB: fixture.database });
     const payload = await response.json() as { data: { account: Account } };
     expect(response.status).toBe(201);
     expect(payload.data.account.marketingConsent).toBe(false);
@@ -620,21 +631,21 @@ describe("account registration API", () => {
     ["Terms not accepted", { acceptedTerms: false }],
   ])("rejects %s", async (_caseName, override) => {
     const fixture = createAccountDatabaseFixture();
-    const response = await app.fetch(registrationRequest(validRegistration(override)), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(registrationRequest(validRegistration(override)), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(400);
     expect(fixture.credentials.size).toBe(0);
   });
 
   it("rejects duplicate normalized email and duplicate mobile with generic conflicts", async () => {
     const emailFixture = createAccountDatabaseFixture();
-    const firstEmail = await app.fetch(registrationRequest(validRegistration()), { ACCOUNT_DB: emailFixture.database });
-    const duplicateEmail = await app.fetch(registrationRequest(validRegistration({ email: " jane.doe@EXAMPLE.com " })), { ACCOUNT_DB: emailFixture.database });
+    const firstEmail = await accountFetch(registrationRequest(validRegistration()), { ACCOUNT_DB: emailFixture.database });
+    const duplicateEmail = await accountFetch(registrationRequest(validRegistration({ email: " jane.doe@EXAMPLE.com " })), { ACCOUNT_DB: emailFixture.database });
     expect(firstEmail.status).toBe(201);
     expect(duplicateEmail.status).toBe(409);
 
     const mobileFixture = createAccountDatabaseFixture();
-    const firstMobile = await app.fetch(registrationRequest(validRegistration()), { ACCOUNT_DB: mobileFixture.database });
-    const duplicateMobile = await app.fetch(registrationRequest(validRegistration({ email: "other@example.com" })), { ACCOUNT_DB: mobileFixture.database });
+    const firstMobile = await accountFetch(registrationRequest(validRegistration()), { ACCOUNT_DB: mobileFixture.database });
+    const duplicateMobile = await accountFetch(registrationRequest(validRegistration({ email: "other@example.com" })), { ACCOUNT_DB: mobileFixture.database });
     expect(firstMobile.status).toBe(201);
     expect(duplicateMobile.status).toBe(409);
     expect(await duplicateMobile.json()).toEqual({ ok: false, error: "An account with these details could not be registered." });
@@ -643,8 +654,8 @@ describe("account registration API", () => {
   it("allows at most one of concurrent registrations with the same email", async () => {
     const fixture = createAccountDatabaseFixture();
     const responses = await Promise.all([
-      app.fetch(registrationRequest(validRegistration()), { ACCOUNT_DB: fixture.database }),
-      app.fetch(registrationRequest(validRegistration({ mobileNumber: "+442071838750" })), { ACCOUNT_DB: fixture.database }),
+      accountFetch(registrationRequest(validRegistration()), { ACCOUNT_DB: fixture.database }),
+      accountFetch(registrationRequest(validRegistration({ mobileNumber: "+442071838750" })), { ACCOUNT_DB: fixture.database }),
     ]);
     expect(responses.map(({ status }) => status).sort()).toEqual([201, 409]);
     expect(fixture.emails.size).toBe(1);
@@ -665,7 +676,7 @@ describe("account registration API", () => {
     const token = await verification.issueForAccount(account.id);
     expect(token).toBe("V".repeat(43));
 
-    const response = await app.fetch(accountRequest("/api/accounts/verify-email", { token: token! }), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(accountRequest("/api/accounts/verify-email", { token: token! }), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, data: { emailVerified: true } });
     expect(fixture.accounts.get(account.id)?.email_verified_at).not.toBeNull();
@@ -676,7 +687,7 @@ describe("account registration API", () => {
   it("rejects invalid and expired verification tokens", async () => {
     const fixture = createAccountDatabaseFixture();
     const account = await registerFixtureAccount(fixture);
-    const invalidResponse = await app.fetch(accountRequest("/api/accounts/verify-email", { token: "not-a-valid-token" }), { ACCOUNT_DB: fixture.database });
+    const invalidResponse = await accountFetch(accountRequest("/api/accounts/verify-email", { token: "not-a-valid-token" }), { ACCOUNT_DB: fixture.database });
     expect(invalidResponse.status).toBe(400);
 
     const storedToken = [...fixture.tokens.values()][0];
@@ -693,7 +704,7 @@ describe("account registration API", () => {
     expect(expiredToken).toBe(token);
     const expiredRecord = [...fixture.tokens.values()].find((record) => record.id === "ev_expired")!;
     expiredRecord.expires_at = "2020-01-01T00:00:00.000Z";
-    const expiredResponse = await app.fetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
+    const expiredResponse = await accountFetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
     expect(expiredResponse.status).toBe(400);
     expect(fixture.accounts.get(account.id)?.email_verified_at).toBeNull();
   });
@@ -711,8 +722,8 @@ describe("account registration API", () => {
     );
     await verification.issueForAccount(account.id);
 
-    const first = await app.fetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
-    const second = await app.fetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
+    const first = await accountFetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
+    const second = await accountFetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
     expect(first.status).toBe(200);
     expect(second.status).toBe(400);
   });
@@ -736,17 +747,17 @@ describe("account registration API", () => {
     expect(JSON.stringify([...fixture.tokens.values()])).not.toContain(plaintextToken);
     expect([...fixture.tokens.values()].every((record) => !Object.values(record).includes(plaintextToken))).toBe(true);
 
-    const supersededResponse = await app.fetch(accountRequest("/api/accounts/verify-email", { token: "S".repeat(43) }), { ACCOUNT_DB: fixture.database });
+    const supersededResponse = await accountFetch(accountRequest("/api/accounts/verify-email", { token: "S".repeat(43) }), { ACCOUNT_DB: fixture.database });
     expect(supersededResponse.status).toBe(400);
-    const validResponse = await app.fetch(accountRequest("/api/accounts/verify-email", { token: plaintextToken }), { ACCOUNT_DB: fixture.database });
+    const validResponse = await accountFetch(accountRequest("/api/accounts/verify-email", { token: plaintextToken }), { ACCOUNT_DB: fixture.database });
     expect(validResponse.status).toBe(200);
   });
 
   it("returns a generic resend response for existing and unknown accounts", async () => {
     const fixture = createAccountDatabaseFixture();
     await registerFixtureAccount(fixture);
-    const existing = await app.fetch(accountRequest("/api/accounts/resend-verification", { email: "jane.doe@example.com" }), { ACCOUNT_DB: fixture.database });
-    const unknown = await app.fetch(accountRequest("/api/accounts/resend-verification", { email: "missing@example.com" }), { ACCOUNT_DB: fixture.database });
+    const existing = await accountFetch(accountRequest("/api/accounts/resend-verification", { email: "jane.doe@example.com" }), { ACCOUNT_DB: fixture.database });
+    const unknown = await accountFetch(accountRequest("/api/accounts/resend-verification", { email: "missing@example.com" }), { ACCOUNT_DB: fixture.database });
     expect(existing.status).toBe(202);
     expect(unknown.status).toBe(202);
     expect(await existing.json()).toEqual(await unknown.json());
@@ -765,7 +776,7 @@ describe("account registration API", () => {
       () => "ev_verify_before_resend",
     );
     await initialVerification.issueForAccount(account.id);
-    await app.fetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
+    await accountFetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database });
 
     const countBeforeResend = fixture.tokens.size;
     const verifiedAccountResend = new EmailVerificationService(
@@ -793,8 +804,8 @@ describe("account registration API", () => {
     await verification.issueForAccount(account.id);
 
     const responses = await Promise.all([
-      app.fetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database }),
-      app.fetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database }),
+      accountFetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database }),
+      accountFetch(accountRequest("/api/accounts/verify-email", { token }), { ACCOUNT_DB: fixture.database }),
     ]);
     expect(responses.map(({ status }) => status).sort()).toEqual([200, 400]);
     expect(fixture.accounts.get(account.id)?.email_verified_at).not.toBeNull();
@@ -805,7 +816,7 @@ describe("account login and session APIs", () => {
   it("logs in a verified account, issues a secure cookie, and stores only the token hash", async () => {
     const fixture = createAccountDatabaseFixture();
     seedVerifiedAccount(fixture);
-    const response = await app.fetch(loginRequest(" Jane.Doe@EXAMPLE.com ", "a long passphrase"), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(loginRequest(" Jane.Doe@EXAMPLE.com ", "a long passphrase"), { ACCOUNT_DB: fixture.database });
     const payload = await response.json() as { data: { account: Account } };
     const cookie = accountCookie(response);
     const token = cookie.slice(cookie.indexOf("=") + 1);
@@ -828,18 +839,18 @@ describe("account login and session APIs", () => {
   it("returns the same generic failure for unknown emails, wrong passwords, unverified, and disabled accounts", async () => {
     const wrongPasswordFixture = createAccountDatabaseFixture();
     seedVerifiedAccount(wrongPasswordFixture);
-    const wrongPassword = await app.fetch(loginRequest("jane.doe@example.com", "incorrect password"), { ACCOUNT_DB: wrongPasswordFixture.database });
+    const wrongPassword = await accountFetch(loginRequest("jane.doe@example.com", "incorrect password"), { ACCOUNT_DB: wrongPasswordFixture.database });
 
     const unknownFixture = createAccountDatabaseFixture();
-    const unknownEmail = await app.fetch(loginRequest("missing@example.com", "incorrect password"), { ACCOUNT_DB: unknownFixture.database });
+    const unknownEmail = await accountFetch(loginRequest("missing@example.com", "incorrect password"), { ACCOUNT_DB: unknownFixture.database });
 
     const unverifiedFixture = createAccountDatabaseFixture();
     seedVerifiedAccount(unverifiedFixture, "PENDING_EMAIL_VERIFICATION", null);
-    const unverified = await app.fetch(loginRequest("jane.doe@example.com", "a long passphrase"), { ACCOUNT_DB: unverifiedFixture.database });
+    const unverified = await accountFetch(loginRequest("jane.doe@example.com", "a long passphrase"), { ACCOUNT_DB: unverifiedFixture.database });
 
     const disabledFixture = createAccountDatabaseFixture();
     seedVerifiedAccount(disabledFixture, "SUSPENDED");
-    const disabled = await app.fetch(loginRequest("jane.doe@example.com", "a long passphrase"), { ACCOUNT_DB: disabledFixture.database });
+    const disabled = await accountFetch(loginRequest("jane.doe@example.com", "a long passphrase"), { ACCOUNT_DB: disabledFixture.database });
 
     const responses = [wrongPassword, unknownEmail, unverified, disabled];
     expect(responses.map(({ status }) => status)).toEqual([401, 401, 401, 401]);
@@ -851,27 +862,27 @@ describe("account login and session APIs", () => {
   it("serves /me only for an active, unexpired, unrevoked session", async () => {
     const fixture = createAccountDatabaseFixture();
     const account = seedVerifiedAccount(fixture);
-    const login = await app.fetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
+    const login = await accountFetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
     const cookie = accountCookie(login);
-    const me = await app.fetch(meRequest(cookie), { ACCOUNT_DB: fixture.database });
+    const me = await accountFetch(meRequest(cookie), { ACCOUNT_DB: fixture.database });
     const payload = await me.json() as { data: { account: Account } };
     expect(me.status).toBe(200);
     expect(payload.data.account.id).toBe(account.id);
     expect(JSON.stringify(payload)).not.toMatch(/password_hash|token_hash|passwordHash|sessionToken/iu);
 
-    expect((await app.fetch(meRequest(), { ACCOUNT_DB: fixture.database })).status).toBe(401);
+    expect((await accountFetch(meRequest(), { ACCOUNT_DB: fixture.database })).status).toBe(401);
     const session = [...fixture.sessions.values()][0];
     session.expires_at = "2020-01-01T00:00:00.000Z";
-    expect((await app.fetch(meRequest(cookie), { ACCOUNT_DB: fixture.database })).status).toBe(401);
+    expect((await accountFetch(meRequest(cookie), { ACCOUNT_DB: fixture.database })).status).toBe(401);
   });
 
   it("logout revokes a session, clears the cookie, and is idempotent", async () => {
     const fixture = createAccountDatabaseFixture();
     const account = seedVerifiedAccount(fixture);
-    const login = await app.fetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
+    const login = await accountFetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
     const cookie = accountCookie(login);
-    const firstLogout = await app.fetch(logoutRequest(cookie), { ACCOUNT_DB: fixture.database });
-    const secondLogout = await app.fetch(logoutRequest(cookie), { ACCOUNT_DB: fixture.database });
+    const firstLogout = await accountFetch(logoutRequest(cookie), { ACCOUNT_DB: fixture.database });
+    const secondLogout = await accountFetch(logoutRequest(cookie), { ACCOUNT_DB: fixture.database });
 
     expect(firstLogout.status).toBe(200);
     expect(secondLogout.status).toBe(200);
@@ -879,22 +890,22 @@ describe("account login and session APIs", () => {
     expect(firstLogout.headers.get("Set-Cookie")).toContain("HttpOnly");
     expect(firstLogout.headers.get("Set-Cookie")).toContain("Secure");
     expect([...fixture.sessions.values()][0].revoked_at).not.toBeNull();
-    expect((await app.fetch(meRequest(cookie), { ACCOUNT_DB: fixture.database })).status).toBe(401);
+    expect((await accountFetch(meRequest(cookie), { ACCOUNT_DB: fixture.database })).status).toBe(401);
   });
 
   it("keeps simultaneous sessions independent for multiple devices", async () => {
     const fixture = createAccountDatabaseFixture();
     const account = seedVerifiedAccount(fixture);
-    const firstLogin = await app.fetch(loginRequest(account.email, "a long passphrase", "203.0.113.11"), { ACCOUNT_DB: fixture.database });
-    const secondLogin = await app.fetch(loginRequest(account.email, "a long passphrase", "203.0.113.12"), { ACCOUNT_DB: fixture.database });
+    const firstLogin = await accountFetch(loginRequest(account.email, "a long passphrase", "203.0.113.11"), { ACCOUNT_DB: fixture.database });
+    const secondLogin = await accountFetch(loginRequest(account.email, "a long passphrase", "203.0.113.12"), { ACCOUNT_DB: fixture.database });
     const firstCookie = accountCookie(firstLogin);
     const secondCookie = accountCookie(secondLogin);
     expect(firstCookie).not.toBe(secondCookie);
     expect(fixture.sessions.size).toBe(2);
 
-    await app.fetch(logoutRequest(firstCookie), { ACCOUNT_DB: fixture.database });
-    expect((await app.fetch(meRequest(firstCookie), { ACCOUNT_DB: fixture.database })).status).toBe(401);
-    expect((await app.fetch(meRequest(secondCookie), { ACCOUNT_DB: fixture.database })).status).toBe(200);
+    await accountFetch(logoutRequest(firstCookie), { ACCOUNT_DB: fixture.database });
+    expect((await accountFetch(meRequest(firstCookie), { ACCOUNT_DB: fixture.database })).status).toBe(401);
+    expect((await accountFetch(meRequest(secondCookie), { ACCOUNT_DB: fixture.database })).status).toBe(200);
   });
 
   it("limits repeated attempts in a resettable window without storing raw identifiers", async () => {
@@ -924,7 +935,7 @@ describe("account login and session APIs", () => {
 describe("account profile APIs", () => {
   it("fetches the authenticated public profile", async () => {
     const { fixture, account, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(meRequest(cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(meRequest(cookie), { ACCOUNT_DB: fixture.database });
     const payload = await response.json() as { data: { account: Account } };
 
     expect(response.status).toBe(200);
@@ -934,34 +945,34 @@ describe("account profile APIs", () => {
 
   it("updates full name", async () => {
     const { fixture, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest({ fullName: "  Jane Q. Doe  " }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ fullName: "  Jane Q. Doe  " }, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(200);
     expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).full_name).toBe("Jane Q. Doe");
   });
 
   it("updates country using normalized input", async () => {
     const { fixture, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest({ country: " ca " }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ country: " ca " }, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(200);
     expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).country_code).toBe("CA");
   });
 
   it("updates mobile using normalized input", async () => {
     const { fixture, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest({ mobileNumber: "+1 (415) 555-0101" }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ mobileNumber: "+1 (415) 555-0101" }, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(200);
     expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).mobile_e164).toBe("+14155550101");
   });
 
   it("rejects duplicate normalized mobile numbers safely", async () => {
     const { fixture, cookie, account } = await authenticatedProfileFixture();
-    const second = await app.fetch(registrationRequest(validRegistration({
+    const second = await accountFetch(registrationRequest(validRegistration({
       email: "other@example.com",
       mobileNumber: "+44 20 7183 8750",
     })), { ACCOUNT_DB: fixture.database });
     expect(second.status).toBe(201);
 
-    const response = await app.fetch(profilePatchRequest({ mobileNumber: "+442071838750" }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ mobileNumber: "+442071838750" }, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(409);
     expect((fixture.accounts.get(account.id) as Record<string, unknown>).mobile_e164).toBe(account.mobileNumber);
   });
@@ -969,14 +980,14 @@ describe("account profile APIs", () => {
   it("clears mobile verification when the mobile number changes", async () => {
     const { fixture, cookie } = await authenticatedProfileFixture();
     (fixture.accounts.get("acct_login_test") as Record<string, unknown>).mobile_verified_at = "2026-09-30T12:00:00.000Z";
-    const response = await app.fetch(profilePatchRequest({ mobileNumber: "+14155550101" }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ mobileNumber: "+14155550101" }, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(200);
     expect((fixture.accounts.get("acct_login_test") as Record<string, unknown>).mobile_verified_at).toBeNull();
   });
 
   it("updates marketing consent explicitly", async () => {
     const { fixture, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest({ marketingConsent: true }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ marketingConsent: true }, cookie), { ACCOUNT_DB: fixture.database });
     const payload = await response.json() as { data: { account: Account } };
     expect(response.status).toBe(200);
     expect(payload.data.account.marketingConsent).toBe(true);
@@ -985,7 +996,7 @@ describe("account profile APIs", () => {
 
   it("preserves unspecified fields during a partial update", async () => {
     const { fixture, account, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest({ fullName: "Updated Name" }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ fullName: "Updated Name" }, cookie), { ACCOUNT_DB: fixture.database });
     const updated = fixture.accounts.get(account.id) as Record<string, unknown>;
     expect(response.status).toBe(200);
     expect(updated.full_name).toBe("Updated Name");
@@ -1000,7 +1011,7 @@ describe("account profile APIs", () => {
     ["invalid mobile", { mobileNumber: "4155550100" }],
   ])("rejects %s", async (_caseName, body) => {
     const { fixture, account, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest(body, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest(body, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(400);
     expect(fixture.accounts.get(account.id)).toMatchObject({
       full_name: account.fullName,
@@ -1011,20 +1022,20 @@ describe("account profile APIs", () => {
 
   it("rejects an unauthenticated profile update", async () => {
     const fixture = createAccountDatabaseFixture();
-    const response = await app.fetch(profilePatchRequest({ fullName: "Nope" }), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ fullName: "Nope" }), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(401);
   });
 
   it("does not allow email changes through the profile patch", async () => {
     const { fixture, account, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest({ email: "changed@example.com" }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ email: "changed@example.com" }, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(400);
     expect((fixture.accounts.get(account.id) as Record<string, unknown>).email_normalized).toBe(account.email);
   });
 
   it("rejects non-boolean marketing consent", async () => {
     const { fixture, cookie } = await authenticatedProfileFixture();
-    const response = await app.fetch(profilePatchRequest({ marketingConsent: "yes" }, cookie), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(profilePatchRequest({ marketingConsent: "yes" }, cookie), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(400);
   });
 });
@@ -1044,9 +1055,9 @@ describe("password reset APIs", () => {
     );
     expect(await reset.requestReset(account.email, "203.0.113.41")).toBe(plaintextToken);
 
-    const knownResponse = await app.fetch(forgotPasswordRequest(account.email), { ACCOUNT_DB: fixture.database });
+    const knownResponse = await accountFetch(forgotPasswordRequest(account.email), { ACCOUNT_DB: fixture.database });
     const unknownFixture = createAccountDatabaseFixture();
-    const unknownResponse = await app.fetch(forgotPasswordRequest("missing@example.com"), { ACCOUNT_DB: unknownFixture.database });
+    const unknownResponse = await accountFetch(forgotPasswordRequest("missing@example.com"), { ACCOUNT_DB: unknownFixture.database });
     expect(knownResponse.status).toBe(202);
     expect(unknownResponse.status).toBe(202);
     const knownPayload = await knownResponse.json();
@@ -1087,7 +1098,7 @@ describe("password reset APIs", () => {
     );
     await resetService.requestReset(account.email, "203.0.113.42");
 
-    const response = await app.fetch(resetPasswordRequest(token, "new secure passphrase"), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(resetPasswordRequest(token, "new secure passphrase"), { ACCOUNT_DB: fixture.database });
     const payload = await response.json();
     const newHash = fixture.credentials.get(account.id)!;
     expect(response.status).toBe(200);
@@ -1102,14 +1113,14 @@ describe("password reset APIs", () => {
     expect(JSON.stringify(payload)).not.toMatch(/password_hash|passwordHash|token_hash|resetToken/iu);
     expect(JSON.stringify(payload)).not.toContain(token);
 
-    const replay = await app.fetch(resetPasswordRequest(token, "another secure passphrase"), { ACCOUNT_DB: fixture.database });
+    const replay = await accountFetch(resetPasswordRequest(token, "another secure passphrase"), { ACCOUNT_DB: fixture.database });
     expect(replay.status).toBe(400);
   });
 
   it("rejects invalid and expired reset tokens", async () => {
     const fixture = createAccountDatabaseFixture();
     const account = seedVerifiedAccount(fixture);
-    const invalid = await app.fetch(resetPasswordRequest("invalid-token", "new secure passphrase"), { ACCOUNT_DB: fixture.database });
+    const invalid = await accountFetch(resetPasswordRequest("invalid-token", "new secure passphrase"), { ACCOUNT_DB: fixture.database });
     expect(invalid.status).toBe(400);
 
     const token = "E".repeat(43);
@@ -1122,7 +1133,7 @@ describe("password reset APIs", () => {
     );
     await resetService.requestReset(account.email, "203.0.113.43");
     [...fixture.resetTokens.values()][0].expires_at = "2020-01-01T00:00:00.000Z";
-    const expired = await app.fetch(resetPasswordRequest(token, "new secure passphrase"), { ACCOUNT_DB: fixture.database });
+    const expired = await accountFetch(resetPasswordRequest(token, "new secure passphrase"), { ACCOUNT_DB: fixture.database });
     expect(expired.status).toBe(400);
     expect([...fixture.resetTokens.values()][0].consumed_at).toBeNull();
   });
@@ -1139,7 +1150,7 @@ describe("password reset APIs", () => {
       () => "prt_short_password",
     );
     await resetService.requestReset(account.email, "203.0.113.44");
-    const response = await app.fetch(resetPasswordRequest(token, "short"), { ACCOUNT_DB: fixture.database });
+    const response = await accountFetch(resetPasswordRequest(token, "short"), { ACCOUNT_DB: fixture.database });
     expect(response.status).toBe(400);
     expect([...fixture.resetTokens.values()][0].consumed_at).toBeNull();
     expect(fixture.credentials.get(account.id)).toBe(verifiedAccountPasswordHash);
@@ -1169,8 +1180,8 @@ describe("password reset APIs", () => {
     const oldToken = fixture.resetTokens.get("prt_old")!;
     expect(oldToken.revoked_at).not.toBeNull();
     expect(oldToken.superseded_by_token_id).toBe("prt_new");
-    expect((await app.fetch(resetPasswordRequest("O".repeat(43), "new secure passphrase"), { ACCOUNT_DB: fixture.database })).status).toBe(400);
-    expect((await app.fetch(resetPasswordRequest(nextToken, "new secure passphrase"), { ACCOUNT_DB: fixture.database })).status).toBe(200);
+    expect((await accountFetch(resetPasswordRequest("O".repeat(43), "new secure passphrase"), { ACCOUNT_DB: fixture.database })).status).toBe(400);
+    expect((await accountFetch(resetPasswordRequest(nextToken, "new secure passphrase"), { ACCOUNT_DB: fixture.database })).status).toBe(200);
   });
 
   it("does not allow concurrent reset requests to both consume one token", async () => {
@@ -1187,8 +1198,8 @@ describe("password reset APIs", () => {
     await resetService.requestReset(account.email, "203.0.113.46");
 
     const responses = await Promise.all([
-      app.fetch(resetPasswordRequest(token, "first new secure passphrase"), { ACCOUNT_DB: fixture.database }),
-      app.fetch(resetPasswordRequest(token, "second new secure passphrase"), { ACCOUNT_DB: fixture.database }),
+      accountFetch(resetPasswordRequest(token, "first new secure passphrase"), { ACCOUNT_DB: fixture.database }),
+      accountFetch(resetPasswordRequest(token, "second new secure passphrase"), { ACCOUNT_DB: fixture.database }),
     ]);
     expect(responses.map(({ status }) => status).sort()).toEqual([200, 400]);
     expect([...fixture.resetTokens.values()][0].consumed_at).not.toBeNull();
@@ -1211,8 +1222,8 @@ describe("password reset APIs", () => {
     const account = seedVerifiedAccount(fixture);
     expect(await resetService.requestReset(account.email, "203.0.113.47")).toBeNull();
 
-    const limited = await app.fetch(forgotPasswordRequest(account.email, "203.0.113.47"), { ACCOUNT_DB: fixture.database });
-    const unknown = await app.fetch(forgotPasswordRequest("another-missing@example.com", "203.0.113.47"), { ACCOUNT_DB: fixture.database });
+    const limited = await accountFetch(forgotPasswordRequest(account.email, "203.0.113.47"), { ACCOUNT_DB: fixture.database });
+    const unknown = await accountFetch(forgotPasswordRequest("another-missing@example.com", "203.0.113.47"), { ACCOUNT_DB: fixture.database });
     expect(limited.status).toBe(202);
     expect(await limited.json()).toEqual(await unknown.json());
   });
