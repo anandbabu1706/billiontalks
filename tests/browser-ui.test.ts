@@ -206,6 +206,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     pretendToBeVisual: true,
     url: pageUrl,
     beforeParse(window) {
+      (window as any).btResumeRtpProbeMs = 5;
       let micCallIndex = 0;
       let cameraCallIndex = 0;
 
@@ -860,10 +861,8 @@ describe("BillionTalks browser UI regression tests", () => {
 
     micControl.click();
     await flush();
-    const closeBody = fetchMock.mock.calls
-      .filter(([url, init]) => String(url).endsWith("/media/tracks/close") && init?.method === "POST")
-      .map(([, init]) => JSON.parse(String(init?.body))).at(-1);
-    expect(closeBody.trackNames).toContain("microphone");
+    // Mute is soft: no renegotiation or track close is sent.
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/media/tracks/close"))).toHaveLength(0);
   });
 
   it("publishes and stops screen share using the existing share control", async () => {
@@ -1255,8 +1254,8 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("videoStage")?.classList.contains("presentation-active")).toBe(false);
 
     queueSubscribePayload({ ok: true, data: { operationId: "op-a", sessionDescription: { type: "offer", sdp: "offer-screen-a" }, tracks: [screen] } });
-    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
-    (document.getElementById("micControlBtn") as HTMLButtonElement).click();
+    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
+    (document.getElementById("cameraControlBtn") as HTMLButtonElement).click();
     await flush();
     const firstScreen = createFakeRemoteTrack("remote-screen-a", "video");
     subscriber.emitTrack("remote-2", firstScreen);
@@ -2056,16 +2055,15 @@ describe("BillionTalks browser UI regression tests", () => {
 
     expect(() => micControl.click()).not.toThrow();
     await flush();
-    expect(firstTrack?.stop).toHaveBeenCalledTimes(1);
+    // Soft mute keeps the capture track alive and only disables it.
+    expect(firstTrack?.stop).not.toHaveBeenCalled();
+    expect((firstTrack as any).enabled).toBe(false);
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
 
     micControl.click();
     await flush();
-    const secondTrack = micStreams[1]?.getAudioTracks?.()[0];
-    expect(getUserMediaMock).toHaveBeenCalledTimes(3);
-    expect(secondTrack).toBeTruthy();
-    expect(secondTrack).not.toBe(firstTrack);
-    expect(secondTrack?.readyState).toBe("live");
+    expect((firstTrack as any).enabled).toBe(true);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
     expect(micControl.classList.contains("active") || micControl.textContent?.toLowerCase().includes("on")).toBe(true);
     expect(document.getElementById("errorBanner")?.textContent).toBe("");
 
@@ -2075,7 +2073,7 @@ describe("BillionTalks browser UI regression tests", () => {
 
     cameraControl.click();
     await flush();
-    expect(getUserMediaMock).toHaveBeenCalledTimes(4);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(3);
     expect(document.querySelector("video.local-preview")).not.toBeNull();
     expect(document.getElementById("errorBanner")?.textContent).toBe("");
 
@@ -2083,7 +2081,7 @@ describe("BillionTalks browser UI regression tests", () => {
     await flush();
     cameraControl.click();
     await flush();
-    expect(getUserMediaMock).toHaveBeenCalledTimes(5);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(4);
   });
 
   it("submits admission requests on Join Now and keeps guests waiting without entering the active room", async () => {
@@ -3447,5 +3445,263 @@ describe("BT-V0-027 recovery latency and playback hardening", () => {
     expect(seen.some((text) => text.includes("valid local tracks are required"))).toBe(false);
     expect(seen.some((text) => text.includes("Reconnecting media"))).toBe(true);
     expect(recoverCalls(fetchMock, "publisher").length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("BT-V0-028 mic mute isolation and independent video health", () => {
+  const urlOf = (input: RequestInfo | URL) => (typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+  const callsTo = (fetchMock: ReturnType<typeof vi.fn>, suffix: string) => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(suffix) && init?.method === "POST");
+  const setVisibility = (window: any, document: Document, value: "hidden" | "visible") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+  };
+  const publisherPeer = () => FakePeerConnection.instances.find((peer) => peer.getTransceivers().some((entry) => entry.direction === "sendonly"))!;
+  const remoteCamera = (operationId: string) => ({
+    ok: true,
+    data: {
+      operationId,
+      sessionDescription: { type: "offer", sdp: operationId },
+      tracks: [{ mid: "remote-0", publisherUserId: "remote-user", publisherDisplayName: "Remote Guest", trackName: "camera", publicationKey: "remote-camera" }],
+    },
+  });
+  // Counters advance per getStats() call only for the kinds that are currently flowing.
+  const driveOutboundStats = (peer: any, flowing: { audio: boolean; video: boolean }) => {
+    let audio = 100;
+    let video = 1000;
+    peer.getStats = async () => {
+      if (flowing.audio) audio += 50;
+      if (flowing.video) video += 500;
+      return new Map<string, any>([
+        ["a", { type: "outbound-rtp", kind: "audio", bytesSent: audio }],
+        ["v", { type: "outbound-rtp", kind: "video", bytesSent: video, framesEncoded: video / 100 }],
+      ]);
+    };
+  };
+  async function joinWithMedia(title: string) {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(page.window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    page.setIncludeRemoteParticipant();
+    page.setNextSubscribePayload(remoteCamera("initial"));
+    await joinHostMeeting(page.document, title);
+    await flush();
+    return page;
+  }
+
+  it("mutes and unmutes the microphone without touching the camera, transceivers, publications, or subscriber", async () => {
+    const { document, fetchMock, micStreams, cameraStreams, getUserMediaMock } = await joinWithMedia("Mic isolation");
+    const micTrack: any = micStreams[0].getAudioTracks()[0];
+    const cameraTrack: any = cameraStreams[0].getVideoTracks()[0];
+    const publisher = publisherPeer();
+    const transceivers = [...publisher.getTransceivers()];
+    const remoteVideo = document.querySelector("#videoStage video.remote-media") as HTMLVideoElement | null;
+    const remoteSource = remoteVideo?.srcObject;
+    const peersBefore = FakePeerConnection.instances.length;
+    const counts = () => [callsTo(fetchMock, "/media/publish").length, callsTo(fetchMock, "/media/tracks/close").length,
+      callsTo(fetchMock, "/media/renegotiate").length, callsTo(fetchMock, "/media/recover").length];
+    const before = counts();
+    const mic = document.getElementById("micControlBtn") as HTMLButtonElement;
+
+    mic.click();
+    await flush();
+    expect(micTrack.enabled).toBe(false);
+    expect(micTrack.stop).not.toHaveBeenCalled();
+    expect(cameraTrack.enabled).not.toBe(false);
+    expect(cameraTrack.stop).not.toHaveBeenCalled();
+    expect(mic.classList.contains("off")).toBe(true);
+
+    mic.click();
+    await flush();
+    expect(micTrack.enabled).toBe(true);
+    expect(cameraTrack.stop).not.toHaveBeenCalled();
+    expect(mic.classList.contains("active")).toBe(true);
+
+    expect(counts()).toEqual(before);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(FakePeerConnection.instances.length).toBe(peersBefore);
+    expect(publisherPeer()).toBe(publisher);
+    expect(publisher.getTransceivers()).toEqual(transceivers);
+    expect(publisher.getTransceivers().find((entry) => entry.sender.track === cameraTrack)?.stop).not.toHaveBeenCalled();
+    if (remoteVideo) expect((document.querySelector("#videoStage video.remote-media") as HTMLVideoElement).srcObject).toBe(remoteSource);
+  });
+
+  it("keeps a muted microphone muted when the capture is reused and re-enables it on unmute", async () => {
+    const { document, micStreams } = await joinWithMedia("Mic mute persistence");
+    const micTrack: any = micStreams[0].getAudioTracks()[0];
+    const mic = document.getElementById("toggleMicBtn") as HTMLButtonElement | null ?? document.getElementById("micControlBtn") as HTMLButtonElement;
+    mic.click();
+    await flush();
+    setVisibility((document.defaultView as any), document, "hidden");
+    setVisibility((document.defaultView as any), document, "visible");
+    await flush();
+    expect(micTrack.enabled).toBe(false);
+    mic.click();
+    await flush();
+    expect(micTrack.enabled).toBe(true);
+  });
+
+  it("resumes with healthy RTP without rebuilding the publisher or either media path", async () => {
+    const { window, document, fetchMock } = await joinWithMedia("Healthy resume");
+    const publisher = publisherPeer();
+    publisher.setConnectionStates("connected", "connected");
+    driveOutboundStats(publisher, { audio: true, video: true });
+    const peersBefore = FakePeerConnection.instances.length;
+    setVisibility(window, document, "hidden");
+    setVisibility(window, document, "visible");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+    expect(FakePeerConnection.instances.length).toBe(peersBefore);
+    expect((window as any).btMediaDiagnostics().videoHealth.classification).toBe("healthy");
+  });
+
+  it("repairs a video-only publisher stall with replaceTrack and keeps audio untouched", async () => {
+    const { window, document, fetchMock, micStreams } = await joinWithMedia("Video stall");
+    const publisher = publisherPeer();
+    publisher.setConnectionStates("connected", "connected");
+    const flowing = { audio: true, video: false };
+    driveOutboundStats(publisher, flowing);
+    const cameraTransceiver = publisher.getTransceivers()[1];
+    cameraTransceiver.sender.replaceTrack = vi.fn(async () => { flowing.video = true; });
+    setVisibility(window, document, "hidden");
+    setVisibility(window, document, "visible");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(cameraTransceiver.sender.replaceTrack).toHaveBeenCalledTimes(1);
+    expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+    expect(callsTo(fetchMock, "/media/tracks/close")).toHaveLength(0);
+    expect((micStreams[0].getAudioTracks()[0] as any).stop).not.toHaveBeenCalled();
+    const health = (window as any).btMediaDiagnostics().videoHealth;
+    expect(health.actions).toContain("camera-replace-track");
+    expect(health.classification).toBe("healthy");
+  });
+
+  it("reacquires an ended camera on resume and swaps it into the existing sender", async () => {
+    const { window, document, fetchMock, getUserMediaMock, cameraStreams, micStreams } = await joinWithMedia("Ended camera");
+    const publisher = publisherPeer();
+    publisher.setConnectionStates("connected", "connected");
+    const flowing = { audio: true, video: false };
+    driveOutboundStats(publisher, flowing);
+    const cameraTransceiver = publisher.getTransceivers()[1];
+    cameraTransceiver.sender.replaceTrack = vi.fn(async () => { flowing.video = true; });
+    (cameraStreams[0].getVideoTracks()[0] as any).readyState = "ended";
+    const callsBefore = getUserMediaMock.mock.calls.length;
+    setVisibility(window, document, "hidden");
+    setVisibility(window, document, "visible");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(getUserMediaMock.mock.calls.length).toBe(callsBefore + 1);
+    expect(getUserMediaMock.mock.calls.at(-1)?.[0]).toMatchObject({ video: expect.anything() });
+    expect(cameraTransceiver.sender.replaceTrack).toHaveBeenCalledWith(expect.objectContaining({ kind: "video", readyState: "live" }));
+    expect(callsTo(fetchMock, "/media/recover")).toHaveLength(0);
+    expect((micStreams[0].getAudioTracks()[0] as any).stop).not.toHaveBeenCalled();
+  });
+
+  it("bounds video repair: replaceTrack, then camera republish, then a single publisher recovery", async () => {
+    const { window, document, fetchMock } = await joinWithMedia("Persistent stall");
+    const publisher = publisherPeer();
+    publisher.setConnectionStates("connected", "connected");
+    driveOutboundStats(publisher, { audio: true, video: false });
+    const cameraTransceiver = publisher.getTransceivers()[1];
+    setVisibility(window, document, "hidden");
+    setVisibility(window, document, "visible");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(cameraTransceiver.sender.replaceTrack).toHaveBeenCalledTimes(1);
+    expect(callsTo(fetchMock, "/media/tracks/close").filter(([, init]) => JSON.parse(String(init?.body)).trackNames.includes("camera")).length).toBeLessThanOrEqual(1);
+    expect(callsTo(fetchMock, "/media/recover").length).toBeLessThanOrEqual(1);
+  });
+
+  it("classifies a stalled subscriber video as a rediscovery before any subscriber rebuild", async () => {
+    const { window, document, fetchMock } = await joinWithMedia("Subscriber stall");
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+    subscriber.setConnectionStates("connected", "connected");
+    let audio = 10;
+    (subscriber as any).getStats = async () => {
+      audio += 20;
+      return new Map<string, any>([
+        ["a", { type: "inbound-rtp", kind: "audio", bytesReceived: audio }],
+        ["v", { type: "inbound-rtp", kind: "video", bytesReceived: 500, framesDecoded: 5 }],
+      ]);
+    };
+    const discoveryBefore = fetchMock.mock.calls.filter(([url]) => String(url).includes("/media/subscribe")).length;
+    // Long background so the stronger subscriber check (not an immediate rebuild) decides.
+    (window as any).btHiddenSubscriberRebuildMs = 0;
+    setVisibility(window, document, "hidden");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    setVisibility(window, document, "visible");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((window as any).btMediaDiagnostics().videoHealth.subscriberClassification).toBe("subscriber-video-rtp-stalled");
+    expect((window as any).btMediaDiagnostics().videoHealth.actions).toContain("publication-rediscovery");
+    expect(discoveryBefore).toBeGreaterThanOrEqual(0);
+    expect(callsTo(fetchMock, "/media/recover").filter(([, init]) => JSON.parse(String(init?.body)).direction === "subscriber").length).toBeLessThanOrEqual(1);
+  });
+
+  it("guest mic mute/unmute only toggles the guest audio track and never disturbs camera, publisher, or subscriber", async () => {
+    const { document, fetchMock, micStreams, cameraStreams, setNextSubscribePayload, setIncludeRemoteParticipant, getUserMediaMock } = await loadRenderedPage();
+    Object.defineProperty(document.defaultView, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(document.defaultView, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    setNextSubscribePayload(remoteCamera("guest-initial"));
+    (document.getElementById("meetingIdInput") as HTMLInputElement).value = "btm_test_123";
+    document.getElementById("resolveMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Guest Gina";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+    await flush();
+
+    expect(document.getElementById("meetingScreen")?.classList.contains("visible")).toBe(true);
+    expect(document.querySelector("[data-remove-user-id]")).toBeNull();
+    const micTrack: any = micStreams[0].getAudioTracks()[0];
+    const cameraTrack: any = cameraStreams[0].getVideoTracks()[0];
+    const publisher = publisherPeer();
+    const transceivers = [...publisher.getTransceivers()];
+    const localOffers = vi.spyOn(publisher, "createOffer");
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+    const peersBefore = FakePeerConnection.instances.length;
+    const counts = () => ["/media/publish", "/media/publish/ready", "/media/tracks/close", "/media/renegotiate", "/media/recover"]
+      .map((suffix) => callsTo(fetchMock, suffix).length);
+    const before = counts();
+    const mic = document.getElementById("micControlBtn") as HTMLButtonElement;
+
+    mic.click();
+    await flush();
+    expect(micTrack.enabled).toBe(false);
+    expect(micTrack.readyState).toBe("live");
+    expect(cameraTrack.readyState).toBe("live");
+    expect(cameraTrack.enabled).not.toBe(false);
+    expect(cameraTrack.stop).not.toHaveBeenCalled();
+
+    mic.click();
+    await flush();
+    expect(micTrack.enabled).toBe(true);
+    expect(micTrack.stop).not.toHaveBeenCalled();
+    expect(cameraTrack.readyState).toBe("live");
+    expect(cameraTrack.stop).not.toHaveBeenCalled();
+
+    expect(callsTo(fetchMock, "/media/tracks/close")).toHaveLength(0);
+    expect(localOffers).not.toHaveBeenCalled();
+    expect(counts()).toEqual(before);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(FakePeerConnection.instances.length).toBe(peersBefore);
+    expect(publisherPeer()).toBe(publisher);
+    expect(publisher.getTransceivers()).toEqual(transceivers);
+    expect(FakePeerConnection.instances.find((peer) => peer.ontrack)).toBe(subscriber);
+    expect(subscriber.connectionState).not.toBe("closed");
+  });
+
+  it("never shows the raw subscription-offer error and retries before any terminal message", async () => {
+    const { window, document, setNextSubscribeError, setNextSubscribePayload, setIncludeRemoteParticipant } = await loadRenderedPage();
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
+    setIncludeRemoteParticipant();
+    setNextSubscribeError("Cloudflare Realtime did not return a subscription offer.");
+    setNextSubscribePayload(remoteCamera("after-offer-error"));
+    const seen: string[] = [];
+    const observer = new window.MutationObserver(() => seen.push(document.getElementById("mediaStatus")?.textContent ?? ""));
+    observer.observe(document.getElementById("mediaStatus")!, { childList: true, characterData: true, subtree: true });
+    await joinHostMeeting(document, "Offer error masking");
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    observer.disconnect();
+    expect(seen.some((text) => /did not return|Cloudflare|Realtime/.test(text))).toBe(false);
+    expect(document.getElementById("mediaStatus")?.textContent).not.toMatch(/Cloudflare|Realtime/);
+    expect(document.getElementById("mediaStatus")?.textContent).not.toContain("could not connect");
   });
 });

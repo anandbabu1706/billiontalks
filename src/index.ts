@@ -2016,6 +2016,7 @@ function meetingUiTemplate(): string {
         mediaStatus: 'idle',
         localDevice: {
           micEnabled: true,
+          micMuted: false,
           cameraEnabled: true,
           screenShareEnabled: false,
           micAvailable: true,
@@ -2268,6 +2269,7 @@ function meetingUiTemplate(): string {
         fastPollWindowMs: 20000,
         unmuteGraceMs: 800,
         hiddenSubscriberRebuildMs: 15000,
+        resumeRtpProbeMs: 700,
         recoveryRetryBackoffMs: [500, 1500],
         remoteRetryBackoffMs: [400, 1200],
       };
@@ -2320,6 +2322,7 @@ function meetingUiTemplate(): string {
         publishers: {}, discovered: 0, subscribed: 0, lastError: '',
         subscriptionResultCount: 0, ontrackCount: 0, droppedTrackCount: 0, iceTimeoutCount: 0,
         subscriberRecoveryCount: 0, lastPlay: 'none', subscriberMutations: [],
+        videoHealth: { at: '', trigger: '', classification: 'not-run', actions: [], publisher: null, subscriber: null, remotePlayback: null },
       };
       let subscriberFailureCount = 0;
       let subscriberSessionLabel = 0;
@@ -2421,6 +2424,7 @@ function meetingUiTemplate(): string {
             subscriber: redactedRtpStats.subscriber.map((entry) => ({ ...entry })),
           },
           subscriberMutations: mediaDiagnostics.subscriberMutations.map((entry) => ({ ...entry })),
+          videoHealth: JSON.parse(JSON.stringify(mediaDiagnostics.videoHealth)),
         };
       }
       window.btMediaDiagnostics = snapshotMediaDiagnostics;
@@ -2624,7 +2628,7 @@ function meetingUiTemplate(): string {
 
       // Low-level protocol detail belongs in the console; the meeting UI only shows a concise reconnecting state while recovery is active.
       function isLowLevelMediaMessage(value) {
-        return /valid local tracks are required|HTTP status|did not accept any|no longer current|media connection (?:failed|closed|did not become ready)|timed out|superseded|ICE candidate|negotiation was incomplete|subscription response was incomplete|Unable to (?:publish|subscribe|complete|discover|confirm)/i.test(String(value));
+        return /valid local tracks are required|HTTP status|did not accept any|did not return|Cloudflare|Realtime|session_error|errorCode|no longer current|media connection (?:failed|closed|did not become ready)|timed out|superseded|ICE candidate|negotiation was incomplete|subscription response was incomplete|Unable to (?:publish|subscribe|complete|discover|confirm)/i.test(String(value));
       }
 
       function mediaRecoveryActive() {
@@ -2635,7 +2639,7 @@ function meetingUiTemplate(): string {
         let shown = value;
         if (isLowLevelMediaMessage(value)) {
           console.info('[billiontalks media] detail:', value);
-          shown = mediaRecoveryActive() || /valid local tracks are required/i.test(String(value)) ? RECONNECTING_STATUS : value;
+          shown = mediaRecoveryActive() || /valid local tracks are required|Cloudflare|Realtime|did not return|session_error|errorCode/i.test(String(value)) ? RECONNECTING_STATUS : value;
         }
         state.mediaStatus = shown;
         const status = document.getElementById('mediaStatus');
@@ -2784,7 +2788,7 @@ function meetingUiTemplate(): string {
         const connectionId = state.mediaConnectionId;
         if (direction === 'publisher') lastPublisherInvalidationReason = publisherInvalidationReason;
         console.info('[billiontalks media] recovery started:', direction, reason);
-        if (mediaTimings.firstMediaPlayback || (!mediaTimings.recoveryStarted && !mediaTimings.resumeDetected)) {
+        if (!(options.resume && mediaTimings.resumeDetected) && (mediaTimings.firstMediaPlayback || (!mediaTimings.recoveryStarted && !mediaTimings.resumeDetected))) {
           beginMediaTimingEpoch('', 'recovery:' + direction);
         }
         markMediaTiming('recoveryStarted');
@@ -3636,7 +3640,7 @@ function meetingUiTemplate(): string {
             const unrecoverableNegotiation = Boolean(error && error.name === 'IceGatheringTimeout') ||
               /ICE candidate gathering timed out/i.test(message) ||
               /no longer current|Subscriber media connection|HTTP status: 406|Media request timed out/.test(message);
-            const noTracksAccepted = /did not accept any remote tracks/i.test(message);
+            const noTracksAccepted = /did not accept any remote tracks|did not return a subscription offer/i.test(message);
             if (isStaleSfuSessionError(error) || unrecoverableNegotiation) {
               updateMediaStatus(RECONNECTING_STATUS);
               void requestMediaRecovery('subscriber', message);
@@ -3962,7 +3966,7 @@ function meetingUiTemplate(): string {
         const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
         const audioInputs = [localMediaState.micStream, activeScreenShareStream, ...Array.from(remoteStreams.values()).flatMap((remote) => [remote.stream, remote.screenStream])];
         const liveAudioTracks = audioInputs.filter(Boolean).flatMap((stream) => stream.getAudioTracks())
-          .filter((track) => track.readyState !== 'ended');
+          .filter((track) => track.readyState !== 'ended' && track.enabled !== false);
         let audioContext = null;
         if (liveAudioTracks.length) {
           if (!AudioContextConstructor) throw new Error('This browser cannot mix meeting audio for recording.');
@@ -4358,7 +4362,7 @@ function meetingUiTemplate(): string {
         const localStatusLabel = document.getElementById('localStatusLabel');
         const canShareScreen = Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function');
 
-        const micIsOn = state.localDevice.micEnabled && state.localDevice.micAvailable;
+        const micIsOn = state.localDevice.micEnabled && state.localDevice.micAvailable && !state.localDevice.micMuted;
         const cameraIsOn = state.localDevice.cameraEnabled && state.localDevice.cameraAvailable;
 
         if (micControl) {
@@ -4443,8 +4447,29 @@ function meetingUiTemplate(): string {
         void video.play().catch(() => undefined);
       }
 
+      // Mute is a soft state: the published audio transceiver stays negotiated so no media renegotiation touches video.
+      function applyMicMuteToTracks() {
+        const muted = Boolean(state.localDevice.micMuted);
+        localMediaState.micStream?.getAudioTracks?.().forEach((track) => { track.enabled = !muted; });
+      }
+
+      function handleMicrophoneControl() {
+        if (state.localDevice.micEnabled && localMediaState.micStream) {
+          state.localDevice.micMuted = !state.localDevice.micMuted;
+          applyMicMuteToTracks();
+          renderLocalState();
+          return;
+        }
+        if (state.localDevice.micEnabled) {
+          stopLocalMicrophone();
+          return;
+        }
+        void toggleMicrophone();
+      }
+
       function stopLocalMicrophone() {
         deviceStopToken.mic += 1;
+        state.localDevice.micMuted = false;
         void closePublishedLocalTracks(['microphone']);
         Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'mic'));
         state.localDevice.micEnabled = false;
@@ -4516,6 +4541,7 @@ function meetingUiTemplate(): string {
           Object.assign(localMediaState, startLocalMediaStream(localMediaState, 'mic', stream));
           state.localDevice.micAvailable = true;
           state.localDevice.micEnabled = true;
+          applyMicMuteToTracks();
           renderLocalState();
           setError(null);
           if (state.route === 'meeting') void publishCurrentLocalTracks();
@@ -4639,6 +4665,132 @@ function meetingUiTemplate(): string {
         resumeTrackStates = resumeTrackStateSnapshot();
       }
 
+      // Audio and video health are judged independently from RTP counters so a video-only stall never rebuilds a healthy audio path.
+      async function sampleRtp(peer, statType) {
+        if (!peer || typeof peer.getStats !== 'function') return null;
+        let report;
+        try { report = await peer.getStats(); } catch { return null; }
+        const totals = {};
+        report.forEach((stat) => {
+          if (stat.type !== statType || stat.isRemote) return;
+          const kind = stat.kind || stat.mediaType;
+          if (kind !== 'audio' && kind !== 'video') return;
+          const entry = totals[kind] || (totals[kind] = { bytes: 0, frames: 0 });
+          entry.bytes += Number.isFinite(stat.bytesSent) ? stat.bytesSent : Number.isFinite(stat.bytesReceived) ? stat.bytesReceived : 0;
+          entry.frames += Number.isFinite(stat.framesEncoded) ? stat.framesEncoded : Number.isFinite(stat.framesDecoded) ? stat.framesDecoded : 0;
+        });
+        return totals;
+      }
+
+      // Returns { audio, video } where true = counters advanced, false = flat, null = not measurable.
+      async function probeRtp(peer, statType) {
+        const before = await sampleRtp(peer, statType);
+        await new Promise((resolve) => setTimeout(resolve, Number.isFinite(window.btResumeRtpProbeMs) ? window.btResumeRtpProbeMs : MEDIA_TIMING.resumeRtpProbeMs));
+        const after = peer === publisherPeerConnection || peer === subscriberPeerConnection ? await sampleRtp(peer, statType) : null;
+        const advanced = (kind) => (before && after && before[kind] && after[kind]
+          ? after[kind].bytes > before[kind].bytes || after[kind].frames > before[kind].frames
+          : null);
+        return { audio: advanced('audio'), video: advanced('video') };
+      }
+
+      function remotePlaybackSnapshot() {
+        const videos = Array.from(document.querySelectorAll('#videoStage video')).filter((video) => video.srcObject && !video.muted);
+        return { videos: videos.length, stalled: videos.filter((video) => video.paused || video.readyState < 2).length };
+      }
+
+      function recordVideoHealth(trigger, classification, action) {
+        const health = mediaDiagnostics.videoHealth;
+        health.at = new Date().toISOString();
+        health.trigger = trigger;
+        health.classification = classification;
+        health[/^subscriber/.test(classification) ? 'subscriberClassification' : 'publisherClassification'] = classification;
+        if (action) health.actions.push(action);
+        health.remotePlayback = remotePlaybackSnapshot();
+        console.info('[billiontalks media] video health:', classification, action || '');
+      }
+
+      async function repairPublishedCamera(camera) {
+        let track = camera.track;
+        if (!track || track.readyState !== 'live') {
+          if (localMediaState.cameraStream) Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'camera'));
+          await toggleCamera();
+          track = localMediaState.cameraStream?.getVideoTracks?.()[0];
+          if (!track || track.readyState !== 'live') return false;
+        }
+        await camera.transceiver.sender.replaceTrack(track);
+        camera.track = track;
+        return true;
+      }
+
+      async function validatePublisherOnResume(trigger) {
+        const health = mediaDiagnostics.videoHealth;
+        health.actions = [];
+        const peer = publisherPeerConnection;
+        const camera = publishedLocalTracks.get('camera');
+        const mic = publishedLocalTracks.get('microphone');
+        if (!peer || peer.connectionState !== 'connected' || (!camera && !mic)) {
+          recordVideoHealth(trigger, 'publisher-not-ready');
+          return false;
+        }
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const probe = await probeRtp(peer, 'outbound-rtp');
+          if (peer !== publisherPeerConnection) return false;
+          health.publisher = { audio: probe.audio, video: probe.video };
+          const audioOk = mic ? probe.audio : true;
+          const videoOk = camera ? probe.video : true;
+          if (audioOk === true && videoOk === true) {
+            recordVideoHealth(trigger, 'healthy');
+            return true;
+          }
+          if (audioOk !== true || videoOk === null) {
+            recordVideoHealth(trigger, audioOk === true ? 'publisher-unmeasurable' : 'publisher-audio-stalled');
+            return false;
+          }
+          const localTrack = camera.track;
+          const captureStalled = !localTrack || localTrack.readyState !== 'live' || localTrack.muted === true;
+          recordVideoHealth(trigger, captureStalled ? 'local-video-capture-stalled' : 'publisher-video-rtp-stalled');
+          if (attempt === 0) {
+            const repaired = await repairPublishedCamera(camera).catch(() => false);
+            recordVideoHealth(trigger, mediaDiagnostics.videoHealth.classification, repaired ? 'camera-replace-track' : 'camera-replace-track-failed');
+            if (!repaired) attempt = 1;
+          }
+          if (attempt === 1) {
+            recordVideoHealth(trigger, mediaDiagnostics.videoHealth.classification, 'camera-republish');
+            await closePublishedLocalTracks(['camera']);
+            await publishCurrentLocalTracks();
+            if (peer !== publisherPeerConnection) return false;
+            const republished = publishedLocalTracks.get('camera');
+            if (!republished) return false;
+            camera.track = republished.track;
+            camera.transceiver = republished.transceiver;
+          }
+        }
+        return false;
+      }
+
+      async function validateSubscriberOnResume(trigger) {
+        const peer = subscriberPeerConnection;
+        if (!peer || peer.connectionState !== 'connected') return false;
+        let probe = await probeRtp(peer, 'inbound-rtp');
+        if (peer !== subscriberPeerConnection) return false;
+        mediaDiagnostics.videoHealth.subscriber = { audio: probe.audio, video: probe.video };
+        if (probe.audio === null && probe.video === null) return false;
+        if (probe.audio !== false && probe.video !== false) {
+          recordVideoHealth(trigger, 'subscriber-healthy');
+          return true;
+        }
+        if (probe.audio === true && probe.video === false) {
+          recordVideoHealth(trigger, 'subscriber-video-rtp-stalled', 'publication-rediscovery');
+          lastSubscriberPublicationSet = null;
+          await refreshSfuSubscriptions();
+          if (peer !== subscriberPeerConnection) return false;
+          probe = await probeRtp(peer, 'inbound-rtp');
+          mediaDiagnostics.videoHealth.subscriber = { audio: probe.audio, video: probe.video };
+          return probe.video !== false;
+        }
+        return false;
+      }
+
       function recoverPublisherAfterResume(trigger) {
         if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId || isSimulatedMeeting()) return Promise.resolve(false);
         if (publisherResumePending) return publisherResumePromise || Promise.resolve(false);
@@ -4650,7 +4802,15 @@ function meetingUiTemplate(): string {
         resumeTrackStates = resumeTrackStateSnapshot();
         resumeCaptureActions = { microphone: 'checking', camera: 'checking' };
         resumeRecoveryResult = 'in-progress';
-        const recovery = requestMediaRecovery('publisher', 'page resumed', { republishAfterRecovery: true, resume: true });
+        const recovery = validatePublisherOnResume(trigger).catch(() => false).then((healthy) => {
+          if (healthy) {
+            resumeRecoveryResult = 'ready';
+            lastSubscriberPublicationSet = null;
+            void refreshSfuSubscriptions();
+            return true;
+          }
+          return requestMediaRecovery('publisher', 'page resumed', { republishAfterRecovery: true, resume: true });
+        });
         publisherResumePromise = recovery;
         return recovery.finally(() => {
           publisherResumePending = false;
@@ -4666,8 +4826,17 @@ function meetingUiTemplate(): string {
         hiddenSinceMs = 0;
         const subscriberState = subscriberPeerConnection ? (subscriberPeerConnection.connectionState || subscriberPeerConnection.iceConnectionState) : '';
         const subscriberUnhealthy = Boolean(subscriberPeerConnection) && ['failed', 'closed', 'disconnected'].includes(subscriberState);
-        if (subscriberUnhealthy || (unprocessed && subscriberPeerConnection && hiddenFor >= MEDIA_TIMING.hiddenSubscriberRebuildMs)) {
+        if (subscriberUnhealthy) {
           void requestMediaRecovery('subscriber', 'page resumed with unhealthy subscriber');
+        } else if (unprocessed && subscriberPeerConnection && hiddenFor >= (Number.isFinite(window.btHiddenSubscriberRebuildMs) ? window.btHiddenSubscriberRebuildMs : MEDIA_TIMING.hiddenSubscriberRebuildMs)) {
+          void validateSubscriberOnResume(trigger).catch(() => false).then((healthy) => {
+            if (healthy) {
+              lastSubscriberPublicationSet = null;
+              void refreshSfuSubscriptions();
+            } else {
+              void requestMediaRecovery('subscriber', 'page resumed with stalled subscriber media');
+            }
+          });
         } else if (unprocessed) {
           lastSubscriberPublicationSet = null;
           void refreshSfuSubscriptions();
@@ -5487,13 +5656,7 @@ function meetingUiTemplate(): string {
         void refreshMeetingState();
       });
       document.getElementById('backToHomeFromPrejoin').addEventListener('click', () => showScreen('home'));
-      document.getElementById('toggleMicBtn').addEventListener('click', () => {
-        if (state.localDevice.micEnabled) {
-          stopLocalMicrophone();
-          return;
-        }
-        void toggleMicrophone();
-      });
+      document.getElementById('toggleMicBtn').addEventListener('click', handleMicrophoneControl);
 
       document.getElementById('toggleCameraBtn').addEventListener('click', () => {
         if (state.localDevice.cameraEnabled) {
@@ -5503,13 +5666,7 @@ function meetingUiTemplate(): string {
         void toggleCamera();
       });
 
-      document.getElementById('micControlBtn').addEventListener('click', () => {
-        if (state.localDevice.micEnabled) {
-          stopLocalMicrophone();
-          return;
-        }
-        void toggleMicrophone();
-      });
+      document.getElementById('micControlBtn').addEventListener('click', handleMicrophoneControl);
 
       document.getElementById('cameraControlBtn').addEventListener('click', () => {
         if (state.localDevice.cameraEnabled) {
