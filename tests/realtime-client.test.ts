@@ -123,4 +123,22 @@ describe("CloudflareRealtimeConnectionClient", () => {
       upstreamStatus: 401,
     });
   });
+
+  it("aborts a stalled upstream response body and returns a sanitized timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => new Promise(() => undefined),
+      });
+      const client = new CloudflareRealtimeConnectionClient("app-123", "bearer-secret-abc", fetchMock as typeof fetch);
+      const pending = client.createSession();
+      const timedOut = expect(pending).rejects.toMatchObject({ upstreamStatus: 504, message: "Cloudflare Realtime request timed out." });
+      await vi.advanceTimersByTimeAsync(8000);
+      await timedOut;
+      expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

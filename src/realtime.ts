@@ -70,6 +70,7 @@ export class CloudflareRealtimeSessionError extends Error {
 }
 
 export class CloudflareRealtimeConnectionClient {
+  private static readonly requestTimeoutMs = 8000;
   private readonly baseUrl: string;
 
   constructor(
@@ -128,26 +129,52 @@ export class CloudflareRealtimeConnectionClient {
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}/v1/apps/${encodeURIComponent(this.appId)}${path}`;
-    const response = await this.fetcher(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.bearerToken}`,
-        "Content-Type": "application/json",
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-
-    if (!response.ok) {
-      let errorCode: string | undefined;
-      let errorDescription: string | undefined;
-      try {
-        const detail = await response.json() as { errorCode?: unknown; errorDescription?: unknown };
-        if (typeof detail.errorCode === "string" || typeof detail.errorCode === "number") errorCode = String(detail.errorCode).slice(0, 80);
-        if (typeof detail.errorDescription === "string") errorDescription = detail.errorDescription.slice(0, 300);
-      } catch { /* upstream body is not JSON */ }
-      throw new CloudflareRealtimeSessionError(response.status, undefined, errorCode, errorDescription);
+    const controller = typeof AbortController === "function" ? new AbortController() : undefined;
+    const timeout = controller ? setTimeout(() => controller.abort(), CloudflareRealtimeConnectionClient.requestTimeoutMs) : undefined;
+    let response: Response;
+    try {
+      response = await this.fetcher(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.bearerToken}`,
+          "Content-Type": "application/json",
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new CloudflareRealtimeSessionError(504, "Cloudflare Realtime request timed out.");
+      }
+      throw error;
     }
-
-    return response.json() as Promise<T>;
+    try {
+      const readJson = () => controller
+        ? Promise.race([
+            response.json(),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new CloudflareRealtimeSessionError(504, "Cloudflare Realtime request timed out.")), CloudflareRealtimeConnectionClient.requestTimeoutMs)),
+          ])
+        : response.json();
+      if (!response.ok) {
+        let errorCode: string | undefined;
+        let errorDescription: string | undefined;
+        try {
+          const detail = await readJson() as { errorCode?: unknown; errorDescription?: unknown };
+          if (typeof detail.errorCode === "string" || typeof detail.errorCode === "number") errorCode = String(detail.errorCode).slice(0, 80);
+          if (typeof detail.errorDescription === "string") errorDescription = detail.errorDescription.slice(0, 300);
+        } catch {
+          if (controller?.signal.aborted) throw new CloudflareRealtimeSessionError(504, "Cloudflare Realtime request timed out.");
+        }
+        throw new CloudflareRealtimeSessionError(response.status, undefined, errorCode, errorDescription);
+      }
+      return await readJson() as T;
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new CloudflareRealtimeSessionError(504, "Cloudflare Realtime request timed out.");
+      }
+      throw error;
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   }
 }

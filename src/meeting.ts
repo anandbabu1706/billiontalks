@@ -213,8 +213,8 @@ function generateParticipantId(meetingId: string, userId: string): string {
   return `participant_${meetingId}_${userId}_${uuid.slice(0, 12)}`;
 }
 
-function normalizeRequiredString(value: string | undefined, label: string): string {
-  const normalized = value?.trim() ?? "";
+function normalizeRequiredString(value: unknown, label: string): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
 
   if (!normalized) {
     throw new Error(`${label} is required.`);
@@ -294,8 +294,8 @@ function createStartedRecording(meeting: Meeting, actorUserId: string): MeetingR
   };
 }
 
-function normalizeMeetingAccessMode(value: string | undefined, label: string): MeetingAccessMode {
-  const normalized = (value ?? "").trim().toUpperCase();
+function normalizeMeetingAccessMode(value: unknown, label: string): MeetingAccessMode {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
 
   if (normalized === MeetingAccessMode.OPEN || normalized === MeetingAccessMode.HOST_APPROVAL || normalized === MeetingAccessMode.LOCKED) {
     return normalized as MeetingAccessMode;

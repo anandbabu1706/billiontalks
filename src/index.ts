@@ -107,7 +107,11 @@ function parseCookieHeader(rawCookieHeader: string | null): Map<string, string> 
 
     const name = rawName.trim();
     const value = rawValueParts.join("=").trim();
-    cookies.set(name, decodeURIComponent(value));
+    try {
+      cookies.set(name, decodeURIComponent(value));
+    } catch {
+      // Ignore malformed cookie values and allow a fresh session to be issued.
+    }
   }
 
   return cookies;
@@ -115,6 +119,23 @@ function parseCookieHeader(rawCookieHeader: string | null): Map<string, string> 
 
 function getSessionIdFromRequest(request: Request): string | null {
   return parseCookieHeader(request.headers.get("Cookie") ?? request.headers.get("cookie")).get(SESSION_COOKIE_NAME) ?? null;
+}
+
+function isValidMeetingId(value: string): boolean {
+  return /^btm_[A-Za-z0-9_-]{8,64}$/.test(value);
+}
+
+function meetingSnapshotForViewer(meeting: Meeting, userId: string): Meeting {
+  const ownParticipants = meeting.participants.filter((participant) => participant.userId === userId);
+  const ownRequests = meeting.accessRequests.filter((request) => request.userId === userId);
+  const ownParticipant = ownParticipants.find((participant) => participant.state !== ParticipantState.LEFT);
+  const isJoinedMember = ownParticipant?.state === ParticipantState.JOINED;
+  const isHost = meeting.hostId === userId && ownParticipant?.role === "HOST";
+  return {
+    ...meeting,
+    participants: isJoinedMember || isHost ? meeting.participants : ownParticipants,
+    accessRequests: isHost ? meeting.accessRequests : ownRequests,
+  };
 }
 
 function buildSessionCookieHeader(sessionId: string, request: Request): string {
@@ -135,7 +156,7 @@ function withSessionCookie(response: Response, request: Request, session: V0Sess
   });
 }
 
-async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?: string): Promise<{ session: V0Session; isNew: boolean }> {
+async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?: unknown): Promise<{ session: V0Session; isNew: boolean }> {
   const store = resolveSessionStore(env);
   const sessionId = getSessionIdFromRequest(request);
 
@@ -153,7 +174,7 @@ async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?
     ) {
       const updated: V0Session = {
         ...existing,
-        displayName: displayName?.trim() || existing.displayName,
+        displayName: typeof displayName === "string" && displayName.trim() ? displayName.trim() : existing.displayName,
         lastSeenAt: new Date(now).toISOString(),
       };
       await store.saveSession(updated);
@@ -169,7 +190,7 @@ async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?
   const createSession: V0Session = {
     sessionId: crypto.randomUUID(),
     userId: generateSessionUserId(),
-    displayName: displayName?.trim() || "Guest",
+    displayName: typeof displayName === "string" && displayName.trim() ? displayName.trim() : "Guest",
     createdAt: now,
     lastSeenAt: now,
   };
@@ -2254,6 +2275,7 @@ function meetingUiTemplate(): string {
       let remoteRetryCount = 0;
       let remoteRetryTimer = null;
       const recoveryRetryTimers = new Map();
+      const recoveryEpisode = { startedAt: 0, attempts: 0, exhausted: false };
       const inflightMediaRequests = { publisher: new Set(), subscriber: new Set() };
       const mediaWaitAborts = new Set();
       // Every wait in the media path is bounded by one of these; they were previously 10s ICE, 15s connect and a 3s poll in series.
@@ -2369,7 +2391,8 @@ function meetingUiTemplate(): string {
         if (code) entry.errorCode = code[1];
         if (description) entry.errorDescription = description[1];
       }
-      const MAX_MEDIA_RECOVERY_ATTEMPTS = 3;
+      const MAX_MEDIA_RECOVERY_ATTEMPTS = 6;
+      const RECOVERY_EPISODE_BUDGET_MS = 30000;
       const DEV_TOOLS_ENABLED = __DEV_TOOLS_FLAG__;
 
       function snapshotMediaDiagnostics() {
@@ -2757,6 +2780,9 @@ function meetingUiTemplate(): string {
             if (activePeer === peer && (activePeer.connectionState === 'connected' || activePeer.iceConnectionState === 'connected' || activePeer.iceConnectionState === 'completed')) {
               if (direction === 'publisher') publisherFailureCount = 0;
               else subscriberFailureCount = 0;
+              recoveryEpisode.startedAt = 0;
+              recoveryEpisode.attempts = 0;
+              recoveryEpisode.exhausted = false;
             }
           }, 30000));
           updateMediaStatus('Media connected');
@@ -2827,9 +2853,11 @@ function meetingUiTemplate(): string {
           }
           return Promise.resolve(false);
         }
-        const failureCount = direction === 'publisher' ? publisherFailureCount : subscriberFailureCount;
-        if (failureCount >= MAX_MEDIA_RECOVERY_ATTEMPTS || startupBudgetSpent(direction + ' recovery: ' + reason)) {
-          if (failureCount >= MAX_MEDIA_RECOVERY_ATTEMPTS) updateMediaStatus(direction + ' media could not connect. Check your network connection and rejoin the meeting.');
+        if (!recoveryEpisode.startedAt) recoveryEpisode.startedAt = Date.now();
+        const episodeExpired = Date.now() - recoveryEpisode.startedAt > RECOVERY_EPISODE_BUDGET_MS;
+        if (recoveryEpisode.exhausted || recoveryEpisode.attempts >= MAX_MEDIA_RECOVERY_ATTEMPTS || episodeExpired || startupBudgetSpent(direction + ' recovery: ' + reason)) {
+          recoveryEpisode.exhausted = true;
+          updateMediaStatus('Media could not connect. Check your network connection and rejoin the meeting.');
           if (direction === 'publisher' && publisherRecoveryRepublishRequired) {
             publisherRecoveryEndedAt = new Date().toISOString();
             if (publisherResumeRecoveryRequested) resumeRecoveryResult = 'failed';
@@ -2838,6 +2866,7 @@ function meetingUiTemplate(): string {
           }
           return Promise.resolve(false);
         }
+        recoveryEpisode.attempts += 1;
         if (direction === 'publisher') publisherFailureCount += 1;
         else subscriberFailureCount += 1;
         if (startupTimings.joined && !startupTransaction.completed) startupTransaction.attempts += 1;
@@ -2977,8 +3006,8 @@ function meetingUiTemplate(): string {
             resultingPublishedTrackNames = readyPublishedPublications.map((entry) => entry.trackName);
           }
           console.warn('[billiontalks media] recovery failed:', direction, error instanceof Error ? error.message : error);
-          const attempts = direction === 'publisher' ? publisherFailureCount : subscriberFailureCount;
-          if (attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing && !startupBudgetSpent(direction + ' retry: ' + (error instanceof Error ? error.message : error))) {
+          const attempts = recoveryEpisode.attempts;
+          if (!recoveryEpisode.exhausted && attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing && !startupBudgetSpent(direction + ' retry: ' + (error instanceof Error ? error.message : error))) {
             updateMediaStatus(RECONNECTING_STATUS);
             scheduleRecoveryRetry(direction, attempts, {
               ...(republishAfterRecovery ? { republishAfterRecovery: true } : {}),
@@ -3018,7 +3047,7 @@ function meetingUiTemplate(): string {
         return settled;
       }
 
-      // Bounded: requestMediaRecovery refuses once MAX_MEDIA_RECOVERY_ATTEMPTS is consumed and then shows the terminal message.
+      // Bounded: both media directions share one recovery episode and terminal exhaustion requires rejoin.
       function scheduleRecoveryRetry(direction, attempts, options, meetingId, userId) {
         if (recoveryRetryTimers.has(direction)) return;
         const delays = MEDIA_TIMING.recoveryRetryBackoffMs;
@@ -3614,7 +3643,7 @@ function meetingUiTemplate(): string {
       }
 
       function refreshSfuSubscriptions() {
-        if (subscriberRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
+        if (recoveryEpisode.exhausted || subscriberRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
         if (queuedSubscriberRefresh) return queuedSubscriberRefresh;
         queuedSubscriberRefresh = enqueueMediaOperation('subscriber', async () => {
           queuedSubscriberRefresh = null;
@@ -3766,6 +3795,20 @@ function meetingUiTemplate(): string {
         if (remoteRetryTimer) clearTimeout(remoteRetryTimer);
         remoteRetryTimer = null;
         remoteRetryCount = 0;
+        publisherFailureCount = 0;
+        subscriberFailureCount = 0;
+        recoveryEpisode.startedAt = 0;
+        recoveryEpisode.attempts = 0;
+        recoveryEpisode.exhausted = false;
+        Object.keys(startupTimings).forEach((key) => { startupTimings[key] = 0; });
+        startupTransaction.attempts = 0;
+        startupTransaction.completed = false;
+        startupTransaction.exhausted = false;
+        startupTransaction.exhaustedAtMs = 0;
+        startupTransaction.terminalReason = '';
+        startupTransaction.firstRemoteTrackAt = 0;
+        startupTransaction.discovered = 0;
+        mediaRecoveryQueue = Promise.resolve();
         abortInFlightMedia('publisher');
         abortInFlightMedia('subscriber');
         const closeRequest = connectionId && meetingId
@@ -3860,6 +3903,10 @@ function meetingUiTemplate(): string {
 
       function finishLocalSession(message) {
         void closeRealtimeTransports(state.meetingId);
+        if (meetingDurationInterval !== null) {
+          clearInterval(meetingDurationInterval);
+          meetingDurationInterval = null;
+        }
         stopScreenShareCapture();
         stopAllLocalMedia();
         state.isHost = false;
@@ -4045,22 +4092,15 @@ function meetingUiTemplate(): string {
         const videoStream = canvas.captureStream(15);
         const outputTracks = videoStream.getTracks();
         const audioTracks = [];
-        const audioSources = [];
+        const audioSources = new Map();
         const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-        const audioInputs = [localMediaState.micStream, activeScreenShareStream, ...Array.from(remoteStreams.values()).flatMap((remote) => [remote.stream, remote.screenStream])];
-        const liveAudioTracks = audioInputs.filter(Boolean).flatMap((stream) => stream.getAudioTracks())
-          .filter((track) => track.readyState !== 'ended' && track.enabled !== false);
         let audioContext = null;
-        if (liveAudioTracks.length) {
-          if (!AudioContextConstructor) throw new Error('This browser cannot mix meeting audio for recording.');
+        let recordingAudioDestination = null;
+        let audioReconcileTimer = null;
+        if (AudioContextConstructor) {
           audioContext = new AudioContextConstructor();
-          const destination = audioContext.createMediaStreamDestination();
-          for (const track of liveAudioTracks) {
-            const source = audioContext.createMediaStreamSource(new window.MediaStream([track]));
-            source.connect(destination);
-            audioSources.push(source);
-          }
-          audioTracks.push(...destination.stream.getAudioTracks());
+          recordingAudioDestination = audioContext.createMediaStreamDestination();
+          audioTracks.push(...recordingAudioDestination.stream.getAudioTracks());
         }
 
         const mediaStream = new window.MediaStream([...outputTracks, ...audioTracks]);
@@ -4087,10 +4127,39 @@ function meetingUiTemplate(): string {
           if (resourcesCleaned) return;
           resourcesCleaned = true;
           if (drawTimer !== null) window.clearInterval(drawTimer);
+          if (audioReconcileTimer !== null) window.clearInterval(audioReconcileTimer);
           audioSources.forEach((source) => source.disconnect());
+          audioSources.clear();
           if (audioContext) void audioContext.close();
-          mediaStream.getTracks().forEach((track) => track.stop());
+          outputTracks.forEach((track) => track.stop());
+          audioTracks.forEach((track) => track.stop());
         };
+
+        const reconcileAudioInputs = () => {
+          if (!recordingAudioDestination || !audioContext || resourcesCleaned) return;
+          const streams = [localMediaState.micStream, activeScreenShareStream, ...Array.from(remoteStreams.values()).flatMap((remote) => [remote.stream, remote.screenStream])];
+          const currentTracks = new Map();
+          streams.filter(Boolean).forEach((stream) => {
+            stream.getAudioTracks().forEach((track) => {
+              if (track.readyState !== 'ended') currentTracks.set(track.id, track);
+            });
+          });
+          audioSources.forEach((source, trackId) => {
+            const track = currentTracks.get(trackId);
+            if (!track) {
+              source.disconnect();
+              audioSources.delete(trackId);
+            }
+          });
+          currentTracks.forEach((track, trackId) => {
+            if (audioSources.has(trackId)) return;
+            const source = audioContext.createMediaStreamSource(new window.MediaStream([track]));
+            source.connect(recordingAudioDestination);
+            audioSources.set(trackId, source);
+          });
+        };
+        reconcileAudioInputs();
+        if (recordingAudioDestination) audioReconcileTimer = window.setInterval(reconcileAudioInputs, 250);
 
         const drawStage = () => {
           context.fillStyle = '#101820';
@@ -5519,6 +5588,10 @@ function meetingUiTemplate(): string {
         const userId = state.currentUserId;
         if (!meetingId || !userId) return;
         const mediaCleanup = closeRealtimeTransports(meetingId);
+        if (meetingDurationInterval !== null) {
+          clearInterval(meetingDurationInterval);
+          meetingDurationInterval = null;
+        }
         stopScreenShareCapture();
         stopAllLocalMedia();
         state.currentUserId = '';
@@ -5943,62 +6016,13 @@ const routeHandler = {
     }
 
     if (request.method === "POST" && url.pathname === "/api/realtime/session") {
-      const validation = validateRealtimeEnv(env);
-
-      if (!validation.ok) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "Cloudflare Realtime configuration is missing.",
-            missing: validation.missing,
-          },
-          500,
-        );
-      }
-
-      try {
-        const client = new CloudflareRealtimeConnectionClient(
-          env.REALTIME_SFU_APP_ID!,
-          env.REALTIME_SFU_BEARER_TOKEN!,
-        );
-
-        const result = await client.createSession();
-
-        return jsonResponse(
-          {
-            ok: true,
-            data: {
-              sessionId: result.sessionId,
-            },
-          },
-          200,
-        );
-      } catch (error) {
-        const upstreamStatus =
-          error instanceof Error && "upstreamStatus" in error
-            ? Number((error as { upstreamStatus?: number }).upstreamStatus)
-            : undefined;
-
-        const errorMessage =
-          typeof upstreamStatus === "number" && Number.isFinite(upstreamStatus)
-            ? `Cloudflare Realtime session creation failed. HTTP status: ${upstreamStatus}.`
-            : "Cloudflare Realtime session creation failed.";
-
-        return jsonResponse(
-          {
-            ok: false,
-            error: errorMessage,
-            upstreamStatus,
-          },
-          500,
-        );
-      }
+      return jsonResponse({ ok: false, error: "This unauthenticated media endpoint has been retired." }, 410);
     }
 
     if (request.method === "POST" && url.pathname === "/api/meetings") {
       const body = await parseJsonBody<{ title?: string; hostUserId?: string; hostDisplayName?: string; displayName?: string; accessMode?: string }>(request);
 
-      if (!body || !body.title) {
+      if (!body || typeof body.title !== "string" || !body.title.trim()) {
         return jsonResponse(
           {
             ok: false,
@@ -6996,14 +7020,19 @@ const routeHandler = {
       url.pathname,
     );
 
+    if (meetingMatch && !isValidMeetingId(meetingMatch[1])) {
+      return jsonResponse({ ok: false, error: "Invalid meeting identifier." }, 400);
+    }
+
     if (meetingMatch && request.method === "GET" && !meetingMatch[2]) {
+      const { session } = await getOrCreateSession(request, env);
       const meeting = await getMeetingService(env).getMeeting(meetingMatch[1]);
 
       if (!meeting) {
-        return jsonResponse({ ok: false, error: "Meeting not found." }, 404);
+        return withSessionCookie(jsonResponse({ ok: false, error: "Meeting not found." }, 404), request, session);
       }
 
-      return jsonResponse({ ok: true, data: meeting });
+      return withSessionCookie(jsonResponse({ ok: true, data: meetingSnapshotForViewer(meeting, session.userId) }), request, session);
     }
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "join") {
@@ -7123,8 +7152,11 @@ const routeHandler = {
     }
 
     if (meetingMatch && request.method === "GET" && meetingMatch[2] === "participants") {
-      const participants = await getMeetingService(env).listParticipants(meetingMatch[1]);
-      return jsonResponse({ ok: true, data: participants });
+      const { session } = await getOrCreateSession(request, env);
+      const meeting = await getMeetingService(env).getMeeting(meetingMatch[1]);
+      if (!meeting) return withSessionCookie(jsonResponse({ ok: false, error: "Meeting not found." }, 404), request, session);
+      const snapshot = meetingSnapshotForViewer(meeting, session.userId);
+      return withSessionCookie(jsonResponse({ ok: true, data: snapshot.participants }), request, session);
     }
 
     return jsonResponse(

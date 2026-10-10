@@ -114,6 +114,25 @@ class FakeMediaStream {
   getAudioTracks() { return this.tracks.filter((track) => track.kind === "audio"); }
 }
 
+class FakeAudioContext {
+  static instances: FakeAudioContext[] = [];
+  public state = "running";
+  public readonly destination = { stream: new FakeMediaStream([{ id: "recording-audio", kind: "audio", readyState: "live", stop: vi.fn() }]) };
+  public readonly sources: Array<{ stream: FakeMediaStream; connected: boolean }> = [];
+  constructor() { FakeAudioContext.instances.push(this); }
+  createMediaStreamDestination() { return this.destination; }
+  createMediaStreamSource(stream: FakeMediaStream) {
+    const source = { stream, connected: false };
+    this.sources.push(source);
+    return {
+      connect: () => { source.connected = true; },
+      disconnect: () => { source.connected = false; },
+    };
+  }
+  resume() { this.state = "running"; return Promise.resolve(); }
+  close() { this.state = "closed"; return Promise.resolve(); }
+}
+
 class FakeMediaRecorder {
   static isTypeSupported() { return true; }
   public state = "inactive";
@@ -248,6 +267,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
       Object.defineProperty(window, "Blob", { value: Blob, configurable: true });
       Object.defineProperty(window, "MediaStream", { value: FakeMediaStream, configurable: true });
       Object.defineProperty(window, "MediaRecorder", { value: FakeMediaRecorder, configurable: true });
+      Object.defineProperty(window, "AudioContext", { value: FakeAudioContext, configurable: true });
       Object.defineProperty(window.HTMLCanvasElement.prototype, "getContext", {
         configurable: true,
         value: () => ({
@@ -821,7 +841,7 @@ describe("BillionTalks browser UI regression tests", () => {
     expect((document.getElementById("recordingControls") as HTMLElement).style.display).toBe("flex");
     expect(document.getElementById("recordingStatus")?.textContent).toContain("Not started");
 
-    // The fake browser has no AudioContext, so recording only runs without live microphone audio.
+    // Muted capture remains connected to the recording mixer and contributes silence.
     (document.getElementById("micControlBtn") as HTMLButtonElement).click();
     await flush();
     document.getElementById("startRecordingBtn")?.click();
@@ -837,6 +857,26 @@ describe("BillionTalks browser UI regression tests", () => {
     );
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/stop", expect.objectContaining({ method: "POST" }));
     expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording saved to private storage");
+  });
+
+  it("keeps muted and newly replaced microphone inputs in the stable recording mixer", async () => {
+    const { document, micStreams } = await loadRenderedPage();
+    await joinHostMeeting(document, "Dynamic recording audio");
+    const mic = document.getElementById("micControlBtn") as HTMLButtonElement;
+    mic.click();
+    await flush();
+    document.getElementById("startRecordingBtn")?.click();
+    await flush();
+    const context = FakeAudioContext.instances.at(-1)!;
+    expect(context.sources).toHaveLength(1);
+    expect(context.sources[0].connected).toBe(true);
+    expect(micStreams[0].getAudioTracks()[0].enabled).toBe(false);
+    mic.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(context.sources).toHaveLength(1);
+    expect(context.sources[0].connected).toBe(true);
+    document.getElementById("stopRecordingBtn")?.click();
+    await flush();
   });
 
   it("publishes existing microphone and camera captures through SFU signaling and closes them when toggled off", async () => {
@@ -2714,7 +2754,7 @@ describe("BT-V0-018 production media stabilization", () => {
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
     await joinHostMeeting(document, "Bounded publisher recovery");
     const publishers = () => FakePeerConnection.instances.filter((peer) => peer.getTransceivers().some((entry) => entry.direction === "sendonly"));
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       const peer = publishers().at(-1)!;
       peer.setConnectionStates("failed", "failed");
       await new Promise((resolve) => setTimeout(resolve, 90));
@@ -2722,11 +2762,11 @@ describe("BT-V0-018 production media stabilization", () => {
     const recoveries = () => fetchMock.mock.calls.filter(([url, init]) =>
       String(url).endsWith("/media/recover") && init?.method === "POST" &&
       JSON.parse(String(init.body)).direction === "publisher").length;
-    expect(recoveries()).toBe(3);
+    expect(recoveries()).toBe(6);
 
     publishers().at(-1)!.setConnectionStates("failed", "failed");
     await flush();
-    expect(recoveries()).toBe(3);
+    expect(recoveries()).toBe(6);
     expect(document.getElementById("mediaStatus")?.textContent).toContain("could not connect");
   });
 
@@ -3866,6 +3906,43 @@ describe("BT-V0-029 meeting duration timer", () => {
     await new Promise((resolve) => setTimeout(resolve, 1200));
     expect(timerText(document)).toBe(frozen);
   }, 15000);
+
+  it("clears the duration interval when the host leaves the meeting screen", async () => {
+    const { document, window } = await loadRenderedPage();
+    const clearInterval = vi.spyOn(window, "clearInterval");
+    await joinHostMeeting(document, "Timer cleanup");
+    document.getElementById("leaveMeetingBtn")?.click();
+    await flush();
+    expect(clearInterval).toHaveBeenCalled();
+  });
+
+  it("clears the duration interval when a guest leaves the meeting screen", async () => {
+    const page = await loadRenderedPage();
+    (page.document.getElementById("meetingIdInput") as HTMLInputElement).value = "btm_test_123";
+    page.document.getElementById("resolveMeetingButton")?.click();
+    await flush();
+    (page.document.getElementById("displayNameInput") as HTMLInputElement).value = "Guest Gina";
+    page.document.getElementById("joinNowButton")?.click();
+    await flush();
+    const clearInterval = vi.spyOn(page.window, "clearInterval");
+    page.document.getElementById("leaveMeetingBtn")?.click();
+    await flush();
+    expect(clearInterval).toHaveBeenCalled();
+  });
+
+  it("starts a fresh startup recovery episode after same-tab leave and rejoin", async () => {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(page.document, "Rejoin recovery");
+    const firstJoined = (page.window as any).btMediaDiagnostics().startupTimings.joined;
+    page.document.getElementById("leaveMeetingBtn")?.click();
+    await flush();
+    await joinHostMeeting(page.document, "Rejoin recovery");
+    const transaction = (page.window as any).btMediaDiagnostics().startupTransaction;
+    expect((page.window as any).btMediaDiagnostics().startupTimings.joined).toBeGreaterThanOrEqual(firstJoined);
+    expect(transaction.exhausted).toBe(false);
+    expect(transaction.attempts).toBe(0);
+  });
 });
 describe("BT-V0-030 startup budget and camera OFF/ON", () => {
   const urlOf = (input: RequestInfo | URL) => (typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
@@ -3952,6 +4029,24 @@ describe("BT-V0-030 startup budget and camera OFF/ON", () => {
     expect(page.document.getElementById("mediaStatus")?.textContent).not.toMatch(/Cloudflare|session_error/);
   });
 
+  it("does not restart exhausted recovery from later media polling", async () => {
+    const page = await loadRenderedPage();
+    Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    (page.window as any).btStartupBudgetMs = -1;
+    const original = page.fetchMock.getMockImplementation()!;
+    page.fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (urlOf(input).endsWith("/media/publish") && init?.method === "POST") {
+        return createResponse({ ok: false, error: "HTTP status: 410", upstreamStatus: 410 }, false, 410);
+      }
+      return original(input, init);
+    });
+    await joinHostMeeting(page.document, "No recovery polling restart");
+    for (let attempt = 0; attempt < 12; attempt += 1) await flush();
+    const before = callsTo(page.fetchMock, "/media/recover").length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(callsTo(page.fetchMock, "/media/recover").length).toBe(before);
+  });
+
   it("still recovers within the budget when a startup publish hits a dead session", async () => {
     const page = await loadRenderedPage();
     Object.defineProperty(page.window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
@@ -3971,6 +4066,18 @@ describe("BT-V0-030 startup budget and camera OFF/ON", () => {
     expect(transaction.exhausted).toBe(false);
     expect(transaction.attempts).toBeGreaterThanOrEqual(1);
     expect(transaction.attempts).toBeLessThanOrEqual(3);
+  });
+
+  it("shares one bounded recovery episode across publisher and subscriber failures", async () => {
+    const page = await join("guest");
+    const publisher = publisherPeer();
+    const subscriber = FakePeerConnection.instances.find((peer) => peer.ontrack)!;
+    publisher.setConnectionStates("failed", "failed");
+    subscriber.setConnectionStates("failed", "failed");
+    for (let attempt = 0; attempt < 8; attempt += 1) await flush();
+    const recoveries = callsTo(page.fetchMock, "/media/recover");
+    expect(recoveries.length).toBeLessThanOrEqual(6);
+    expect(page.document.getElementById("mediaStatus")?.textContent).not.toContain("Cloudflare");
   });
 
   for (const role of ["host", "guest"] as const) {

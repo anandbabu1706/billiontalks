@@ -47,6 +47,6 @@ The following stages describe the planned product direction, not currently avail
 
 ## Project Status and Contributions
 
-BillionTalks V0 is in development. The latest implementation checkpoint is [BT-V0-009 — Meeting Controls & Host Management Hardening](docs/checkpoints/BT-V0-009.md). Cloudflare Realtime SFU integration remains parked pending support; authenticated meeting identity remains a V0 requirement.
+BillionTalks V0 is in development. The current implementation baseline is BT-V0-030, with the final-audit reconstruction tracked in [BT-V0-FINAL-review](docs/checkpoints/BT-V0-FINAL-review.md). The audit preserves the split Cloudflare Realtime SFU transport, hardens meeting admission/privacy and media recovery, and adds dynamic recording-audio reconciliation. These changes still require physical device and production qualification before V0 sign-off.
 
 External contributions are not yet open while the project foundation is being established.

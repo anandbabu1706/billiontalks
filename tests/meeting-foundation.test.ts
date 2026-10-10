@@ -367,7 +367,7 @@ describe("MeetingService lifecycle", () => {
     expect(waitingPayload.data.userId).toBe(guest.userId);
     expect(waitingPayload.data.userId).not.toBe(host.userId);
 
-    const beforeApproval = await api.request(`/api/meetings/${meeting.id}`);
+    const beforeApproval = await api.request(`/api/meetings/${meeting.id}`, "GET", host.cookie);
     const beforePayload = await beforeApproval.json();
     expect(beforePayload.data.participants.map((entry: { userId: string }) => entry.userId)).toEqual([host.userId]);
 
@@ -1074,7 +1074,7 @@ describe("MeetingService lifecycle", () => {
         { location: "remote", sessionId: "sfu-session-4-secretish", trackName: "microphone" },
       ]);
 
-      const meetingResponse = await api.request(`/api/meetings/${meeting.id}`);
+      const meetingResponse = await api.request(`/api/meetings/${meeting.id}`, "GET", host.cookie);
       const meetingPayload = await meetingResponse.json();
       expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === host.userId)).toHaveLength(1);
       expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === participant.userId)).toHaveLength(1);
@@ -1128,7 +1128,7 @@ describe("MeetingService lifecycle", () => {
         { location: "remote", sessionId: "sfu-session-1-secretish", trackName: "microphone" },
       ]);
 
-      const meetingPayload = await (await api.request(`/api/meetings/${meeting.id}`)).json();
+      const meetingPayload = await (await api.request(`/api/meetings/${meeting.id}`, "GET", host.cookie)).json();
       expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === participant.userId)).toHaveLength(1);
       expect(meetingPayload.data.participants.filter((entry: { userId: string }) => entry.userId === host.userId)).toHaveLength(1);
     } finally {
@@ -1713,7 +1713,7 @@ describe("MeetingService lifecycle", () => {
       const close = sfu.calls.find((call) => call.url.endsWith("/tracks/close"));
       expect(close?.url).toContain("/sessions/sfu-session-1-secretish/tracks/close");
       expect(close?.body).toMatchObject({ force: true, tracks: [{ mid: "0" }] });
-      const savedMeeting = await api.request(`/api/meetings/${meeting.id}`);
+      const savedMeeting = await api.request(`/api/meetings/${meeting.id}`, "GET", host.cookie);
       const savedPayload = await savedMeeting.json();
       expect(savedPayload.data.participants.filter((entry: { userId: string }) => entry.userId === host.userId)).toHaveLength(1);
     } finally {
@@ -2091,5 +2091,65 @@ describe("MeetingService lifecycle", () => {
 
     const restartedAgain = new MeetingService(new DurableMeetingRepository(storage as any), new StubMediaProvider());
     expect((await restartedAgain.getMeeting(meeting.id))?.status).toBe(MeetingStatus.ENDED);
+  });
+
+  it("filters prejoin, waiting, admitted, and removed snapshots by the authenticated viewer", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const guest = await api.createSession();
+    const meeting = await api.createMeeting(host.cookie, "Snapshot privacy", "HOST_APPROVAL");
+
+    const waiting = await api.request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, { displayName: "Waiting Guest" });
+    const waitingPayload = await waiting.json();
+    const outsiderSnapshot = await api.request(`/api/meetings/${meeting.id}`, "GET", guest.cookie);
+    const outsiderPayload = await outsiderSnapshot.json();
+    expect(outsiderPayload.data.participants).toEqual([]);
+    expect(outsiderPayload.data.accessRequests).toHaveLength(1);
+    expect(outsiderPayload.data.accessRequests[0].userId).toBe(guest.userId);
+
+    const hostSnapshot = await api.request(`/api/meetings/${meeting.id}`, "GET", host.cookie);
+    const hostPayload = await hostSnapshot.json();
+    expect(hostPayload.data.participants).toHaveLength(1);
+    expect(hostPayload.data.accessRequests[0].userId).toBe(guest.userId);
+
+    await api.request(`/api/meetings/${meeting.id}/admission/${waitingPayload.data.id}/approve`, "POST", host.cookie);
+    const admittedSnapshot = await api.request(`/api/meetings/${meeting.id}`, "GET", guest.cookie);
+    expect((await admittedSnapshot.json()).data.participants).toHaveLength(2);
+
+    await api.request(`/api/meetings/${meeting.id}/remove`, "POST", host.cookie, { targetUserId: guest.userId });
+    const removedSnapshot = await api.request(`/api/meetings/${meeting.id}`, "GET", guest.cookie);
+    const removedPayload = await removedSnapshot.json();
+    expect(removedPayload.data.participants).toHaveLength(1);
+    expect(removedPayload.data.participants[0]).toMatchObject({ userId: guest.userId, state: "REMOVED" });
+    expect(removedPayload.data.participants.map((entry: { userId: string }) => entry.userId)).not.toContain(host.userId);
+  });
+
+  it("retires unauthenticated SFU allocation without calling upstream", async () => {
+    const api = createChatApiFixture();
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    try {
+      const response = await api.request("/api/realtime/session", "POST");
+      expect(response.status).toBe(410);
+      expect(upstream).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("ignores malformed cookies and rejects invalid meeting identifiers before routing", async () => {
+    const api = createChatApiFixture();
+    const malformed = await api.request("/api/session", "GET", "bt_session_v0=%E0%A4%A");
+    expect(malformed.status).toBe(200);
+    const invalid = await api.request("/api/meetings/not%2Fvalid/participants", "GET");
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json()).error).toBe("Invalid meeting identifier.");
+  });
+
+  it("rejects incorrect runtime string inputs without routing or persistence", async () => {
+    const api = createChatApiFixture();
+    const response = await api.rawRequest("/api/meetings", "POST", undefined, JSON.stringify({ title: 42, accessMode: "OPEN" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBe("Meeting title is required.");
   });
 });
