@@ -1,0 +1,24 @@
+name: BT V1-001 validation
+on:
+  push:
+    branches:
+      - bt-v1-001-account-ui-email
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run tests/account-v1-email-ui.test.ts
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - run: git diff --check ${{ github.event.before }} ${{ github.sha }}
