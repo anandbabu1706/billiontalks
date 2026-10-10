@@ -95,15 +95,15 @@ Final working-tree validation:
 | Check | Result |
 |---|---|
 | Focused affected suites | **200 passed**, browser and meeting-foundation suites |
-| `npm test` | **272 passed**, six test files; zero failures/skips in the full run |
+| `npm test` | **276 passed**, six test files; zero failures/skips in the full run |
 | `npm run typecheck` | Passed |
 | `npm run build` | Passed; script is `wrangler deploy --dry-run`, no deployment |
 | `git diff --check` | Passed |
 | Git HEAD before blocker commit | `b5ad131a11803dfc03268fdc713261a96000184a` |
 
-15 tests are now added above the 257-test baseline. Build output reports only the existing MEETING_STORE, ACCOUNT_DB, and RECORDINGS_BUCKET bindings. No binding file was changed.
+19 tests are now added above the 257-test baseline. Build output reports only the existing MEETING_STORE, ACCOUNT_DB, and RECORDINGS_BUCKET bindings. No binding file was changed.
 
-New coverage: outsider/waiting/approved/removed snapshot visibility; retired SFU endpoint makes no upstream call; malformed cookies; invalid meeting identifiers across basic, admission, participant, media, recording, and chat routes with no namespace lookup; server-side stalled request abortion; host and guest shared recovery exhaustion including asymmetric health, stabilization, polling and same-tab rejoin; recording muted-start/unmute, ended-track replacement and late audio input; host and guest timer origin/interval cleanup.
+New coverage: outsider/waiting/approved/removed snapshot visibility; retired SFU endpoint makes no upstream call; malformed cookies; invalid meeting identifiers across basic, admission, participant, media, recording, and chat routes with no namespace lookup; server-side stalled request abortion; host and guest shared recovery exhaustion including asymmetric health, stabilization, polling and same-tab rejoin; recording muted-start/unmute, ended-track replacement and late audio input, partial initialization cleanup, and runtime mixer failure reporting; host and guest timer origin/interval cleanup.
 
 Four existing roster assertions now authenticate as the host. Their membership/duplicate-prevention assertions remain intact. No tests were removed or disabled. Fake AudioContext support was added to the existing browser harness.
 

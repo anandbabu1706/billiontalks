@@ -4123,33 +4123,15 @@ function meetingUiTemplate(): string {
         const outputTracks = videoStream.getTracks();
         const audioTracks = [];
         const audioSources = new Map();
-        const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
         let audioContext = null;
         let recordingAudioDestination = null;
         let audioReconcileTimer = null;
-        if (AudioContextConstructor) {
-          audioContext = new AudioContextConstructor();
-          recordingAudioDestination = audioContext.createMediaStreamDestination();
-          audioTracks.push(...recordingAudioDestination.stream.getAudioTracks());
-        }
-
-        const mediaStream = new window.MediaStream([...outputTracks, ...audioTracks]);
-        const MediaRecorderConstructor = window.MediaRecorder;
-        if (typeof MediaRecorderConstructor !== 'function') throw new Error('MediaRecorder is unavailable in this browser.');
-        const preferredType = 'video/webm;codecs=vp8,opus';
-        const recorderOptions = MediaRecorderConstructor.isTypeSupported?.(preferredType) ? { mimeType: preferredType } : { mimeType: 'video/webm' };
-        const recorder = new MediaRecorderConstructor(mediaStream, recorderOptions);
-        const partSize = 5 * 1024 * 1024;
-        let pendingBlobs = [];
-        let pendingBytes = 0;
-        let queuedBytes = 0;
-        let partNumber = 0;
-        let uploadError = null;
+        let recorder = null;
         let fatalErrorReported = false;
         let captureStopped = false;
         let uploadQueue = Promise.resolve();
         let drawTimer = null;
-        let resolveStopped;
+        let resolveStopped = () => {};
         let resourcesCleaned = false;
         const stopped = new Promise((resolve) => { resolveStopped = resolve; });
 
@@ -4158,35 +4140,86 @@ function meetingUiTemplate(): string {
           resourcesCleaned = true;
           if (drawTimer !== null) window.clearInterval(drawTimer);
           if (audioReconcileTimer !== null) window.clearInterval(audioReconcileTimer);
-          audioSources.forEach((source) => source.disconnect());
+          audioSources.forEach((source) => {
+            try { source.disconnect(); } catch {}
+          });
           audioSources.clear();
-          if (audioContext) void audioContext.close();
-          outputTracks.forEach((track) => track.stop());
-          audioTracks.forEach((track) => track.stop());
+          if (audioContext) void audioContext.close().catch(() => undefined);
+          outputTracks.forEach((track) => {
+            try { track.stop(); } catch {}
+          });
+          audioTracks.forEach((track) => {
+            try { track.stop(); } catch {}
+          });
+        };
+
+        try {
+          const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextConstructor) {
+            audioContext = new AudioContextConstructor();
+            recordingAudioDestination = audioContext.createMediaStreamDestination();
+            audioTracks.push(...recordingAudioDestination.stream.getAudioTracks());
+          }
+
+          const mediaStream = new window.MediaStream([...outputTracks, ...audioTracks]);
+          const MediaRecorderConstructor = window.MediaRecorder;
+          if (typeof MediaRecorderConstructor !== 'function') throw new Error('MediaRecorder is unavailable in this browser.');
+          const preferredType = 'video/webm;codecs=vp8,opus';
+          const recorderOptions = MediaRecorderConstructor.isTypeSupported?.(preferredType) ? { mimeType: preferredType } : { mimeType: 'video/webm' };
+          recorder = new MediaRecorderConstructor(mediaStream, recorderOptions);
+        } catch (error) {
+          cleanupResources();
+          throw error;
+        }
+
+        const partSize = 5 * 1024 * 1024;
+        let pendingBlobs = [];
+        let pendingBytes = 0;
+        let queuedBytes = 0;
+        let partNumber = 0;
+        let uploadError = null;
+
+        const reportFatalError = (error, failureCode) => {
+          if (fatalErrorReported) return;
+          fatalErrorReported = true;
+          const message = error instanceof Error ? error.message : 'Recording capture failed.';
+          const statusElement = document.getElementById('recordingStatus');
+          if (statusElement) statusElement.textContent = message;
+          void failRecordingOnServer(meetingId, recordingId, failureCode).catch(() => undefined);
+          try {
+            if (recorder && recorder.state !== 'inactive') recorder.stop();
+          } catch {}
+          cleanupResources();
         };
 
         const reconcileAudioInputs = () => {
           if (!recordingAudioDestination || !audioContext || resourcesCleaned) return;
-          const streams = [localMediaState.micStream, activeScreenShareStream, ...Array.from(remoteStreams.values()).flatMap((remote) => [remote.stream, remote.screenStream])];
-          const currentTracks = new Map();
-          streams.filter(Boolean).forEach((stream) => {
-            stream.getAudioTracks().forEach((track) => {
-              if (track.readyState !== 'ended') currentTracks.set(track.id, track);
+          try {
+            const streams = [localMediaState.micStream, activeScreenShareStream, ...Array.from(remoteStreams.values()).flatMap((remote) => [remote.stream, remote.screenStream])];
+            const currentTracks = new Map();
+            streams.filter(Boolean).forEach((stream) => {
+              stream.getAudioTracks().forEach((track) => {
+                if (track.readyState !== 'ended') currentTracks.set(track.id, track);
+              });
             });
-          });
-          audioSources.forEach((source, trackId) => {
-            const track = currentTracks.get(trackId);
-            if (!track) {
-              source.disconnect();
-              audioSources.delete(trackId);
-            }
-          });
-          currentTracks.forEach((track, trackId) => {
-            if (audioSources.has(trackId)) return;
-            const source = audioContext.createMediaStreamSource(new window.MediaStream([track]));
-            source.connect(recordingAudioDestination);
-            audioSources.set(trackId, source);
-          });
+            audioSources.forEach((source, trackId) => {
+              const track = currentTracks.get(trackId);
+              if (!track) {
+                source.disconnect();
+                audioSources.delete(trackId);
+              }
+            });
+            currentTracks.forEach((track, trackId) => {
+              if (audioSources.has(trackId)) return;
+              const source = audioContext.createMediaStreamSource(new window.MediaStream([track]));
+              source.connect(recordingAudioDestination);
+              audioSources.set(trackId, source);
+            });
+          } catch (error) {
+            if (audioReconcileTimer !== null) window.clearInterval(audioReconcileTimer);
+            audioReconcileTimer = null;
+            reportFatalError(error, 'CAPTURE_FAILED');
+          }
         };
         reconcileAudioInputs();
         if (recordingAudioDestination) audioReconcileTimer = window.setInterval(reconcileAudioInputs, 250);
@@ -4212,16 +4245,6 @@ function meetingUiTemplate(): string {
             context.font = '16px sans-serif';
             context.fillText(tile.querySelector('.tile-name')?.textContent || tile.dataset.userId || 'Participant', x + 22, y + tileHeight - 22);
           });
-        };
-
-        const reportFatalError = (error, failureCode) => {
-          if (fatalErrorReported) return;
-          fatalErrorReported = true;
-          const message = error instanceof Error ? error.message : 'Recording capture failed.';
-          const statusElement = document.getElementById('recordingStatus');
-          if (statusElement) statusElement.textContent = message;
-          void failRecordingOnServer(meetingId, recordingId, failureCode).catch(() => undefined);
-          if (recorder.state !== 'inactive') recorder.stop();
         };
 
         const uploadPart = (blob, isFinal) => {

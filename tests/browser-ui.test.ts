@@ -222,6 +222,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
   const html = await response.text();
   const createdMicStreams: Array<{ getTracks: () => any[]; getAudioTracks: () => any[]; getVideoTracks: () => any[] }> = [];
   const createdCameraStreams: Array<{ getTracks: () => any[]; getAudioTracks: () => any[]; getVideoTracks: () => any[] }> = [];
+  const recordingOutputTracks: any[] = [];
   const dom = new JSDOM(html, {
     runScripts: "dangerously",
     pretendToBeVisual: true,
@@ -280,11 +281,15 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
       });
       Object.defineProperty(window.HTMLCanvasElement.prototype, "captureStream", {
         configurable: true,
-        value: () => new FakeMediaStream([{
-          kind: "video",
-          readyState: "live",
-          stop() { this.readyState = "ended"; },
-        }]),
+        value: () => {
+          const track = {
+            kind: "video",
+            readyState: "live",
+            stop: vi.fn(function (this: { readyState: string }) { this.readyState = "ended"; }),
+          };
+          recordingOutputTracks.push(track);
+          return new FakeMediaStream([track]);
+        },
       });
 
       Object.defineProperty(window.HTMLMediaElement.prototype, "play", {
@@ -416,6 +421,20 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
       });
     }
 
+    if (url.endsWith("/recording/fail")) {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      return createResponse({
+        ok: true,
+        data: {
+          meetingId: "btm_test_123",
+          recordingId: "rec-test-1",
+          status: "FAILED",
+          failureCode: body.failureCode,
+          initiatedByUserId: "host-123",
+        },
+      });
+    }
+
     if (url.endsWith("/recording")) {
       return createResponse({
         ok: true,
@@ -513,6 +532,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     getUserMediaMock,
     micStreams: createdMicStreams,
     cameraStreams: createdCameraStreams,
+    recordingOutputTracks,
     setNextSubscribePayload(payload: unknown) { nextSubscribePayload = payload; subscribePayloadUsed = false; discoveryRevision += 1; },
     queueSubscribePayload(payload: unknown) { subscribeQueue.push(payload); discoveryRevision += 1; },
     setNextSubscribeError(message: string) { nextSubscribeError = message; },
@@ -858,6 +878,70 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/stop", expect.objectContaining({ method: "POST" }));
     expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording saved to private storage");
   });
+
+  it("cleans partial recording resources when MediaRecorder is unavailable", async () => {
+    const page = await loadRenderedPage();
+    await joinHostMeeting(page.document, "Missing recorder");
+    Object.defineProperty(page.window, "MediaRecorder", { value: undefined, configurable: true });
+
+    page.document.getElementById("startRecordingBtn")?.click();
+    await flush();
+
+    expect(page.recordingOutputTracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(FakeAudioContext.instances.at(-1)?.state).toBe("closed");
+    expect(page.fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/recording/rec-test-1/fail") && init?.method === "POST")).toBe(true);
+    expect(page.micStreams[0].getAudioTracks()[0].stop).not.toHaveBeenCalled();
+  });
+
+  it("cleans partial recording resources when MediaRecorder construction throws", async () => {
+    const page = await loadRenderedPage();
+    await joinHostMeeting(page.document, "Throwing recorder");
+    class ThrowingRecorder {
+      static isTypeSupported() { return true; }
+      constructor() { throw new Error("Recorder construction failed."); }
+    }
+    Object.defineProperty(page.window, "MediaRecorder", { value: ThrowingRecorder, configurable: true });
+
+    page.document.getElementById("startRecordingBtn")?.click();
+    await flush();
+
+    expect(page.recordingOutputTracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(FakeAudioContext.instances.at(-1)?.state).toBe("closed");
+    expect(page.fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/recording/rec-test-1/fail") && init?.method === "POST")).toBe(true);
+    expect(page.micStreams[0].getAudioTracks()[0].stop).not.toHaveBeenCalled();
+  });
+
+  for (const mixerFailure of ["source", "connect"] as const) {
+    it(`contains later recording mixer ${mixerFailure} failures and persists recording failure`, async () => {
+      const page = await loadRenderedPage();
+      await joinHostMeeting(page.document, `Mixer ${mixerFailure} failure`);
+      page.document.getElementById("micControlBtn")?.click();
+      await flush();
+      page.document.getElementById("startRecordingBtn")?.click();
+      await flush();
+      const context = FakeAudioContext.instances.at(-1)!;
+      const initialMicTrack = page.micStreams[0].getAudioTracks()[0];
+      if (mixerFailure === "source") {
+        context.createMediaStreamSource = () => { throw new Error("Source creation failed."); };
+      } else {
+        context.createMediaStreamSource = () => ({
+          connect: () => { throw new Error("Source connection failed."); },
+          disconnect: vi.fn(),
+        }) as any;
+      }
+
+      const replacementTrack = { id: `replacement-${mixerFailure}`, kind: "audio", readyState: "live", stop: vi.fn() };
+      page.micStreams[0].getAudioTracks = () => [replacementTrack];
+      await new Promise((resolve) => setTimeout(resolve, 350));
+
+      expect(page.fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/recording/rec-test-1/fail") && init?.method === "POST")).toBe(true);
+      expect(page.recordingOutputTracks[0].stop).toHaveBeenCalledTimes(1);
+      expect(initialMicTrack.stop).not.toHaveBeenCalled();
+      const failCalls = page.fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/recording/fail"));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(page.fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/recording/fail"))).toHaveLength(failCalls.length);
+    });
+  }
 
   it("keeps muted and newly replaced microphone inputs in the stable recording mixer", async () => {
     const { document, micStreams } = await loadRenderedPage();
