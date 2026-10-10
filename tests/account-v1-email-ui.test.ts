@@ -44,6 +44,7 @@ describe("BT-V1-001 account UI", () => {
     expect(html).toContain('name="acceptedTerms"');
     expect(html).toContain('name="marketingConsent"');
     expect(html).toContain('name="mobileNumber"');
+    expect(html).toContain('pattern="[+][1-9][0-9]{1,14}"');
     expect(html).toContain('name="confirmPassword"');
     expect(html).not.toContain("Recent Meetings");
   });
