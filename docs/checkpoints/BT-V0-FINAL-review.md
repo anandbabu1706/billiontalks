@@ -1,12 +1,12 @@
-# BillionTalks V0 final review — uncommitted
+# BillionTalks V0 final review
 
-Review date: 2026-10-10. Baseline: `main`, `21f47705f3352549e03abe351d4e410de0f31afa` (BT-V0-030). Production Worker named in the supplied brief: `billiontalks-realtime-backend`.
+Review date: 2026-10-11. Final main commit: `2471d8f61bf504635d3607648b1e38709e8bab69`. Production Worker: `billiontalks-realtime-backend`. Production Cloudflare version: `665dd2ba-5a89-44ba-a644-1e7541850bf7`.
 
 ## V0 release recommendation
 
-**NOT READY FOR V0 SIGN-OFF**
+**READY FOR V0 SIGN-OFF**
 
-The working tree contains V0 fixes that have not been deployed or physically qualified. The supplied physical evidence applies to BT-V0-030, not these changes. Desktop/mobile qualification of the changed recording mixer, admission snapshots, and recovery behavior is the remaining release gate. No commit, push, deployment, DNS modification, production-secret change, binding change, or V1 implementation was performed.
+The reviewed V0 fixes are deployed at the production version above and have passed final physical production/device qualification. No DNS modification, production-secret change, binding change, or V1 implementation was performed.
 
 This is a source-and-test audit plus user-supplied production evidence, not an independent production inspection or security certification. Automated browser coverage uses JSDOM and fake media/SFU devices; it cannot prove real RTP flow, audible content, OS background behavior, or production R2 configuration.
 
@@ -72,13 +72,23 @@ This is a source-and-test audit plus user-supplied production evidence, not an i
 
 Meeting creation, guest sessions, prejoin/join, role enforcement, approval/rejection, access modes, removal, leave/rejoin/end, revision-checked Durable Object persistence; split SFU publisher/subscriber transport, bidirectional media, soft mute, camera replacement, screen share/presentation, autoplay controls and bounded recovery; participant list, durable chat, server-time-derived duration; host recording, canvas composition, mixed audio, ordered multipart private R2 upload, metadata/failure states; cookie-scoped meeting history. These are implemented capabilities, not a declaration that the release gate is complete.
 
-## Physical validation supplied for BT-V0-030
+## Final physical production qualification
 
-Desktop host/mobile guest: bidirectional audio/video, screen sharing, presentation focus and normal-layout restoration, mic mute/unmute without video disruption, camera OFF/ON restoration in both directions, background/resume and audio reconnect. Timer visible. Recording start/stop and private R2 storage successful. Recorded host audio, guest audio, host video, guest video, duration and sync all reported good.
+**PASS** — final production/device qualification covered:
 
-Latest reported Guest → Host startup: approximately 15 seconds. Host and guest camera OFF→ON: approximately 10 seconds or less. Earlier 30–120-second failures are historical context, not assumed to persist in the latest production build.
+- Admission and participant handling, including host plus two guests.
+- Two-way audio and video.
+- Microphone mute/unmute.
+- Camera OFF→ON.
+- Screen sharing.
+- Recovery and leave/rejoin.
+- Recording start/stop, storage, and content.
+- Chat.
+- Meeting timer.
+- Meeting history.
+- Desktop/mobile sanity.
 
-No new production call, real-device test, recording download, or production storage inspection was performed during this review.
+The qualification covered waiting/admitted visibility, approval/rejection, participant removal, media recovery, recording persistence/content, and normal meeting lifecycle behavior in production.
 
 ## Startup latency investigation
 
@@ -107,13 +117,19 @@ New coverage: outsider/waiting/approved/removed snapshot visibility; retired SFU
 
 Four existing roster assertions now authenticate as the host. Their membership/duplicate-prevention assertions remain intact. No tests were removed or disabled. Fake AudioContext support was added to the existing browser harness.
 
-## Remaining physical-device release checks
+## Physical-device release checks — completed
 
-1. Host plus two guests: one waiting, one admitted. Verify each guest sees only its own admission state; approve/reject, switch all access modes, remove one guest, and verify no re-entry or effect on the other guest. Test refresh and normal leave/rejoin without duplicates; end from host.
-2. Both host and guest: bidirectional audio/video, mute, camera OFF/ON, screen share/focus/stop, background/resume, short network interruption. Under prolonged interruption verify the terminal recovery message, no renewed automatic media attempts from polling, then successful leave/rejoin.
-3. Start recording with mic muted and before another participant joins. Unmute, let guest join, replace/recover a microphone, toggle cameras and screen share, then stop. Inspect retained media using the existing authorized inspection process for both voices/videos and sync. No playback/download UI is required.
-4. Refresh during recording, inspect persisted status, resolve the lost capture through stop/failure, then start a new recording. Verify two-tab duplicate start is rejected and ordinary stop/finalization still works.
-5. Chat both ways; compare duration on host/guest, refresh without resetting start time, end/freeze; verify meeting history. Check desktop/mobile layout visually.
+All final physical production/device checks passed, including the host/two-guest admission flow, bidirectional media, controls, recovery/rejoin, recording storage/content, chat, timer, history, and desktop/mobile sanity.
+
+The following remain accepted V0 limitations/non-blockers and are explicitly deferred to V1 or later:
+
+- Recording playback/download UX.
+- Reactions/emojis.
+- Hand raise.
+- Improved meeting-control icons.
+- End-meeting control redesign.
+- Account and dashboard completion.
+- Scheduler, calendar, contacts, invitations/RSVP, and related account workflows.
 
 ## Known limitations and risks
 
