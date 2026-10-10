@@ -11,6 +11,8 @@ import {
   handleResetPassword,
 } from "./account/api";
 import type { D1AccountDatabase } from "./account/repository";
+import { createAccountEmailSender, type AccountEmailConfig } from "./account/email-delivery";
+import { accountPage } from "./account/ui";
 import {
   buildRecordingObjectKey,
   DurableMeetingRepository,
@@ -54,7 +56,7 @@ type V0SessionStoreStub = {
   deleteSession: (sessionId: string) => Promise<void>;
 };
 
-type WorkerEnv = Partial<RealtimeEnv> & { SESSION_STORE?: unknown; ACCOUNT_DB?: D1AccountDatabase; DEV_TOOLS_ENABLED?: string };
+type WorkerEnv = Partial<RealtimeEnv> & AccountEmailConfig & { SESSION_STORE?: unknown; ACCOUNT_DB?: D1AccountDatabase; DEV_TOOLS_ENABLED?: string };
 
 type RecordingMultipartUpload = {
   uploadId: string;
@@ -1751,7 +1753,8 @@ function meetingUiTemplate(): string {
               <div class="actions">
                 <button class="primary" id="startMeetingBtn">Start Meeting</button>
                 <button class="secondary" id="joinMeetingBtn">Join Meeting</button>
-                <button class="ghost" id="openRegistrationBtn" type="button">Create an account</button>
+                <button class="ghost" id="openRegistrationBtn" type="button">Create account</button>
+                <a class="ghost" href="/account#login" style="display:inline-flex;align-items:center;padding:10px 16px;border-radius:9px;color:inherit;">Sign in</a>
               </div>
             </div>
             <div class="info-box">
@@ -1763,7 +1766,7 @@ function meetingUiTemplate(): string {
               </div>
             </div>
           </div>
-          <section class="history-section" aria-label="Meeting history">
+          <section class="history-section" aria-label="Meeting history" hidden>
             <div class="history-heading">
               <div class="kicker" style="margin:0;">Recent Meetings</div>
               <span id="historyStatus" class="history-status" aria-live="polite">Loading</span>
@@ -4446,7 +4449,7 @@ function meetingUiTemplate(): string {
 
       function showScreen(name) {
         state.route = name;
-        if (name === 'home') void refreshMeetingHistory();
+        // V1: meeting history is account-only and belongs in the signed-in dashboard.
         if (name === 'meeting') {
           markStartupTiming('joined'); // Every route into the meeting (direct join, host approval, rejoin) must capture and publish the devices shown as ON.
           acquireDesiredLocalMedia();
@@ -5904,7 +5907,7 @@ function meetingUiTemplate(): string {
       document.getElementById('openRegistrationBtn').addEventListener('click', () => {
         setError(null);
         resetRegistrationForm();
-        showScreen('register');
+        window.location.assign('/account#register');
       });
       document.getElementById('registrationForm').addEventListener('submit', (event) => { void submitRegistration(event); });
       document.getElementById('backToHomeFromRegistration').addEventListener('click', (event) => {
@@ -6002,13 +6005,13 @@ const routeHandler = {
     const url = new URL(request.url);
 
     if (request.method === "POST" && url.pathname === "/api/accounts/register") {
-      return handleAccountRegistration(request, env.ACCOUNT_DB);
+      return handleAccountRegistration(request, env.ACCOUNT_DB, createAccountEmailSender(env));
     }
     if (request.method === "POST" && url.pathname === "/api/accounts/login") {
       return handleAccountLogin(request, env.ACCOUNT_DB);
     }
     if (request.method === "POST" && url.pathname === "/api/accounts/forgot-password") {
-      return handleForgotPassword(request, env.ACCOUNT_DB);
+      return handleForgotPassword(request, env.ACCOUNT_DB, createAccountEmailSender(env));
     }
     if (request.method === "POST" && url.pathname === "/api/accounts/reset-password") {
       return handleResetPassword(request, env.ACCOUNT_DB);
@@ -6026,7 +6029,11 @@ const routeHandler = {
       request.method === "POST" &&
       (url.pathname === "/api/accounts/verify-email" || url.pathname === "/api/accounts/resend-verification")
     ) {
-      return handleEmailVerification(request, env.ACCOUNT_DB);
+      return handleEmailVerification(request, env.ACCOUNT_DB, createAccountEmailSender(env));
+    }
+
+    if (request.method === "GET" && url.pathname === "/account") {
+      return new Response(accountPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
     }
 
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
