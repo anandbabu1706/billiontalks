@@ -50,6 +50,18 @@ function jsonResponse(data: unknown, status: number): Response {
   });
 }
 
+function registrationFailureCategory(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown";
+  const message = error.message.toLowerCase();
+  if (message.includes("unique constraint")) return "unique_constraint";
+  if (message.includes("foreign key")) return "foreign_key_constraint";
+  if (message.includes("not null")) return "not_null_constraint";
+  if (message.includes("check constraint")) return "check_constraint";
+  if (message.includes("no such table")) return "missing_table";
+  if (message.includes("timeout") || message.includes("cpu")) return "runtime_limit";
+  return error.name || "unknown";
+}
+
 async function readBoundedBody(request: Request): Promise<{ body: string; tooLarge: boolean }> {
   const reader = request.body?.getReader();
   if (!reader) return { body: "", tooLarge: false };
@@ -121,6 +133,9 @@ export async function handleAccountRegistration(request: Request, database?: D1A
     if (error instanceof AccountIdentityConflictError) {
       return jsonResponse({ ok: false, error: "An account with these details could not be registered." }, 409);
     }
+    console.error("[billiontalks account] registration persistence failed", {
+      category: registrationFailureCategory(error),
+    });
     return jsonResponse({ ok: false, error: "Account registration failed." }, 500);
   }
   if (!account) {
@@ -129,6 +144,9 @@ export async function handleAccountRegistration(request: Request, database?: D1A
   try {
     await mailer.sendVerification(account.email, verificationToken);
   } catch {
+    console.error("[billiontalks account] verification email delivery failed", {
+      category: "provider_failure",
+    });
     return jsonResponse({ ok: false, error: "Account registration is temporarily unavailable." }, 503);
   }
   return jsonResponse({

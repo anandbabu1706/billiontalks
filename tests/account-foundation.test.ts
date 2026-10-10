@@ -657,6 +657,30 @@ describe("account registration API", () => {
     expect(fixture.tokens.size).toBe(2);
   });
 
+  it("logs only a persistence category when registration storage fails", async () => {
+    const statement = {
+      bind: () => statement,
+      first: async () => null,
+      run: async () => ({}),
+    } as unknown as D1AccountStatement;
+    const database = {
+      prepare: () => statement,
+      batch: async () => {
+        throw new Error("no such table: accounts");
+      },
+    } as D1AccountDatabase;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await accountFetch(registrationRequest(validRegistration()), { ACCOUNT_DB: database });
+
+    expect(response.status).toBe(500);
+    expect(errorLog).toHaveBeenCalledWith(
+      "[billiontalks account] registration persistence failed",
+      { category: "missing_table" },
+    );
+    errorLog.mockRestore();
+  });
+
   it.each([
     ["invalid country", { country: "ZZ" }],
     ["invalid mobile", { mobileNumber: "4155550100" }],
