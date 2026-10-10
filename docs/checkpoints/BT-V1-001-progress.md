@@ -19,7 +19,7 @@ Manual work: register a Resend account, verify a sender domain (or allowed sendi
 
 ### Failure behavior
 
-Registration fails closed with 503 if email is not configured, to avoid creating unverified accounts that can never receive mail. Once the D1 account is created, an external provider outage can result in a 500 even though the account exists. Recovery is possible through resend verification after the existing cooldown; this scenario requires integration testing and UX follow-up.
+Registration fails closed with 503 if email is not configured. If the provider fails after the D1 account is created, the API also returns a sanitized 503 while keeping the pending account recoverable through resend verification after the existing cooldown.
 
 Resend verification and forgot password return generic responses so account existence cannot be inferred. Existing D1 tokens stay short-lived and single-purpose: email verification 24 hours and password reset 45 minutes. Tokens are not written to logs and the account page has `Referrer-Policy: no-referrer`. Cookie-authenticated account mutations reject cross-origin browser writes based on Origin / Sec-Fetch-Site.
 
@@ -27,13 +27,25 @@ Resend verification and forgot password return generic responses so account exis
 
 - `npm ci`: passed.
 - `npx vitest run tests/account-v1-email-ui.test.ts`: **7 tests passed**.
-- Account foundation regression suites: **56 tests passed**.
-- `npm test`: **280 tests passed**, seven test files.
+- Account foundation and email regression suites: **58 tests passed**.
+- `npm test`: **282 tests passed**, seven test files.
 - `npm run typecheck`: passed.
 - `npm run build`: passed as Wrangler `--dry-run`; no deployment occurred.
 - `git diff --check`: passed.
 
 The V0 browser tests now assert that Home routes account creation to `/account#register` and keeps signed-out Recent Meetings hidden, matching the V1 account boundary. The account foundation harness uses an isolated fake mailer; provider configuration and API behavior remain covered separately.
+
+### Isolated staging readiness
+
+The separate [wrangler.v1-staging.jsonc](../../wrangler.v1-staging.jsonc) configuration targets:
+
+- Worker: `billiontalks-v1-staging` (not deployed)
+- D1: `billiontalks-v1-staging-accounts` (`7677f8da-7540-4780-bda3-28c9f7b504bb`)
+- R2: `billiontalks-v1-staging-recordings`
+- Account sender: `BillionTalks <no-reply@mail.billiontalks.com>`
+- Public origin: `https://billiontalks-v1-staging.anandjob1706.workers.dev/`
+
+All four account migrations were applied to the staging D1 only. The Resend API key has not been provisioned. The staging dry-run confirmed staging-only D1/R2 bindings and the Durable Object migration; deployment is still pending separate authorization.
 
 Remaining qualification work includes real Resend delivery and provider-failure/retry integration, browser verification and reset flows, and physical V0 meeting/media regression before any production deployment.
 

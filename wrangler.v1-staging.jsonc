@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "billiontalks-v1-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-07-18",
+  "account_id": "2d48323814fb300c94661daac9ee80bf",
+  "vars": {
+    "ACCOUNT_EMAIL_FROM": "BillionTalks <no-reply@mail.billiontalks.com>",
+    "ACCOUNT_PUBLIC_ORIGIN": "https://billiontalks-v1-staging.anandjob1706.workers.dev/"
+  },
+  "d1_databases": [
+    {
+      "binding": "ACCOUNT_DB",
+      "database_name": "billiontalks-v1-staging-accounts",
+      "database_id": "7677f8da-7540-4780-bda3-28c9f7b504bb"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MEETING_STORE",
+        "class_name": "MeetingStateDurableObject"
+      }
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "RECORDINGS_BUCKET",
+      "bucket_name": "billiontalks-v1-staging-recordings"
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "MeetingStateDurableObject"
+      ]
+    }
+  ]
+}
