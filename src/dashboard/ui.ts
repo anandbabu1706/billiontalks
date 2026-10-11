@@ -536,7 +536,7 @@ export function dashboardPage(): string {
               </div>
             </div>
             <p>Plan future conversations and send invitations from your workspace.</p>
-            <span class="disabled-action" aria-disabled="true">Coming soon</span>
+            <a class="disabled-action" href="/schedule">Preview scheduler</a>
           </article>
         </section>
         <div class="content-grid">

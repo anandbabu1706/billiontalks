@@ -13,6 +13,7 @@ import {
 } from "./account/api";
 import type { D1AccountDatabase } from "./account/repository";
 import { dashboardPage } from "./dashboard/ui";
+import { schedulerPreviewPage } from "./scheduler/ui";
 import { createAccountEmailSender, type AccountEmailConfig } from "./account/email-delivery";
 import { accountPage } from "./account/ui";
 import {
@@ -6045,6 +6046,10 @@ const routeHandler = {
 
     if (request.method === "GET" && url.pathname === "/dashboard") {
       return new Response(dashboardPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
+    if (request.method === "GET" && url.pathname === "/schedule") {
+      return new Response(schedulerPreviewPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
     }
 
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
