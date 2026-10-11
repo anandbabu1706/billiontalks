@@ -46,8 +46,14 @@ describe("BT-V1-001 account UI", () => {
     }
     expect(html).toContain('name="acceptedTerms"');
     expect(html).toContain('name="marketingConsent"');
+    expect(html).toContain('name="emailConfirm"');
+    expect(html).toContain('name="country"');
     expect(html).toContain('name="mobileNumber"');
-    expect(html).toContain('pattern="[+][1-9][0-9]{1,14}"');
+    expect(html).toContain('value="India (IN) +91"');
+    expect(html).toContain('data-dialing-code="91"');
+    expect(html.match(/data-dialing-code="/gu)?.length).toBeGreaterThan(200);
+    expect(html).toContain('toE164');
+    expect(html).toContain('Email addresses do not match.');
     expect(html).toContain('name="confirmPassword"');
     expect(html).toContain('data-show');
     expect(html).toContain('autocomplete="current-password"');
