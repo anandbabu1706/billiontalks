@@ -1,4 +1,13 @@
 import { getCountries, getCountryCallingCode, type CountryCode } from "libphonenumber-js/min";
+import logoSource from "../assets/brand/billiontalks-logo.png";
+
+function logoDataUrl(source: string | ArrayBuffer): string {
+  if (typeof source === "string") return source;
+  const bytes = new Uint8Array(source);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `data:image/png;base64,${btoa(binary)}`;
+}
 
 type CountryOption = {
   code: CountryCode;
@@ -44,6 +53,7 @@ function renderCountryOptions(options: CountryOption[]): string {
 
 /** Standalone V1 account surface, deliberately independent of V0 media scripts. */
 export function accountPage(): string {
+  const logoUrl = logoDataUrl(logoSource);
   const options = countryOptions();
   const dialingCodes = Object.fromEntries(options.map(({ code, dialingCode }) => [code, dialingCode]));
   const countryMetadata = options.map(({ code, name, dialingCode, label }) => ({ code, name, dialingCode, label }));
@@ -57,11 +67,12 @@ export function accountPage(): string {
   <style>
     :root { color-scheme: light; font-family: Inter, system-ui, "Segoe UI", sans-serif; background: #f4f7fb; color: #16233b; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: #f4f7fb; display: grid; place-items: center; padding: 24px; }
-    main { display: grid; grid-template-columns: minmax(260px, .78fr) minmax(0, 1.22fr); width: min(100%, 980px); min-height: 660px; background: #fff; border: 1px solid #dce5f1; border-radius: 26px; overflow: hidden; box-shadow: 0 24px 70px #213b6414; }
-    .brand-panel { position: relative; overflow: hidden; padding: clamp(28px, 5vw, 54px); color: #fff; background: linear-gradient(145deg, #0c56bf, #328ef0 60%, #8cc8ff); }
-    .brand-panel::after { content: ""; position: absolute; width: 280px; height: 280px; right: -120px; bottom: -100px; border: 1px solid #ffffff55; border-radius: 50%; box-shadow: 0 0 0 28px #ffffff12, 0 0 0 58px #ffffff0c; }
-    .brand-panel h2 { position: relative; z-index: 1; max-width: 230px; margin: 110px 0 12px; font-size: clamp(25px, 3vw, 35px); line-height: 1.08; letter-spacing: -.035em; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 12% 12%, #e9f4ff 0, transparent 34%), radial-gradient(circle at 90% 86%, #eef7ff 0, transparent 32%), #f4f7fb; display: grid; place-items: center; padding: 24px; }
+    main { display: grid; grid-template-columns: minmax(360px, .92fr) minmax(0, 1.08fr); width: min(100%, 1120px); min-height: 640px; background: #fff; border: 1px solid #dce5f1; border-radius: 26px; overflow: hidden; box-shadow: 0 24px 70px #213b6414; }
+    .brand-panel { position: relative; overflow: hidden; padding: clamp(34px, 5vw, 66px); color: #fff; background: linear-gradient(145deg, #071d49 0%, #0b3d88 56%, #176fd2 100%); }
+    .brand-panel::before { content: ""; position: absolute; width: 460px; height: 460px; right: -220px; bottom: -230px; border: 1px solid #ffffff3d; border-radius: 50%; box-shadow: 0 0 0 34px #ffffff12, 0 0 0 76px #ffffff09; }
+    .brand-panel::after { content: ""; position: absolute; inset: 0; opacity: .35; background: linear-gradient(120deg, transparent 12%, #55b9ff1c 44%, transparent 70%); }
+    .brand-panel h2 { position: relative; z-index: 1; max-width: 390px; margin: clamp(72px, 10vh, 118px) 0 16px; font-size: clamp(31px, 4vw, 48px); line-height: 1.02; letter-spacing: -.045em; }
     .brand-panel p { position: relative; z-index: 1; max-width: 245px; color: #e5f2ff; line-height: 1.6; }
     .account-content { min-width: 0; padding: clamp(24px, 5vw, 54px); }
     a { color: #1266d2; }
@@ -75,11 +86,13 @@ export function accountPage(): string {
     button { background: #1f78dd; color: #fff; border: 0; border-radius: 11px; padding: 12px 18px; font: inherit; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .6; cursor: wait; }
     button.secondary { color: #245183; background: #eaf2fc; }
-    nav { display: flex; flex-wrap: wrap; gap: 9px; margin: 22px 0; }
+    nav { display: flex; flex-wrap: nowrap; gap: 8px; margin: 22px 0; }
     nav button { font-size: 12px; padding: 9px 12px; }
-    nav button[aria-current="page"] { color: #fff; background: #1f78dd; }
-    .brand { display: inline-block; font-weight: 850; letter-spacing: -.03em; font-size: 23px; color: #1266d2; }
-    .brand span { color: #45a7f7; }
+    nav button[aria-current="page"] { color: #fff; background: linear-gradient(135deg, #176fd2, #318ff0); box-shadow: 0 8px 18px #176fd22e; }
+    .brand { display: inline-flex; align-items: center; font-weight: 850; letter-spacing: -.03em; font-size: 23px; color: #1266d2; }
+    .logo-surface { position: relative; z-index: 1; display: inline-flex; align-items: center; width: min(100%, 250px); padding: 8px 12px; border-radius: 12px; background: #f9fbff; box-shadow: 0 10px 26px #0315362e; }
+    .logo-surface img { display: block; width: 100%; height: auto; }
+    .brand-panel .logo-surface { width: min(100%, 250px); }
     section[hidden], div[hidden] { display: none !important; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
     .form-grid > label, .form-grid > .toggle, .form-grid > .actions { min-width: 0; }
@@ -95,29 +108,46 @@ export function accountPage(): string {
     .password { display: flex; gap: 8px; }
     .password input { flex: 1; min-width: 0; }
     .password button { background: #eaf2fc; color: #245183; }
-    @media (max-width: 560px) {
+    main[data-page="login"] { box-shadow: 0 30px 90px #1b4e8b24; }
+    main[data-page="login"] .account-content { background: linear-gradient(180deg, #ffffff, #fbfdff); }
+    main[data-page="login"] section[data-panel="login"] { max-width: 470px; padding-top: 34px; }
+    main[data-page="login"] section[data-panel="login"] h1 { font-size: clamp(34px, 4vw, 46px); letter-spacing: -.05em; margin-top: 0; }
+    main[data-page="login"] section[data-panel="login"] > p { max-width: 360px; margin-bottom: 30px; font-size: 16px; }
+    main[data-page="login"] section[data-panel="login"] form { padding: 26px; border: 1px solid #e0eaf5; border-radius: 20px; background: #fff; box-shadow: 0 18px 42px #2b568b0d; }
+    main[data-page="login"] section[data-panel="login"] input { min-height: 50px; border-radius: 13px; background: #fcfdff; }
+    main[data-page="login"] section[data-panel="login"] .actions button:first-child { min-height: 50px; flex: 1 1 160px; background: linear-gradient(135deg, #176fd2, #318ff0); box-shadow: 0 10px 20px #176fd22e; }
+    main[data-page="login"] section[data-panel="login"] .actions button:first-child:hover, main[data-page="login"] section[data-panel="login"] .actions button:first-child:focus-visible { background: linear-gradient(135deg, #0f5db8, #217cde); }
+    main[data-page="login"] .back { margin-top: 28px; font-weight: 700; }
+    @media (max-width: 820px) {
       body { padding: 0; }
       main { display: block; min-height: 100vh; border: 0; border-radius: 0; }
-      .brand-panel { min-height: 190px; padding: 26px 22px; }
-      .brand-panel h2 { margin: 42px 0 8px; font-size: 25px; }
+      .brand-panel { min-height: 270px; padding: 30px 26px; }
+      .brand-panel h2 { margin: 54px 0 8px; font-size: 32px; }
       .brand-panel p { margin: 0; }
-      .brand-panel::after { width: 180px; height: 180px; right: -90px; bottom: -100px; }
+      .brand-panel::before { width: 260px; height: 260px; right: -130px; bottom: -150px; }
       .account-content { padding: 26px 20px 34px; }
+      nav { max-width: 100%; }
       .form-grid { grid-template-columns: 1fr; }
       .wide { grid-column: auto; }
       .actions button { flex: 1 1 100%; }
+    }
+    @media (max-width: 420px) {
+      .brand-panel { min-height: 230px; }
+      .brand-panel h2 { margin-top: 38px; font-size: 29px; }
+      nav button { flex: 1 1 0; min-width: 0; padding-inline: 8px; }
+      nav button { font-size: 11px; }
     }
   </style>
 </head>
 <body>
 <main>
   <aside class="brand-panel" aria-label="BillionTalks">
-    <div class="brand">Billion<span>Talks</span></div>
-    <h2>Conversations that move you forward.</h2>
+    <div class="logo-surface"><img src="${logoUrl}" alt="BillionTalks"></div>
+    <h2>Make room for better conversations.</h2>
     <p>Meet, collaborate, and stay connected with a workspace built for meaningful conversations.</p>
   </aside>
   <div class="account-content">
-  <div class="brand">Billion<span>Talks</span></div>
+  <div class="logo-surface"><img src="${logoUrl}" alt="BillionTalks"></div>
   <nav aria-label="Account navigation">
     <button data-page="login" class="secondary">Sign in</button>
     <button data-page="register" class="secondary">Create account</button>
@@ -211,6 +241,7 @@ export function accountPage(): string {
     if (!panels.some((panel) => panel.dataset.panel === page)) page = 'login';
     panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== page; });
     const activePage = ['login', 'register', 'profile'].includes(page) ? page : null;
+    document.querySelector('main').dataset.page = page;
     navigationButtons.forEach((button) => {
       if (button.dataset.page === activePage) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');

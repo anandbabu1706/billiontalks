@@ -60,6 +60,9 @@ describe("BT-V1-001 account UI", () => {
     expect(html).toContain('autocomplete="current-password"');
     expect(html).toContain('autocomplete="new-password"');
     expect(html).toContain('class="brand-panel"');
+    expect(html).toContain('class="logo-surface"');
+    expect(html).toContain('billiontalks-logo.png');
+    expect(html).toContain('main[data-page="login"]');
     expect(html).toContain('color-scheme: light');
     expect(html).not.toContain("Recent Meetings");
   });
@@ -82,6 +85,20 @@ describe("BT-V1-001 account UI", () => {
     expect(activePage()).toEqual([]);
     dom.window.document.querySelector('nav [data-page="profile"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     expect(activePage()).toEqual(["profile"]);
+    dom.window.close();
+  });
+
+  it("uses the premium sign-in treatment with only Sign in active", () => {
+    const dom = new JSDOM(accountPage(), {
+      runScripts: "dangerously",
+      url: "https://example.com/account#login",
+    });
+    const main = dom.window.document.querySelector("main");
+    expect(main?.dataset.page).toBe("login");
+    expect(main?.querySelectorAll('.logo-surface img[alt="BillionTalks"]').length).toBe(2);
+    expect(main?.querySelector('nav [data-page="login"]')?.getAttribute("aria-current")).toBe("page");
+    expect(main?.querySelector('nav [data-page="register"]')?.hasAttribute("aria-current")).toBe(false);
+    expect(main?.querySelector('nav [data-page="profile"]')?.hasAttribute("aria-current")).toBe(false);
     dom.window.close();
   });
 

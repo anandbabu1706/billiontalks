@@ -3,6 +3,15 @@
   "name": "billiontalks-realtime-backend",
   "main": "src/index.ts",
   "compatibility_date": "2025-07-18",
+  "rules": [
+    {
+      "type": "Data",
+      "fallthrough": false,
+      "globs": [
+        "**/*.png"
+      ]
+    }
+  ],
   "d1_databases": [
     {
       "binding": "ACCOUNT_DB",
