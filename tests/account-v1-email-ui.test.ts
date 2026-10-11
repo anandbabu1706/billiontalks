@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { JSDOM } from "jsdom";
 import { createAccountEmailSender } from "../src/account/email-delivery";
 import { accountPage } from "../src/account/ui";
 import app from "../src/index";
@@ -59,6 +60,27 @@ describe("BT-V1-001 account UI", () => {
     expect(html).toContain('autocomplete="current-password"');
     expect(html).toContain('autocomplete="new-password"');
     expect(html).not.toContain("Recent Meetings");
+  });
+
+  it("keeps only the selected primary account page navigation item active", () => {
+    const dom = new JSDOM(accountPage(), {
+      runScripts: "dangerously",
+      url: "https://example.com/account#register",
+    });
+    const navigation = [...dom.window.document.querySelectorAll("nav [data-page]")];
+    const activePage = () => navigation.filter((button) => button.getAttribute("aria-current") === "page").map((button) => button.getAttribute("data-page"));
+
+    expect(activePage()).toEqual(["register"]);
+    dom.window.document.querySelector('nav [data-page="login"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    expect(activePage()).toEqual(["login"]);
+    dom.window.document.querySelector('[data-page="forgot"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    expect(activePage()).toEqual([]);
+    dom.window.history.replaceState(null, "", "#reset");
+    dom.window.location.hash = "reset";
+    expect(activePage()).toEqual([]);
+    dom.window.document.querySelector('nav [data-page="profile"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    expect(activePage()).toEqual(["profile"]);
+    dom.window.close();
   });
 
   it("fails closed when account email delivery is not configured", async () => {

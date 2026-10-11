@@ -72,6 +72,7 @@ export function accountPage(): string {
     button.secondary { background: #223c64; }
     nav { display: flex; flex-wrap: wrap; gap: 9px; margin: 22px 0; }
     nav button { font-size: 12px; padding: 9px 12px; }
+    nav button[aria-current="page"] { background: #398bff; }
     .brand { font-weight: 800; letter-spacing: .02em; font-size: 20px; }
     .brand span { color: #56a8ff; }
     section[hidden], div[hidden] { display: none !important; }
@@ -102,7 +103,7 @@ export function accountPage(): string {
 <main>
   <div class="brand">Billion<span>Talks</span></div>
   <nav aria-label="Account navigation">
-    <button data-page="login">Sign in</button>
+    <button data-page="login" class="secondary">Sign in</button>
     <button data-page="register" class="secondary">Create account</button>
     <button data-page="profile" class="secondary">Profile</button>
   </nav>
@@ -181,6 +182,7 @@ export function accountPage(): string {
 (function(){
   'use strict';
   const panels = [...document.querySelectorAll('[data-panel]')];
+  const navigationButtons = [...document.querySelectorAll('nav [data-page]')];
   const status = document.getElementById('status');
   const countryDialingCodes = ${JSON.stringify(dialingCodes)};
   const countries = ${JSON.stringify(countryMetadata)};
@@ -191,6 +193,11 @@ export function accountPage(): string {
   function view(page) {
     if (!panels.some((panel) => panel.dataset.panel === page)) page = 'login';
     panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== page; });
+    const activePage = ['login', 'register', 'profile'].includes(page) ? page : null;
+    navigationButtons.forEach((button) => {
+      if (button.dataset.page === activePage) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    });
     history.replaceState(null, '', '#' + page);
     message('');
     if (page === 'profile') void loadProfile();
