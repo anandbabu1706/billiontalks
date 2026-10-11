@@ -9,8 +9,10 @@ import {
   handleForgotPassword,
   handleEmailVerification,
   handleResetPassword,
+  resolveAccountSession,
 } from "./account/api";
 import type { D1AccountDatabase } from "./account/repository";
+import { dashboardPage } from "./dashboard/ui";
 import { createAccountEmailSender, type AccountEmailConfig } from "./account/email-delivery";
 import { accountPage } from "./account/ui";
 import {
@@ -160,6 +162,7 @@ function withSessionCookie(response: Response, request: Request, session: V0Sess
 
 async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?: unknown): Promise<{ session: V0Session; isNew: boolean }> {
   const store = resolveSessionStore(env);
+  const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
   const sessionId = getSessionIdFromRequest(request);
 
   if (sessionId) {
@@ -170,13 +173,14 @@ async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?
     if (
       existing &&
       existing.sessionId === sessionId &&
+      (!account || existing.userId === account.id) &&
       Number.isFinite(lastSeenAt) &&
       now >= lastSeenAt &&
       now - lastSeenAt < SESSION_TTL_SECONDS * 1000
     ) {
       const updated: V0Session = {
         ...existing,
-        displayName: typeof displayName === "string" && displayName.trim() ? displayName.trim() : existing.displayName,
+        displayName: account?.fullName || (typeof displayName === "string" && displayName.trim() ? displayName.trim() : existing.displayName),
         lastSeenAt: new Date(now).toISOString(),
       };
       await store.saveSession(updated);
@@ -191,8 +195,8 @@ async function getOrCreateSession(request: Request, env: WorkerEnv, displayName?
   const now = new Date().toISOString();
   const createSession: V0Session = {
     sessionId: crypto.randomUUID(),
-    userId: generateSessionUserId(),
-    displayName: typeof displayName === "string" && displayName.trim() ? displayName.trim() : "Guest",
+    userId: account?.id || generateSessionUserId(),
+    displayName: account?.fullName || (typeof displayName === "string" && displayName.trim() ? displayName.trim() : "Guest"),
     createdAt: now,
     lastSeenAt: now,
   };
@@ -6039,6 +6043,10 @@ const routeHandler = {
       return new Response(accountPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
     }
 
+    if (request.method === "GET" && url.pathname === "/dashboard") {
+      return new Response(dashboardPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
       const { session } = await getOrCreateSession(request, env);
       return withSessionCookie(
@@ -6100,12 +6108,16 @@ const routeHandler = {
         );
       }
 
-      const { session } = await getOrCreateSession(request, env, body.displayName || body.hostDisplayName);
+      const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+      if (env.ACCOUNT_DB && !account) {
+        return jsonResponse({ ok: false, error: "Sign in to start a meeting." }, 401);
+      }
+      const { session } = await getOrCreateSession(request, env, account?.fullName || body.displayName || body.hostDisplayName);
 
       try {
         const meeting = await getMeetingService(env).createMeeting({
           title: body.title,
-          hostUserId: session.userId,
+          hostUserId: account?.id || session.userId,
           accessMode: body.accessMode,
         });
 
@@ -6281,9 +6293,13 @@ const routeHandler = {
     }
 
     if (request.method === "GET" && url.pathname === "/api/meetings/history") {
+      const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+      if (env.ACCOUNT_DB && !account) {
+        return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+      }
       const { session } = await getOrCreateSession(request, env);
       try {
-        const history = await getMeetingService(env).listMeetingHistory(session.userId);
+        const history = await getMeetingService(env).listMeetingHistory(account?.id || session.userId);
         return withSessionCookie(jsonResponse({ ok: true, data: history }), request, session);
       } catch (error) {
         return withSessionCookie(

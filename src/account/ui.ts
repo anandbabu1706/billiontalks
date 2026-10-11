@@ -251,7 +251,7 @@ export function accountPage(): string {
     if (values[key] !== values[other]) throw Error(key === 'email' ? 'Email addresses do not match.' : 'Passwords do not match.');
     return values;
   }
-  submit('login', 'login', 'POST', (values) => ({ email: values.email, password: values.password }), async () => { view('profile'); message('Signed in successfully.'); });
+  submit('login', 'login', 'POST', (values) => ({ email: values.email, password: values.password }), async () => { location.href = '/dashboard'; });
   submit('register', 'register', 'POST', (values, form) => {
     matching(values, 'email', 'emailConfirm');
     const country = selectedCountry(values.country);

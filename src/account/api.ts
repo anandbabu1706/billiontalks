@@ -10,6 +10,11 @@ import { AccountValidationError } from "./validation";
 const CURRENT_TERMS_VERSION = "terms-v1";
 const MAX_REGISTRATION_BODY_BYTES = 16_384;
 
+export async function resolveAccountSession(request: Request, database?: D1AccountDatabase): Promise<Account | null> {
+  if (!database) return null;
+  return new AccountAuthenticationService(new D1AccountRepository(database)).resolve(request);
+}
+
 type RegistrationBody = {
   fullName: string;
   email: string;
@@ -259,7 +264,7 @@ export async function handleAccountLogin(request: Request, database?: D1AccountD
 export async function handleAccountMe(request: Request, database?: D1AccountDatabase): Promise<Response> {
   if (!database) return jsonResponse({ ok: false, error: "Account service is temporarily unavailable." }, 503);
   try {
-    const account = await new AccountAuthenticationService(new D1AccountRepository(database)).resolve(request);
+    const account = await resolveAccountSession(request, database);
     if (!account) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
     return jsonResponse({ ok: true, data: { account } }, 200);
   } catch {
@@ -370,7 +375,7 @@ export async function handleAccountProfileUpdate(request: Request, database?: D1
 
   try {
     const accounts = new D1AccountRepository(database);
-    const account = await new AccountAuthenticationService(accounts).resolve(request);
+    const account = await resolveAccountSession(request, database);
     if (!account) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
     if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) {

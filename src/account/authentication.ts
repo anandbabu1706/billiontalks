@@ -40,7 +40,7 @@ function secureCookie(request: Request, token: string | null, maxAgeSeconds: num
   const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
   const value = token ?? "";
   const expiration = maxAgeSeconds === 0 ? "; Expires=Thu, 01 Jan 1970 00:00:00 GMT" : "";
-  return `${ACCOUNT_SESSION_COOKIE}=${value}; Path=/api/accounts; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${expiration}${secure}`;
+  return `${ACCOUNT_SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${expiration}${secure}`;
 }
 
 export function setAccountSessionCookie(response: Response, request: Request, token: string): Response {

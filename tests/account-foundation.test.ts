@@ -882,7 +882,7 @@ describe("account login and session APIs", () => {
     expect(response.headers.get("Set-Cookie")).toContain("HttpOnly");
     expect(response.headers.get("Set-Cookie")).toContain("Secure");
     expect(response.headers.get("Set-Cookie")).toContain("SameSite=Lax");
-    expect(response.headers.get("Set-Cookie")).toContain("Path=/api/accounts");
+    expect(response.headers.get("Set-Cookie")).toContain("Path=/");
     expect(response.headers.get("Set-Cookie")).toContain("Max-Age=604800");
     expect(payload.data.account.email).toBe("jane.doe@example.com");
     expect(JSON.stringify(payload)).not.toContain("password");
