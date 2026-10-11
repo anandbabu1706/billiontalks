@@ -581,7 +581,7 @@ describe("password hashing", () => {
   it("uses a salted, self-describing PBKDF2 hash instead of returning the password", async () => {
     const password = "a long passphrase without symbols";
     const hash = await hashPassword(password);
-    expect(hash).toMatch(/^pbkdf2-sha256\$600000\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/u);
+    expect(hash).toMatch(/^pbkdf2-sha256\$100000\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/u);
     expect(hash).not.toContain(password);
   });
 });
@@ -611,7 +611,7 @@ describe("account registration API", () => {
     expect(JSON.stringify(payload)).not.toContain("passwordHash");
     expect(response.headers.get("Set-Cookie")).toBeNull();
     const storedHash = [...fixture.credentials.values()][0];
-    expect(storedHash).toMatch(/^pbkdf2-sha256\$600000\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/u);
+    expect(storedHash).toMatch(/^pbkdf2-sha256\$100000\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/u);
     expect(storedHash).not.toContain(password);
     expect(fixture.tokens.size).toBe(1);
     const verificationRecord = [...fixture.tokens.values()][0];
@@ -1180,7 +1180,7 @@ describe("password reset APIs", () => {
     expect(payload).toEqual({ ok: true, data: { passwordReset: true } });
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(newHash).not.toBe(oldHash);
-    expect(newHash).toMatch(/^pbkdf2-sha256\$600000\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/u);
+    expect(newHash).toMatch(/^pbkdf2-sha256\$100000\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/u);
     expect(await verifyPassword("new secure passphrase", newHash)).toBe(true);
     expect(await verifyPassword("a long passphrase", newHash)).toBe(false);
     expect([...fixture.sessions.values()].every((session) => session.revoked_at !== null)).toBe(true);

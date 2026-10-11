@@ -29,7 +29,7 @@ Accounts use application-generated `acct_` UUID identifiers. Registration stores
 
 ## Password Policy and Hashing
 
-Passwords require at least 8 Unicode code points and no more than 1,024 UTF-8 bytes. Passwords are not trimmed or composition-filtered. Hashing uses Web Crypto PBKDF2-HMAC-SHA-256 with a random 128-bit salt, 600,000 iterations, and a 256-bit derived key. Stored encodings include the algorithm and work factor. Unknown-email login performs a dummy derivation to reduce timing-based enumeration.
+Passwords require at least 8 Unicode code points and no more than 1,024 UTF-8 bytes. Passwords are not trimmed or composition-filtered. Hashing uses Web Crypto PBKDF2-HMAC-SHA-256 with a random 128-bit salt, 100,000 iterations, and a 256-bit derived key, within the Cloudflare Workers Web Crypto iteration limit. Stored encodings include the algorithm and work factor. Unknown-email login performs a dummy derivation to reduce timing-based enumeration.
 
 ## Email Verification
 
