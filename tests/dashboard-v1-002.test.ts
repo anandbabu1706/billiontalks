@@ -19,12 +19,19 @@ describe("BT-V1-002 signed-in dashboard", () => {
     expect(html).toContain("Your meeting workspace");
     expect(html).toContain("Start a meeting");
     expect(html).toContain("Join a meeting");
+    expect(html).toContain("Quick actions");
+    expect(html).toContain("#1a9a6c");
+    expect(html).toContain("#7657cf");
     expect(html).toContain("Recent meetings");
     expect(html).toContain("Private to your signed-in account");
     expect(html).toContain("/account#profile");
-    expect(html).not.toContain("Scheduler");
-    expect(html).not.toContain("Calendar");
+    expect(html).toContain("Coming soon");
+    expect(html).toContain("Calendar");
+    expect(html).toContain("Contacts");
+    expect(html).toContain("Recordings");
     expect(html).not.toContain("Billing");
+    expect(html).toContain("sidebarToggle");
+    expect(html).toContain("color-scheme: light");
   });
 
   it("serves the dashboard page without exposing meeting data in the HTML", async () => {

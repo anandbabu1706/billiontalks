@@ -59,6 +59,8 @@ describe("BT-V1-001 account UI", () => {
     expect(html).toContain('data-show');
     expect(html).toContain('autocomplete="current-password"');
     expect(html).toContain('autocomplete="new-password"');
+    expect(html).toContain('class="brand-panel"');
+    expect(html).toContain('color-scheme: light');
     expect(html).not.toContain("Recent Meetings");
   });
 

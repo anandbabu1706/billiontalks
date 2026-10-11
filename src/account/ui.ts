@@ -55,44 +55,54 @@ export function accountPage(): string {
   <meta name="referrer" content="no-referrer">
   <title>Account · BillionTalks</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, system-ui, "Segoe UI", sans-serif; background: #081327; color: #f8fbff; }
+    :root { color-scheme: light; font-family: Inter, system-ui, "Segoe UI", sans-serif; background: #f4f7fb; color: #16233b; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 15% 0%, #12356b 0%, #081327 50%); display: grid; place-items: center; padding: 24px; }
-    main { width: min(100%, 640px); background: #101f38; border: 1px solid #25416a; border-radius: 22px; padding: clamp(24px, 5vw, 44px); box-shadow: 0 20px 80px #02071380; }
-    a { color: #78bcff; }
-    h1 { font-size: 28px; margin: 18px 0 8px; }
-    p { color: #bac9df; line-height: 1.5; }
-    label { display: block; font-weight: 600; font-size: 13px; margin: 14px 0 7px; }
-    input, select { width: 100%; min-height: 46px; border: 1px solid #3a5478; border-radius: 11px; background: #09182d; color: white; padding: 11px 13px; font: inherit; }
-    input:focus, select:focus { outline: 3px solid #318aff55; border-color: #78bcff; }
-    input[aria-invalid="true"], select[aria-invalid="true"] { border-color: #ff7f93; }
-    input[type=checkbox] { width: auto; min-height: 0; accent-color: #318aff; }
-    button { background: #398bff; color: #fff; border: 0; border-radius: 11px; padding: 12px 18px; font: inherit; font-weight: 700; cursor: pointer; }
+    body { margin: 0; min-height: 100vh; background: #f4f7fb; display: grid; place-items: center; padding: 24px; }
+    main { display: grid; grid-template-columns: minmax(260px, .78fr) minmax(0, 1.22fr); width: min(100%, 980px); min-height: 660px; background: #fff; border: 1px solid #dce5f1; border-radius: 26px; overflow: hidden; box-shadow: 0 24px 70px #213b6414; }
+    .brand-panel { position: relative; overflow: hidden; padding: clamp(28px, 5vw, 54px); color: #fff; background: linear-gradient(145deg, #0c56bf, #328ef0 60%, #8cc8ff); }
+    .brand-panel::after { content: ""; position: absolute; width: 280px; height: 280px; right: -120px; bottom: -100px; border: 1px solid #ffffff55; border-radius: 50%; box-shadow: 0 0 0 28px #ffffff12, 0 0 0 58px #ffffff0c; }
+    .brand-panel h2 { position: relative; z-index: 1; max-width: 230px; margin: 110px 0 12px; font-size: clamp(25px, 3vw, 35px); line-height: 1.08; letter-spacing: -.035em; }
+    .brand-panel p { position: relative; z-index: 1; max-width: 245px; color: #e5f2ff; line-height: 1.6; }
+    .account-content { min-width: 0; padding: clamp(24px, 5vw, 54px); }
+    a { color: #1266d2; }
+    h1 { font-size: 30px; margin: 22px 0 8px; letter-spacing: -.03em; color: #152541; }
+    p { color: #667995; line-height: 1.5; }
+    label { display: block; color: #31435f; font-weight: 700; font-size: 13px; margin: 14px 0 7px; }
+    input, select { width: 100%; min-height: 46px; border: 1px solid #cbd7e6; border-radius: 11px; background: #fff; color: #16233b; padding: 11px 13px; font: inherit; }
+    input:focus, select:focus { outline: 3px solid #318aff33; border-color: #318aff; }
+    input[aria-invalid="true"], select[aria-invalid="true"] { border-color: #d84d68; }
+    input[type=checkbox] { width: auto; min-height: 0; accent-color: #1f78dd; }
+    button { background: #1f78dd; color: #fff; border: 0; border-radius: 11px; padding: 12px 18px; font: inherit; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .6; cursor: wait; }
-    button.secondary { background: #223c64; }
+    button.secondary { color: #245183; background: #eaf2fc; }
     nav { display: flex; flex-wrap: wrap; gap: 9px; margin: 22px 0; }
     nav button { font-size: 12px; padding: 9px 12px; }
-    nav button[aria-current="page"] { background: #398bff; }
-    .brand { font-weight: 800; letter-spacing: .02em; font-size: 20px; }
-    .brand span { color: #56a8ff; }
+    nav button[aria-current="page"] { color: #fff; background: #1f78dd; }
+    .brand { display: inline-block; font-weight: 850; letter-spacing: -.03em; font-size: 23px; color: #1266d2; }
+    .brand span { color: #45a7f7; }
     section[hidden], div[hidden] { display: none !important; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
     .form-grid > label, .form-grid > .toggle, .form-grid > .actions { min-width: 0; }
     .wide { grid-column: 1 / -1; }
-    .hint { display: block; margin-top: 6px; color: #9ab0cc; font-size: 12px; }
+    .hint { display: block; margin-top: 6px; color: #71849d; font-size: 12px; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
     .toggle { display: flex; align-items: flex-start; gap: 9px; margin-top: 12px; }
     .toggle label { margin: 0; }
-    .status { margin-top: 18px; padding: 12px; border-radius: 10px; background: #182b48; white-space: pre-line; }
+    .status { margin-top: 18px; padding: 12px; border-radius: 10px; background: #edf5ff; color: #315176; white-space: pre-line; }
     .status:empty { display: none; }
-    .status.error { color: #ffd7dd; background: #4b1f32; }
+    .status.error { color: #a52e4b; background: #fff0f3; }
     a.back { display: inline-block; margin-top: 18px; }
     .password { display: flex; gap: 8px; }
     .password input { flex: 1; min-width: 0; }
-    .password button { background: #27456e; }
+    .password button { background: #eaf2fc; color: #245183; }
     @media (max-width: 560px) {
-      body { padding: 12px; }
-      main { padding: 22px 18px; border-radius: 16px; }
+      body { padding: 0; }
+      main { display: block; min-height: 100vh; border: 0; border-radius: 0; }
+      .brand-panel { min-height: 190px; padding: 26px 22px; }
+      .brand-panel h2 { margin: 42px 0 8px; font-size: 25px; }
+      .brand-panel p { margin: 0; }
+      .brand-panel::after { width: 180px; height: 180px; right: -90px; bottom: -100px; }
+      .account-content { padding: 26px 20px 34px; }
       .form-grid { grid-template-columns: 1fr; }
       .wide { grid-column: auto; }
       .actions button { flex: 1 1 100%; }
@@ -101,6 +111,12 @@ export function accountPage(): string {
 </head>
 <body>
 <main>
+  <aside class="brand-panel" aria-label="BillionTalks">
+    <div class="brand">Billion<span>Talks</span></div>
+    <h2>Conversations that move you forward.</h2>
+    <p>Meet, collaborate, and stay connected with a workspace built for meaningful conversations.</p>
+  </aside>
+  <div class="account-content">
   <div class="brand">Billion<span>Talks</span></div>
   <nav aria-label="Account navigation">
     <button data-page="login" class="secondary">Sign in</button>
@@ -177,6 +193,7 @@ export function accountPage(): string {
     </form>
   </section>
   <a class="back" href="/">← Back to meetings</a>
+  </div>
 </main>
 <script>
 (function(){
