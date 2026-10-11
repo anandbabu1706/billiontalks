@@ -13,17 +13,28 @@ function emptyAccountDatabase() {
 }
 
 describe("BT-V1-002 signed-in dashboard", () => {
-  it("renders private dashboard actions and account navigation without unrelated milestones", () => {
+  it("renders the approved premium dashboard structure without unsupported live features", () => {
     const html = dashboardPage();
 
-    expect(html).toContain("Your meeting workspace");
-    expect(html).toContain("Start a meeting");
-    expect(html).toContain("Join a meeting");
-    expect(html).toContain("Quick actions");
-    expect(html).toContain("#1a9a6c");
-    expect(html).toContain("#7657cf");
-    expect(html).toContain("Recent meetings");
-    expect(html).toContain("Private to your signed-in account");
+    expect(html).toContain("Welcome back,");
+    expect(html).toContain("Start Meeting");
+    expect(html).toContain("Join Meeting");
+    expect(html).toContain("Schedule Meeting");
+    expect(html).toContain("Next Meeting");
+    expect(html).toContain("Upcoming Meetings");
+    expect(html).toContain("Recent Meetings");
+    expect(html).toContain("Quick Actions");
+    expect(html).toContain("Total Meetings");
+    expect(html).toContain("Total Participants");
+    expect(html).toContain("Total Meeting Time");
+    expect(html).toContain("Meetings This Month");
+    expect(html).toContain("#14a66f");
+    expect(html).toContain("#7352d1");
+    expect(html).toContain("linear-gradient(155deg, #071d49 0%, #0b3d88 58%, #176fd2 100%)");
+    expect(html).toContain("linear-gradient(135deg, #176fd2, #318ff0)");
+    expect(html).toContain("border-top-color: #4a89ee");
+    expect(html).toContain("box-shadow: 0 14px 32px");
+    expect(html).toContain("Private to your account");
     expect(html).toContain("/account#profile");
     expect(html).toContain("Coming soon");
     expect(html).toContain("Calendar");
@@ -32,6 +43,25 @@ describe("BT-V1-002 signed-in dashboard", () => {
     expect(html).not.toContain("Billing");
     expect(html).toContain("sidebarToggle");
     expect(html).toContain("color-scheme: light");
+    expect(html).toContain("billiontalks-logo.png");
+    expect(html).toContain("History does not expose participant totals");
+    expect(html).not.toContain("Upgrade");
+    expect(html).not.toContain("Google");
+    expect(html).not.toContain("sample meeting");
+  });
+
+  it("keeps supported actions wired to authenticated APIs and marks future features unavailable", () => {
+    const html = dashboardPage();
+
+    expect(html).toContain("api('/api/meetings'");
+    expect(html).toContain("api('/api/meetings/history')");
+    expect(html).toContain("api('/api/accounts/me')");
+    expect(html).toContain("api('/api/accounts/logout'");
+    expect(html).toContain("Guest joining remains available");
+    expect(html).toContain("Scheduling arrives in a future release");
+    expect(html).toContain("Scheduling soon");
+    expect(html).not.toContain("fetch('/api/schedules");
+    expect(html).not.toContain("fetch('/api/contacts");
   });
 
   it("serves the dashboard page without exposing meeting data in the HTML", async () => {
