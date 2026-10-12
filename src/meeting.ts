@@ -731,6 +731,7 @@ export class MeetingPermissions {
 export type CreateMeetingInput = {
   title: string;
   hostUserId: string;
+  meetingId?: string;
   accessMode?: MeetingAccessMode | string;
 };
 
@@ -752,7 +753,8 @@ export class MeetingService {
       typeof input.accessMode === "string" ? input.accessMode : MeetingAccessMode.HOST_APPROVAL,
       "Meeting access mode",
     );
-    const meetingId = generateMeetingId();
+    const meetingId = input.meetingId ?? generateMeetingId();
+    if (!/^btm_[A-Za-z0-9_-]{8,64}$/.test(meetingId)) throw new Error("Meeting identifier is invalid.");
     const hostParticipantId = generateParticipantId(meetingId, hostUserId);
 
     const hostParticipant: MeetingParticipant = {

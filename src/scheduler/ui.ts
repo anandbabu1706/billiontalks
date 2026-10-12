@@ -171,6 +171,7 @@ export function schedulerPreviewPage(): string {
       text-transform: uppercase;
     }
     .preview-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #8b6de1; box-shadow: 0 0 0 4px rgba(139, 109, 225, .12); }
+    .scheduler-error { display: none; margin: 0 0 18px; padding: 13px 15px; border: 1px solid #f1c8c8; border-radius: 12px; background: #fff6f6; color: #a33a3a; font-size: 12px; line-height: 1.5; }
     .notice {
       display: flex;
       align-items: center;
@@ -242,12 +243,17 @@ export function schedulerPreviewPage(): string {
     .field-help { color: #98a5b6; font-size: 10px; line-height: 1.45; }
     .access-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .access-option {
+      position: relative;
+      display: block;
       min-width: 0;
       padding: 13px;
       border: 1px solid #dfe6f0;
       border-radius: 11px;
       background: #fbfcff;
+      cursor: pointer;
     }
+    .access-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .access-option:focus-within { outline: 3px solid rgba(49, 128, 240, .18); }
     .access-option.selected { border-color: #88aff0; background: #f2f7ff; box-shadow: inset 0 0 0 1px rgba(49, 128, 240, .08); }
     .access-option strong { display: block; color: #35455d; font-size: 11px; }
     .access-option span { display: block; margin-top: 4px; color: #8a98aa; font-size: 9px; line-height: 1.4; }
@@ -273,7 +279,25 @@ export function schedulerPreviewPage(): string {
       font-weight: 800;
     }
     .button.secondary { border: 1px solid #dce4ee; background: #fff; color: #5d6c81; }
-    .button.primary { border: 0; background: linear-gradient(135deg, #176fd2, #318ff0); color: #fff; box-shadow: 0 8px 18px rgba(23, 111, 210, .2); opacity: .58; }
+    .button.primary { border: 0; background: linear-gradient(135deg, #176fd2, #318ff0); color: #fff; box-shadow: 0 8px 18px rgba(23, 111, 210, .2); }
+    .button:disabled { opacity: .6; cursor: wait; }
+    .schedule-list-card { margin-top: 24px; overflow: hidden; }
+    .schedule-list-card .card-heading { justify-content: space-between; }
+    .schedule-list { display: grid; gap: 10px; padding: 18px 22px 22px; }
+    .schedule-entry { border: 1px solid #e3eaf3; border-radius: 12px; background: #fbfcff; }
+    .schedule-entry summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; color: #34445d; cursor: pointer; list-style: none; }
+    .schedule-entry summary::-webkit-details-marker { display: none; }
+    .schedule-entry summary strong, .schedule-entry summary small { display: block; }
+    .schedule-entry summary strong { font-size: 12px; }
+    .schedule-entry summary small { margin-top: 4px; color: #8391a5; font-size: 10px; }
+    .schedule-status { flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; background: #eaf2ff; color: #3776cb; font-size: 9px; font-weight: 850; text-transform: uppercase; }
+    .schedule-details { padding: 0 16px 15px; color: #65758b; font-size: 11px; line-height: 1.55; }
+    .schedule-details p { margin: 6px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .schedule-entry-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .schedule-entry-actions button, .schedule-entry-actions a { min-height: 32px; padding: 0 11px; border: 1px solid #dce4ef; border-radius: 8px; background: #fff; color: #52647d; font-size: 10px; font-weight: 800; cursor: pointer; }
+    .schedule-entry-actions .start-action { border-color: #176fd2; background: #176fd2; color: #fff; }
+    .schedule-link { display: block; margin: 7px 0 12px; overflow-wrap: anywhere; color: #2879eb; }
+    .empty-schedules { padding: 12px 2px; color: #8492a7; font-size: 12px; line-height: 1.55; }
     .side-stack { display: grid; gap: 18px; }
     .summary { overflow: hidden; }
     .summary-top {
@@ -366,7 +390,7 @@ export function schedulerPreviewPage(): string {
         </nav>
         <div class="preview-account">
           <span class="avatar" aria-hidden="true">BT</span>
-          <span class="account-copy"><strong>Signed-in workspace</strong><span>Account identity in implementation</span></span>
+          <span class="account-copy"><strong id="schedulerAccountName">Your workspace</strong><span id="schedulerAccountEmail">Private meeting scheduling</span></span>
         </div>
       </header>
       <div class="workspace">
@@ -376,14 +400,15 @@ export function schedulerPreviewPage(): string {
             <h1 id="schedulerTitle">Schedule a meeting</h1>
             <p>Choose the meeting time, access policy and agenda. BillionTalks will reserve a private meeting link after the schedule is saved.</p>
           </div>
-          <span class="preview-badge">Visual preview</span>
+          <span class="preview-badge">Private workspace</span>
         </section>
         <div class="notice" role="note">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
-          This owner-review preview does not save meetings, send invitations or create calendar events.
+          Scheduling saves an account-owned meeting and share link without opening a live room. Start the room when you are ready.
         </div>
+        <div class="scheduler-error" id="schedulerError" role="alert" aria-live="polite"></div>
         <div class="layout">
-          <form class="card form-card" id="schedulerPreviewForm">
+          <form class="card form-card" id="schedulerForm">
             <div class="card-heading">
               <span class="heading-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18M12 14v4M10 16h4"/></svg></span>
               <div><h2>Meeting details</h2><p>Required fields are marked with an asterisk.</p></div>
@@ -394,12 +419,12 @@ export function schedulerPreviewPage(): string {
                 <div class="field-grid">
                   <div class="field full">
                     <label for="title">Meeting title <span class="required">*</span></label>
-                    <input id="title" name="title" maxlength="120" placeholder="e.g. Weekly product review">
+                    <input id="title" name="title" maxlength="120" required placeholder="e.g. Weekly product review">
                   </div>
                   <div class="field full">
                     <label for="agenda">Description or agenda</label>
                     <textarea id="agenda" name="agenda" maxlength="1000" placeholder="Add context, goals or preparation notes for participants"></textarea>
-                    <span class="field-help">Visible to people who receive the meeting link.</span>
+                    <span class="field-help">Saved with your account-owned meeting details.</span>
                   </div>
                 </div>
               </section>
@@ -408,11 +433,11 @@ export function schedulerPreviewPage(): string {
                 <div class="field-grid">
                   <div class="field">
                     <label for="date">Date <span class="required">*</span></label>
-                    <input id="date" name="date" type="date">
+                    <input id="date" name="date" type="date" required>
                   </div>
                   <div class="field">
                     <label for="time">Start time <span class="required">*</span></label>
-                    <input id="time" name="time" type="time">
+                    <input id="time" name="time" type="time" required>
                   </div>
                   <div class="field">
                     <label for="duration">Duration</label>
@@ -427,7 +452,7 @@ export function schedulerPreviewPage(): string {
                   <div class="field">
                     <label for="timezone">Time zone <span class="required">*</span></label>
                     <select id="timezone" name="timezone">
-                      <option id="deviceTimezone" value="device">Use device time zone</option>
+                      <option id="deviceTimezone" value="">Use device time zone</option>
                     </select>
                     <span class="field-help">The original IANA time zone will be retained when the meeting is edited.</span>
                   </div>
@@ -435,22 +460,22 @@ export function schedulerPreviewPage(): string {
               </section>
               <section class="form-section">
                 <div class="section-title"><strong>Guest access</strong><span>Can be changed before the meeting starts</span></div>
-                <div class="access-options" aria-label="Guest access preview">
-                  <div class="access-option selected"><strong>Host approval</strong><span>Guests wait until the host admits them.</span></div>
-                  <div class="access-option"><strong>Open access</strong><span>Anyone with the link can enter.</span></div>
-                  <div class="access-option"><strong>Locked</strong><span>No guest admission until unlocked.</span></div>
+                <div class="access-options" role="radiogroup" aria-label="Guest access">
+                  <label class="access-option selected"><input type="radio" name="guestAccess" value="HOST_APPROVAL" checked><strong>Host approval</strong><span>Guests wait until the host admits them.</span></label>
+                  <label class="access-option"><input type="radio" name="guestAccess" value="OPEN"><strong>Open access</strong><span>Anyone with the link can enter.</span></label>
+                  <label class="access-option"><input type="radio" name="guestAccess" value="LOCKED"><strong>Locked</strong><span>No guest admission until unlocked.</span></label>
                 </div>
               </section>
             </div>
             <footer class="form-footer">
-              <small>Scheduling remains disabled until the owner approves this layout and the authenticated persistence scope.</small>
+              <small>A scheduled meeting does not open a live room. You can start it later from your scheduled meetings.</small>
               <div class="button-row">
-                <a class="button secondary" href="/dashboard">Cancel</a>
-                <button class="button primary" type="submit" disabled>Schedule meeting</button>
+                <button class="button secondary" id="resetFormButton" type="button">Clear</button>
+                <button class="button primary" id="submitScheduleButton" type="submit">Schedule meeting</button>
               </div>
             </footer>
           </form>
-          <aside class="side-stack" aria-label="Meeting schedule preview">
+          <aside class="side-stack" aria-label="Meeting schedule summary">
             <section class="card summary">
               <div class="summary-top">
                 <span>Meeting preview</span>
@@ -472,12 +497,12 @@ export function schedulerPreviewPage(): string {
                 </div>
                 <div class="summary-row">
                   <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><rect x="4" y="11" width="16" height="10" rx="2"/></svg>
-                  <div><span>Guest access</span><strong>Host approval</strong></div>
+                  <div><span>Guest access</span><strong id="summaryAccess">Host approval</strong></div>
                 </div>
                 <div class="meeting-link">
                   <span>Private meeting link</span>
-                  <code>Generated after scheduling</code>
-                  <button class="copy-button" type="button" disabled>Copy link unavailable</button>
+                  <code id="summaryLink">Generated after scheduling</code>
+                  <button class="copy-button" id="copyLinkButton" type="button" disabled>Copy meeting link</button>
                 </div>
               </div>
             </section>
@@ -487,25 +512,74 @@ export function schedulerPreviewPage(): string {
                 <li>Account-owned scheduled meetings</li>
                 <li>Edit or cancel before the meeting ends</li>
                 <li>Private BillionTalks meeting link</li>
-                <li>Next and upcoming dashboard sections</li>
+                <li>Dashboard next and upcoming meetings</li>
               </ul>
             </section>
           </aside>
         </div>
+        <section class="card schedule-list-card" aria-labelledby="scheduledMeetingsTitle">
+          <div class="card-heading">
+            <div class="heading-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18M8 14h3M8 17h6"/></svg></div>
+            <div><h2 id="scheduledMeetingsTitle">Your scheduled meetings</h2><p>View, update, cancel or start meetings owned by your account.</p></div>
+          </div>
+          <div class="schedule-list" id="scheduleList"><div class="empty-schedules">Loading your scheduled meetings...</div></div>
+        </section>
       </div>
     </div>
   </main>
   <script>
     (() => {
       'use strict';
-      const form = document.getElementById('schedulerPreviewForm');
+      const form = document.getElementById('schedulerForm');
       const title = document.getElementById('title');
+      const agenda = document.getElementById('agenda');
       const date = document.getElementById('date');
       const time = document.getElementById('time');
       const duration = document.getElementById('duration');
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Device time zone';
-      document.getElementById('deviceTimezone').textContent = timezone;
-      document.getElementById('summaryTimezone').textContent = timezone;
+      const timezoneField = document.getElementById('timezone');
+      const accessFields = [...form.querySelectorAll('input[name="guestAccess"]')];
+      const error = document.getElementById('schedulerError');
+      const scheduleList = document.getElementById('scheduleList');
+      const state = { editingId: null, revision: null, link: '' };
+      const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const deviceOption = document.getElementById('deviceTimezone');
+      deviceOption.value = deviceTimezone;
+      deviceOption.textContent = deviceTimezone + ' (device)';
+      const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+      for (const zone of zones) {
+        if (zone === deviceTimezone) continue;
+        const option = document.createElement('option');
+        option.value = zone;
+        option.textContent = zone;
+        timezoneField.append(option);
+      }
+      function selectedAccess() { return form.querySelector('input[name="guestAccess"]:checked').value; }
+      function accessLabel(value) { return ({ HOST_APPROVAL: 'Host approval', OPEN: 'Open access', LOCKED: 'Locked' })[value] || 'Host approval'; }
+      function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character])); }
+      function showError(message) {
+        error.textContent = message || '';
+        error.style.display = message ? 'block' : 'none';
+      }
+      async function api(path, options = {}) {
+        const response = await fetch(path, { credentials: 'same-origin', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+        let payload;
+        try { payload = await response.json(); } catch { throw new Error('The scheduler could not read the server response.'); }
+        if (response.status === 401) { window.location.href = '/account#login'; throw new Error('Sign in to manage scheduled meetings.'); }
+        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to complete the meeting request.');
+        return payload.data;
+      }
+      function formatMeetingDate(meeting) {
+        return new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: meeting.timeZone }).format(new Date(meeting.startsAt));
+      }
+      function formatMeetingTime(meeting) {
+        return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short', timeZone: meeting.timeZone }).format(new Date(meeting.startsAt));
+      }
+      function updateSummaryLink(link) {
+        state.link = link || '';
+        const output = document.getElementById('summaryLink');
+        output.textContent = state.link || 'Generated after scheduling';
+        document.getElementById('copyLinkButton').disabled = !state.link;
+      }
       const refresh = () => {
         document.getElementById('summaryTitle').textContent = title.value.trim() || 'Untitled meeting';
         document.getElementById('summaryDate').textContent = date.value
@@ -513,10 +587,145 @@ export function schedulerPreviewPage(): string {
           : 'Choose a date';
         const durationLabel = duration.options[duration.selectedIndex].textContent;
         document.getElementById('summaryTime').textContent = (time.value || 'Choose a start time') + ' · ' + durationLabel;
+        const zone = timezoneField.value || deviceTimezone;
+        document.getElementById('summaryTimezone').textContent = zone;
+        document.getElementById('summaryAccess').textContent = accessLabel(selectedAccess());
+        for (const option of accessFields) option.closest('.access-option').classList.toggle('selected', option.checked);
       };
+      const localNow = new Date();
+      date.min = [localNow.getFullYear(), String(localNow.getMonth() + 1).padStart(2, '0'), String(localNow.getDate()).padStart(2, '0')].join('-');
+      timezoneField.value = deviceTimezone;
       form.addEventListener('input', refresh);
-      form.addEventListener('submit', (event) => event.preventDefault());
+      form.addEventListener('change', refresh);
+      function resetForm() {
+        form.reset();
+        state.editingId = null;
+        state.revision = null;
+        timezoneField.value = deviceTimezone;
+        document.getElementById('submitScheduleButton').textContent = 'Schedule meeting';
+        updateSummaryLink('');
+        showError('');
+        refresh();
+      }
+      document.getElementById('resetFormButton').addEventListener('click', resetForm);
+      document.getElementById('copyLinkButton').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(state.link);
+          document.getElementById('copyLinkButton').textContent = 'Copied';
+          window.setTimeout(() => { document.getElementById('copyLinkButton').textContent = 'Copy meeting link'; }, 1600);
+        } catch { showError('The link could not be copied. Select and copy the link shown above.'); }
+      });
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        showError('');
+        const button = document.getElementById('submitScheduleButton');
+        button.disabled = true;
+        const body = {
+          title: title.value,
+          agenda: agenda.value,
+          date: date.value,
+          time: time.value,
+          durationMinutes: Number(duration.value),
+          timeZone: timezoneField.value || deviceTimezone,
+          guestAccess: selectedAccess(),
+          ...(state.editingId ? { revision: state.revision } : {}),
+        };
+        try {
+          const saved = await api(state.editingId ? '/api/schedules/' + encodeURIComponent(state.editingId) : '/api/schedules', {
+            method: state.editingId ? 'PUT' : 'POST',
+            body: JSON.stringify(body),
+          });
+          state.editingId = saved.id;
+          state.revision = saved.revision;
+          document.getElementById('submitScheduleButton').textContent = 'Save changes';
+          updateSummaryLink(saved.shareUrl);
+          await loadSchedules();
+        } catch (failure) {
+          showError(failure instanceof Error ? failure.message : 'Unable to save this meeting.');
+        } finally { button.disabled = false; }
+      });
+      function renderSchedules(entries) {
+        if (!entries.length) {
+          scheduleList.innerHTML = '<div class="empty-schedules">No scheduled meetings yet. Use the form above to plan your first meeting.</div>';
+          return;
+        }
+        scheduleList.innerHTML = entries.map((meeting) => {
+          const actions = [];
+          if (meeting.status === 'SCHEDULED') {
+            actions.push('<button type="button" data-action="edit" data-id="' + escapeHtml(meeting.id) + '">Edit</button>');
+            actions.push('<button class="start-action" type="button" data-action="start" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">Start meeting</button>');
+            actions.push('<button type="button" data-action="cancel" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">Cancel</button>');
+          } else if (meeting.status === 'STARTING') {
+            actions.push('<button class="start-action" type="button" data-action="start" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">Continue start</button>');
+          } else if (meeting.status === 'STARTED' || meeting.status === 'ENDED') {
+            actions.push('<a href="/?meeting=' + encodeURIComponent(meeting.id) + '">Open meeting room</a>');
+          }
+          return '<details class="schedule-entry"><summary><span><strong>' + escapeHtml(meeting.title) + '</strong><small>' + escapeHtml(formatMeetingDate(meeting) + ' · ' + formatMeetingTime(meeting) + ' · ' + meeting.durationMinutes + ' min') + '</small></span><span class="schedule-status">' + escapeHtml(meeting.status) + '</span></summary><div class="schedule-details"><strong>' + escapeHtml(meeting.timeZone) + ' · ' + escapeHtml(accessLabel(meeting.guestAccess)) + '</strong>' + (meeting.agenda ? '<p>' + escapeHtml(meeting.agenda) + '</p>' : '') + '<a class="schedule-link" href="' + escapeHtml(meeting.shareUrl) + '">' + escapeHtml(meeting.shareUrl) + '</a><div class="schedule-entry-actions">' + actions.join('') + '<button type="button" data-action="copy" data-link="' + escapeHtml(meeting.shareUrl) + '">Copy link</button></div></div></details>';
+        }).join('');
+      }
+      async function loadSchedules() {
+        renderSchedules(await api('/api/schedules'));
+      }
+      async function editSchedule(id) {
+        const meeting = await api('/api/schedules/' + encodeURIComponent(id));
+        state.editingId = meeting.id;
+        state.revision = meeting.revision;
+        title.value = meeting.title;
+        agenda.value = meeting.agenda;
+        date.value = meeting.localDate;
+        time.value = meeting.localTime;
+        duration.value = String(meeting.durationMinutes);
+        if (![...timezoneField.options].some((option) => option.value === meeting.timeZone)) {
+          const option = document.createElement('option');
+          option.value = meeting.timeZone;
+          option.textContent = meeting.timeZone;
+          timezoneField.append(option);
+        }
+        timezoneField.value = meeting.timeZone;
+        const matchingAccess = accessFields.find((input) => input.value === meeting.guestAccess);
+        if (matchingAccess) matchingAccess.checked = true;
+        document.getElementById('submitScheduleButton').textContent = 'Save changes';
+        updateSummaryLink(meeting.shareUrl);
+        refresh();
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      scheduleList.addEventListener('click', async (event) => {
+        const button = event.target.closest('[data-action]');
+        if (!button) return;
+        showError('');
+        try {
+          const id = button.dataset.id;
+          if (button.dataset.action === 'edit') await editSchedule(id);
+          if (button.dataset.action === 'copy') await navigator.clipboard.writeText(button.dataset.link);
+          if (button.dataset.action === 'cancel' && window.confirm('Cancel this scheduled meeting?')) {
+            await api('/api/schedules/' + encodeURIComponent(id), { method: 'DELETE', body: JSON.stringify({ revision: Number(button.dataset.revision) }) });
+            if (state.editingId === id) resetForm();
+            await loadSchedules();
+          }
+          if (button.dataset.action === 'start') {
+            button.disabled = true;
+            const result = await api('/api/schedules/' + encodeURIComponent(id) + '/start', { method: 'POST', body: JSON.stringify({ revision: Number(button.dataset.revision) }) });
+            window.location.href = '/?meeting=' + encodeURIComponent(result.meeting.id);
+          }
+        } catch (failure) {
+          showError(failure instanceof Error ? failure.message : 'Unable to complete this meeting action.');
+          await loadSchedules().catch(() => {});
+        }
+      });
+      async function initialize() {
+        try {
+          const profile = await api('/api/accounts/me');
+          document.getElementById('schedulerAccountName').textContent = profile.account.fullName;
+          document.getElementById('schedulerAccountEmail').textContent = profile.account.email;
+          await loadSchedules();
+          const requestedId = new URLSearchParams(window.location.search).get('meeting');
+          if (requestedId) await editSchedule(requestedId);
+        } catch (failure) {
+          showError(failure instanceof Error ? failure.message : 'Unable to load your scheduled meetings.');
+        }
+      }
       refresh();
+      void initialize();
     })();
   </script>
 </body>

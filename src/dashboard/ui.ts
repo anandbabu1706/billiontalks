@@ -268,6 +268,8 @@ export function dashboardPage(): string {
       letter-spacing: .05em;
       text-transform: uppercase;
     }
+    .disabled-action:hover, .disabled-action:focus-visible { background: rgba(255, 255, 255, .25); outline: 2px solid rgba(255, 255, 255, .55); outline-offset: 2px; }
+    .next-meeting-link { display: inline-block; margin-top: 10px; color: #2873df; font-size: 10px; font-weight: 800; }
     .content-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .85fr); gap: 24px; }
     .left-column, .right-column { display: grid; align-content: start; gap: 24px; min-width: 0; }
     .panel {
@@ -535,25 +537,25 @@ export function dashboardPage(): string {
                 <h2>Schedule Meeting</h2>
               </div>
             </div>
-            <p>Plan future conversations and send invitations from your workspace.</p>
-            <a class="disabled-action" href="/schedule">Preview scheduler</a>
+            <p>Plan future conversations and share a private meeting link.</p>
+            <a class="disabled-action" href="/schedule">Schedule a meeting</a>
           </article>
         </section>
         <div class="content-grid">
           <div class="left-column">
             <section class="panel" aria-labelledby="nextMeetingTitle">
-              <div class="panel-heading"><h2 id="nextMeetingTitle">Next Meeting</h2><span class="panel-meta">Schedule unavailable</span></div>
-              <div class="next-empty">
+              <div class="panel-heading"><h2 id="nextMeetingTitle">Next Meeting</h2><span class="panel-meta" id="nextMeetingMeta">Your schedule</span></div>
+              <div class="next-empty" id="nextMeetingContent">
                 <span class="empty-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></span>
-                <div><strong>No scheduled meeting data</strong><p>Scheduling arrives in a future release. Start or join a live meeting above.</p></div>
+                <div><strong>Loading your schedule</strong><p>Your next scheduled meeting will appear here.</p></div>
               </div>
             </section>
             <section class="panel" aria-labelledby="upcomingTitle">
-              <div class="panel-heading"><h2 id="upcomingTitle">Upcoming Meetings</h2><span class="panel-meta">Coming soon</span></div>
-              <div class="tabs" aria-disabled="true">
-                <span class="tab active">Today</span><span class="tab">Tomorrow</span><span class="tab">This Week</span><span class="tab">Later</span>
+              <div class="panel-heading"><h2 id="upcomingTitle">Upcoming Meetings</h2><span class="panel-meta" id="upcomingMeta">Your schedule</span></div>
+              <div class="tabs" id="upcomingFilters" aria-label="Filter upcoming meetings">
+                <button class="tab active" type="button" data-filter="today" aria-pressed="true">Today</button><button class="tab" type="button" data-filter="tomorrow" aria-pressed="false">Tomorrow</button><button class="tab" type="button" data-filter="week" aria-pressed="false">This Week</button><button class="tab" type="button" data-filter="later" aria-pressed="false">Later</button>
               </div>
-              <div class="unavailable">Upcoming meeting filters will be available when scheduling is supported.</div>
+              <div class="history-list" id="upcomingList"><div class="empty">Loading upcoming meetings...</div></div>
             </section>
             <section class="panel" aria-labelledby="historyTitle">
               <div class="panel-heading"><h2 id="historyTitle">Recent Meetings</h2><span class="panel-meta">Private to your account</span></div>
@@ -596,6 +598,10 @@ export function dashboardPage(): string {
       'use strict';
       const error = document.getElementById('error');
       const historyList = document.getElementById('historyList');
+      const upcomingList = document.getElementById('upcomingList');
+      const upcomingFilters = document.getElementById('upcomingFilters');
+      let upcomingMeetings = [];
+      let activeUpcomingFilter = 'today';
       const sidebar = document.getElementById('sidebar');
       const sidebarToggle = document.getElementById('sidebarToggle');
       sidebarToggle.addEventListener('click', () => {
@@ -644,6 +650,51 @@ export function dashboardPage(): string {
         }
         historyList.innerHTML = entries.slice(0, 6).map((entry) => '<article class="meeting"><div><strong>' + escapeHtml(entry.title) + '</strong><small>' + escapeHtml(new Date(entry.createdAt).toLocaleString()) + ' · ' + escapeHtml(entry.meetingId) + '</small></div><a href="/?meeting=' + encodeURIComponent(entry.meetingId) + '">Open room</a><span class="status">' + escapeHtml(entry.status) + '</span></article>').join('');
       }
+      function formatScheduledDate(meeting, options) {
+        return new Intl.DateTimeFormat(undefined, { ...options, timeZone: meeting.timeZone }).format(new Date(meeting.startsAt));
+      }
+      function renderUpcoming() {
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+        const dayAfterTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
+        const daysUntilSunday = 7 - now.getDay();
+        const nextWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSunday);
+        const startOf = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+        const boundary = { today: [startOf(today), startOf(tomorrow)], tomorrow: [startOf(tomorrow), startOf(dayAfterTomorrow)], week: [startOf(dayAfterTomorrow), startOf(nextWeek)], later: [startOf(nextWeek), Infinity] }[activeUpcomingFilter];
+        const matches = upcomingMeetings.filter((meeting) => {
+          const instant = new Date(meeting.startsAt).getTime();
+          return instant >= boundary[0] && instant < boundary[1];
+        });
+        upcomingFilters.querySelectorAll('[data-filter]').forEach((button) => {
+          const active = button.dataset.filter === activeUpcomingFilter;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        });
+        if (!matches.length) {
+          upcomingList.innerHTML = '<div class="empty">' + (upcomingMeetings.length ? 'No meetings scheduled for ' + escapeHtml(activeUpcomingFilter === 'week' ? 'the rest of this week' : activeUpcomingFilter) + '.' : 'No upcoming meetings. Schedule a meeting to see it here.') + '</div>';
+          return;
+        }
+        upcomingList.innerHTML = matches.map((meeting) => '<article class="meeting"><div><strong>' + escapeHtml(meeting.title) + '</strong><small>' + escapeHtml(formatScheduledDate(meeting, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) + ' · ' + escapeHtml(meeting.timeZone) + '</small></div><a href="/schedule?meeting=' + encodeURIComponent(meeting.id) + '">View schedule</a><span class="status">Scheduled</span></article>').join('');
+      }
+      function renderNextMeeting() {
+        const next = upcomingMeetings[0];
+        const content = document.getElementById('nextMeetingContent');
+        const meta = document.getElementById('nextMeetingMeta');
+        if (!next) {
+          meta.textContent = 'Your schedule';
+          content.innerHTML = '<span class="empty-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></span><div><strong>No upcoming meeting</strong><p>Your scheduled meetings will appear here.</p><a class="next-meeting-link" href="/schedule">Schedule a meeting</a></div>';
+          return;
+        }
+        meta.textContent = 'Next scheduled';
+        content.innerHTML = '<span class="empty-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></span><div><strong>' + escapeHtml(next.title) + '</strong><p>' + escapeHtml(formatScheduledDate(next, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) + ' · ' + escapeHtml(next.timeZone) + '</p><a class="next-meeting-link" href="/schedule?meeting=' + encodeURIComponent(next.id) + '">View or edit meeting</a></div>';
+      }
+      upcomingFilters.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-filter]');
+        if (!button) return;
+        activeUpcomingFilter = button.dataset.filter;
+        renderUpcoming();
+      });
       document.getElementById('startMeetingForm').addEventListener('submit', async (event) => {
         event.preventDefault();
         showError('');
@@ -681,7 +732,17 @@ export function dashboardPage(): string {
           document.getElementById('identityEmail').textContent = account.account.email;
           document.getElementById('identityAvatar').textContent = initials;
           document.getElementById('welcomeName').textContent = firstName;
-          renderHistory(await api('/api/meetings/history'));
+          const [historyResult, schedulesResult] = await Promise.allSettled([
+            api('/api/meetings/history'),
+            api('/api/schedules?upcoming=1'),
+          ]);
+          if (historyResult.status === 'rejected') throw historyResult.reason;
+          renderHistory(historyResult.value);
+          if (schedulesResult.status === 'rejected') throw schedulesResult.reason;
+          upcomingMeetings = schedulesResult.value;
+          document.getElementById('upcomingMeta').textContent = upcomingMeetings.length + (upcomingMeetings.length === 1 ? ' meeting' : ' meetings');
+          renderNextMeeting();
+          renderUpcoming();
         } catch (failure) {
           showError(failure instanceof Error ? failure.message : 'Unable to load your dashboard.');
         }

@@ -52,6 +52,7 @@ type AccountRow = {
 export type D1AccountStatement = {
   bind: (...values: unknown[]) => D1AccountStatement;
   first: <T>() => Promise<T | null>;
+  all?: <T>() => Promise<{ results: T[] }>;
   run: () => Promise<unknown>;
 };
 

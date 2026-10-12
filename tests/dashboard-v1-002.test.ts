@@ -56,11 +56,11 @@ describe("BT-V1-002 signed-in dashboard", () => {
     expect(html).toContain("api('/api/meetings'");
     expect(html).toContain("api('/api/meetings/history')");
     expect(html).toContain("api('/api/accounts/me')");
+    expect(html).toContain("api('/api/schedules?upcoming=1')");
     expect(html).toContain("api('/api/accounts/logout'");
     expect(html).toContain("Guest joining remains available");
-    expect(html).toContain("Scheduling arrives in a future release");
     expect(html).toContain("Scheduling soon");
-    expect(html).not.toContain("fetch('/api/schedules");
+    expect(html).not.toContain("Upcoming meeting filters will be available");
     expect(html).not.toContain("fetch('/api/contacts");
   });
 

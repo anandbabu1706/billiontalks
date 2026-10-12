@@ -14,6 +14,8 @@ import {
 import type { D1AccountDatabase } from "./account/repository";
 import { dashboardPage } from "./dashboard/ui";
 import { schedulerPreviewPage } from "./scheduler/ui";
+import { handleScheduledMeetingRequest } from "./scheduler/api";
+import { D1ScheduleRepository } from "./scheduler/schedules";
 import { createAccountEmailSender, type AccountEmailConfig } from "./account/email-delivery";
 import { accountPage } from "./account/ui";
 import {
@@ -6004,7 +6006,10 @@ const routeHandler = {
   async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
     const url = new URL(request.url);
     // Reject cross-origin browser writes to account endpoints, including authenticated cookie actions.
-    if (url.pathname.startsWith("/api/accounts/") && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+    if (
+      (url.pathname.startsWith("/api/accounts/") || url.pathname.startsWith("/api/schedules")) &&
+      !["GET", "HEAD", "OPTIONS"].includes(request.method)
+    ) {
       const origin = request.headers.get("Origin");
       const fetchSite = request.headers.get("Sec-Fetch-Site");
       if ((origin && origin !== url.origin) || fetchSite === "cross-site") {
@@ -6050,6 +6055,16 @@ const routeHandler = {
 
     if (request.method === "GET" && url.pathname === "/schedule") {
       return new Response(schedulerPreviewPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
+    if (url.pathname === "/api/schedules" || url.pathname.startsWith("/api/schedules/")) {
+      const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+      return handleScheduledMeetingRequest(
+        request,
+        account?.id ?? null,
+        env.ACCOUNT_DB,
+        account && request.method === "POST" && url.pathname.endsWith("/start") ? getMeetingService(env) : undefined,
+      );
     }
 
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
@@ -7118,6 +7133,23 @@ const routeHandler = {
       const meeting = await getMeetingService(env).getMeeting(meetingMatch[1]);
 
       if (!meeting) {
+        if (env.ACCOUNT_DB) {
+          const scheduleStatus = await new D1ScheduleRepository(env.ACCOUNT_DB).getPublicStatus(meetingMatch[1]);
+          if (scheduleStatus === "SCHEDULED" || scheduleStatus === "STARTING") {
+            return withSessionCookie(
+              jsonResponse({ ok: false, error: "This meeting has not started yet. Please check with the host." }, 425),
+              request,
+              session,
+            );
+          }
+          if (scheduleStatus === "CANCELLED") {
+            return withSessionCookie(
+              jsonResponse({ ok: false, error: "This scheduled meeting was cancelled." }, 410),
+              request,
+              session,
+            );
+          }
+        }
         return withSessionCookie(jsonResponse({ ok: false, error: "Meeting not found." }, 404), request, session);
       }
 
@@ -7224,6 +7256,18 @@ const routeHandler = {
         const rpc = getMeetingStateRpc(env, meetingMatch[1]);
         const mediaStates = await rpc.listSfuParticipantStates();
         await Promise.all(mediaStates.map((state) => cleanupSfuParticipant(env, meetingMatch[1], state.userId)));
+        if (env.ACCOUNT_DB) {
+          try {
+            await new D1ScheduleRepository(env.ACCOUNT_DB).markEnded(meetingMatch[1], new Date().toISOString());
+          } catch (error) {
+            console.error("The live meeting ended, but its scheduled lifecycle could not be updated.", error);
+            return withSessionCookie(
+              jsonResponse({ ok: false, error: "The meeting ended, but its scheduled status could not be updated." }, 500),
+              request,
+              session,
+            );
+          }
+        }
         return withSessionCookie(jsonResponse({ ok: true, data: meeting }), request, session);
       } catch (error) {
         return withSessionCookie(
