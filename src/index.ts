@@ -14,6 +14,8 @@ import {
 import type { D1AccountDatabase } from "./account/repository";
 import { dashboardPage } from "./dashboard/ui";
 import { calendarPage } from "./calendar/ui";
+import { contactsPage, rsvpPage } from "./contacts/ui";
+import { handleContactsRequest, handleInvitationsRequest } from "./contacts/api";
 import { schedulerPreviewPage } from "./scheduler/ui";
 import { handleScheduledMeetingRequest } from "./scheduler/api";
 import { D1ScheduleRepository } from "./scheduler/schedules";
@@ -6008,7 +6010,8 @@ const routeHandler = {
     const url = new URL(request.url);
     // Reject cross-origin browser writes to account endpoints, including authenticated cookie actions.
     if (
-      (url.pathname.startsWith("/api/accounts/") || url.pathname.startsWith("/api/schedules")) &&
+      (url.pathname.startsWith("/api/accounts/") || url.pathname.startsWith("/api/schedules") ||
+        url.pathname.startsWith("/api/contacts") || url.pathname.startsWith("/api/invitations")) &&
       !["GET", "HEAD", "OPTIONS"].includes(request.method)
     ) {
       const origin = request.headers.get("Origin");
@@ -6058,8 +6061,27 @@ const routeHandler = {
       return new Response(calendarPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
     }
 
+    if (request.method === "GET" && url.pathname === "/contacts") {
+      return new Response(contactsPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
+    if (request.method === "GET" && url.pathname === "/rsvp") {
+      return new Response(rsvpPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
     if (request.method === "GET" && url.pathname === "/schedule") {
       return new Response(schedulerPreviewPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
+    if (url.pathname === "/api/contacts" || url.pathname.startsWith("/api/contacts/")) {
+      const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+      return handleContactsRequest(request, account?.id ?? null, env.ACCOUNT_DB);
+    }
+
+    if (url.pathname === "/api/invitations" || url.pathname.startsWith("/api/invitations/") ||
+      /^\/api\/schedules\/btm_[A-Za-z0-9_-]{8,64}\/invitations$/u.test(url.pathname)) {
+      const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+      return handleInvitationsRequest(request, account?.id ?? null, env.ACCOUNT_DB, createAccountEmailSender(env));
     }
 
     if (url.pathname === "/api/schedules" || url.pathname.startsWith("/api/schedules/")) {

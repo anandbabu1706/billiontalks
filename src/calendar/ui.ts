@@ -167,7 +167,7 @@ export function calendarPage(): string {
         <a class="nav-item" href="/dashboard"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>Dashboard</a>
         <a class="nav-item" href="/schedule"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m9 10 5-3v10l-5-3z"/></svg>Meetings</a>
         <a class="nav-item active" href="/calendar" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Calendar</a>
-        <span class="nav-item" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>Contacts</span>
+        <a class="nav-item" href="/contacts"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>Contacts</a>
         <span class="nav-item" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>Recordings</span>
         <a class="nav-item" href="/account#profile"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Settings</a>
       </nav>
@@ -219,7 +219,7 @@ export function calendarPage(): string {
       const content = byId('calendarContent');
       const error = byId('calendarError');
       const timeZoneSelect = byId('timeZoneSelect');
-      const state = { view: 'month', date: '', selectedDate: '', timeZone: '', meetings: [] };
+      const state = { view: 'month', date: '', selectedDate: '', timeZone: '', meetings: [], invitations: [] };
       const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
       const pad = (value) => String(value).padStart(2, '0');
       function validZone(zone) {
@@ -263,11 +263,21 @@ export function calendarPage(): string {
       }
       function renderMeetingCard(meeting) {
         const sourceZone = meeting.timeZone && meeting.timeZone !== state.timeZone ? ' · scheduled in ' + meeting.timeZone : '';
+        const invites = state.invitations.filter((invitation) => invitation.meetingId === meeting.id);
+        const invitationStatus = invites.length
+          ? '<p>' + invites.length + ' invitee' + (invites.length === 1 ? '' : 's') + ': ' +
+            ['ACCEPTED', 'DECLINED', 'PENDING'].map((value) => {
+              const count = invites.filter((invitation) => invitation.status === value).length;
+              return count ? count + ' ' + value.toLowerCase() : '';
+            }).filter(Boolean).join(' · ') + '</p>'
+          : '<p>No invitations sent.</p>';
         return '<article class="event-card" data-status="' + escapeHtml(meeting.status) + '">' +
           '<div class="event-card-top"><div><h3>' + escapeHtml(meeting.title) + '</h3><div class="event-time">' + escapeHtml(timeLabel(meeting.startsAt)) + '<span class="source-zone">' + escapeHtml(sourceZone) + '</span></div></div>' +
           '<span class="status" data-status="' + escapeHtml(meeting.status) + '">' + escapeHtml(meeting.status.toLowerCase().replace('_', ' ')) + '</span></div>' +
           (meeting.agenda ? '<p>' + escapeHtml(meeting.agenda) + '</p>' : '') +
-          '<a class="manage-link" href="/schedule?meeting=' + encodeURIComponent(meeting.id) + '">View meeting details and manage</a></article>';
+          invitationStatus +
+          '<a class="manage-link" href="/schedule?meeting=' + encodeURIComponent(meeting.id) + '">View meeting details and manage</a> · ' +
+          '<a class="manage-link" href="/contacts?meeting=' + encodeURIComponent(meeting.id) + '">Manage invitations</a></article>';
       }
       function renderMonth() {
         const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((name) => '<div class="weekday" role="columnheader">' + name + '</div>');
@@ -327,11 +337,16 @@ export function calendarPage(): string {
         content.hidden = true;
         error.textContent = '';
         try {
-          const response = await fetch('/api/schedules', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
-          const payload = await response.json();
-          if (response.status === 401) { window.location.href = '/account#login'; throw new Error('Sign in to view your calendar.'); }
-          if (!response.ok || !payload.ok || !Array.isArray(payload.data)) throw new Error(payload.error || 'Unable to load your scheduled meetings.');
+          const [schedulesResponse, invitationsResponse] = await Promise.all([
+            fetch('/api/schedules', { credentials: 'same-origin', headers: { Accept: 'application/json' } }),
+            fetch('/api/invitations', { credentials: 'same-origin', headers: { Accept: 'application/json' } }),
+          ]);
+          const [payload, invitationPayload] = await Promise.all([schedulesResponse.json(), invitationsResponse.json()]);
+          if (schedulesResponse.status === 401 || invitationsResponse.status === 401) { window.location.href = '/account#login'; throw new Error('Sign in to view your calendar.'); }
+          if (!schedulesResponse.ok || !payload.ok || !Array.isArray(payload.data)) throw new Error(payload.error || 'Unable to load your scheduled meetings.');
+          if (!invitationsResponse.ok || !invitationPayload.ok || !Array.isArray(invitationPayload.data)) throw new Error(invitationPayload.error || 'Unable to load invitation status.');
           state.meetings = payload.data.filter((meeting) => meeting && typeof meeting.id === 'string' && typeof meeting.startsAt === 'string' && Number.isFinite(Date.parse(meeting.startsAt)));
+          state.invitations = invitationPayload.data;
           status.hidden = true;
           content.hidden = false;
           render();

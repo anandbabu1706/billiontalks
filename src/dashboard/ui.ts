@@ -440,10 +440,10 @@ export function dashboardPage(): string {
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
           Calendar
         </a>
-        <span class="nav-item disabled" aria-disabled="true">
+        <a class="nav-item" href="/contacts">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>
-          Contacts <span class="soon-badge">Soon</span>
-        </span>
+          Contacts & Invitations
+        </a>
         <span class="nav-item disabled" aria-disabled="true">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/></svg>
           Recordings <span class="soon-badge">Soon</span>

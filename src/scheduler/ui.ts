@@ -655,6 +655,7 @@ export function schedulerPreviewPage(): string {
             actions.push('<button type="button" data-action="edit" data-id="' + escapeHtml(meeting.id) + '">Edit</button>');
             actions.push('<button class="start-action" type="button" data-action="start" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">Start meeting</button>');
             actions.push('<button type="button" data-action="cancel" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">Cancel</button>');
+            actions.push('<a href="/contacts?meeting=' + encodeURIComponent(meeting.id) + '">Invite guests</a>');
           } else if (meeting.status === 'STARTING') {
             actions.push('<button class="start-action" type="button" data-action="start" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">Continue start</button>');
           } else if (meeting.status === 'STARTED' || meeting.status === 'ENDED') {
