@@ -13,6 +13,7 @@ import {
 } from "./account/api";
 import type { D1AccountDatabase } from "./account/repository";
 import { dashboardPage } from "./dashboard/ui";
+import { calendarPage } from "./calendar/ui";
 import { schedulerPreviewPage } from "./scheduler/ui";
 import { handleScheduledMeetingRequest } from "./scheduler/api";
 import { D1ScheduleRepository } from "./scheduler/schedules";
@@ -6051,6 +6052,10 @@ const routeHandler = {
 
     if (request.method === "GET" && url.pathname === "/dashboard") {
       return new Response(dashboardPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
+    if (request.method === "GET" && url.pathname === "/calendar") {
+      return new Response(calendarPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
     }
 
     if (request.method === "GET" && url.pathname === "/schedule") {

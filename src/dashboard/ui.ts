@@ -436,10 +436,10 @@ export function dashboardPage(): string {
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m9 10 5-3v10l-5-3z"/></svg>
           Meetings
         </a>
-        <span class="nav-item disabled" aria-disabled="true">
+        <a class="nav-item" href="/calendar">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
-          Calendar <span class="soon-badge">Soon</span>
-        </span>
+          Calendar
+        </a>
         <span class="nav-item disabled" aria-disabled="true">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>
           Contacts <span class="soon-badge">Soon</span>
@@ -564,8 +564,8 @@ export function dashboardPage(): string {
           </div>
           <div class="right-column">
             <section class="panel" aria-labelledby="calendarTitle">
-              <div class="panel-heading"><h2 id="calendarTitle">Calendar</h2><span class="panel-meta">Read only</span></div>
-              <div class="calendar-top"><strong id="calendarMonth"></strong><span class="calendar-tag">Scheduling soon</span></div>
+              <div class="panel-heading"><h2 id="calendarTitle">Calendar</h2><a class="panel-meta" href="/calendar">Open calendar</a></div>
+              <div class="calendar-top"><strong id="calendarMonth"></strong><span class="calendar-tag">Monthly view</span></div>
               <div class="calendar-grid" id="calendarGrid" aria-label="Current month calendar"></div>
             </section>
             <section class="panel" aria-labelledby="quickActionsTitle">
