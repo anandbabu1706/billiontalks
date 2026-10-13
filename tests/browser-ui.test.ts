@@ -191,7 +191,7 @@ function createSessionNamespace() {
   };
 }
 
-async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenShare = true) {
+async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenShare = true, limitedReleaseMediaDisabled = false) {
   let nextSubscribePayload: unknown = null;
   let subscribePayloadUsed = false;
   const subscribeQueue: unknown[] = [];
@@ -220,6 +220,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
   ];
   const response = await app.fetch(new Request(pageUrl), {
     SESSION_STORE: createSessionNamespace(),
+    ...(limitedReleaseMediaDisabled ? { LIMITED_RELEASE_MEDIA_DISABLED: "true" } : {}),
   });
   const html = await response.text();
   const createdMicStreams: Array<{ getTracks: () => any[]; getAudioTracks: () => any[]; getVideoTracks: () => any[] }> = [];
@@ -731,6 +732,27 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(selfTile?.querySelector(".placeholder")?.textContent).toBe("Camera off");
     expect(document.getElementById("mediaStatus")?.textContent).not.toBe("Camera off");
     expect(document.getElementById("mediaStatus")?.getAttribute("aria-label")).toContain(document.getElementById("mediaStatus")?.textContent ?? "");
+  });
+
+  it("shows media unavailability and suppresses local capture in limited release", async () => {
+    const { document, getUserMediaMock } = await loadRenderedPage("http://localhost/", true, true);
+    document.getElementById("startMeetingBtn")?.click();
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Limited release";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    document.getElementById("joinNowButton")?.click();
+    await flush();
+
+    expect(document.querySelector(".app-shell")?.getAttribute("data-limited-release-media-disabled")).toBe("true");
+    expect(document.getElementById("mediaStatus")?.textContent).toBe("Realtime media is unavailable in this limited release.");
+    expect(document.getElementById("recordingStatus")?.textContent).toBe("Recording is unavailable in this limited release.");
+    expect(document.getElementById("limitedReleaseMediaNotice")?.textContent).toContain("Chat and participant controls remain available.");
+    expect(getUserMediaMock).not.toHaveBeenCalled();
+    expect(document.getElementById("participantsBtn")).not.toBeNull();
+    expect(document.getElementById("chatForm")).not.toBeNull();
+    expect(document.querySelector("style")?.textContent).toContain('[data-limited-release-media-disabled="true"] #shareScreenBtn');
   });
 
   it("opens a meeting invite URL into the existing prejoin flow", async () => {

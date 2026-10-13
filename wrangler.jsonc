@@ -12,6 +12,9 @@
       ]
     }
   ],
+  "vars": {
+    "LIMITED_RELEASE_MEDIA_DISABLED": "true"
+  },
   "d1_databases": [
     {
       "binding": "ACCOUNT_DB",

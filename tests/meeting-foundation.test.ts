@@ -117,13 +117,14 @@ function createRecordingBucketFixture() {
   return { bucket, uploads, objects };
 }
 
-function createChatApiFixture(namespace = createDurableObjectNamespace()) {
+function createChatApiFixture(namespace = createDurableObjectNamespace(), limitedReleaseMediaDisabled = false) {
   const recordingBucket = createRecordingBucketFixture();
   const env = {
     MEETING_STORE: namespace as any,
     REALTIME_SFU_APP_ID: "test-sfu-app-id",
     REALTIME_SFU_BEARER_TOKEN: "test-sfu-app-secret",
     RECORDINGS_BUCKET: recordingBucket.bucket as any,
+    ...(limitedReleaseMediaDisabled ? { LIMITED_RELEASE_MEDIA_DISABLED: "true" } : {}),
   };
   const rawRequest = (path: string, method = "GET", cookie?: string, body?: BodyInit, contentType = "application/json", extraHeaders?: HeadersInit) => {
     const headers = new Headers(extraHeaders ?? {});
@@ -559,11 +560,64 @@ describe("MeetingService lifecycle", () => {
       status: "RECORDING",
       initiatedByUserId: host.userId,
     });
+
     expect(payload.data.recordingId).toBeTruthy();
     expect(payload.data.startedAt).toBeTruthy();
     expect(payload.data).not.toHaveProperty("storageRef");
     expect(JSON.stringify(payload)).not.toContain("objectKey");
     expect(stored[1].storageRef.objectKey).toContain(`recordings/${encodeURIComponent(meeting.id)}/`);
+  });
+
+  it("blocks media and recording endpoints in limited release without affecting chat or admission", async () => {
+    const api = createChatApiFixture(createDurableObjectNamespace(), true);
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Limited release room");
+    const chat = await api.request(`/api/meetings/${meeting.id}/chat`, "POST", host.cookie, { content: "Chat remains available." });
+    const joiner = await api.createSession();
+    const joined = await api.request(`/api/meetings/${meeting.id}/join`, "POST", joiner.cookie, { displayName: "Guest" });
+
+    expect(chat.status).toBe(201);
+    expect(joined.status).toBe(200);
+
+    const blockedPaths: Array<[string, string, unknown?]> = [
+      ["/api/realtime/session", "POST"],
+      [`/api/meetings/${meeting.id}/media/publish`, "POST", {}],
+      [`/api/meetings/${meeting.id}/media/publish/ready`, "POST", {}],
+      [`/api/meetings/${meeting.id}/media/publications`, "GET"],
+      [`/api/meetings/${meeting.id}/media/subscribe`, "POST", {}],
+      [`/api/meetings/${meeting.id}/media/renegotiate`, "POST", {}],
+      [`/api/meetings/${meeting.id}/media/tracks/close`, "POST", {}],
+      [`/api/meetings/${meeting.id}/media/recover`, "POST", {}],
+      [`/api/meetings/${meeting.id}/media/close`, "POST", {}],
+      [`/api/meetings/${meeting.id}/recording`, "GET"],
+      [`/api/meetings/${meeting.id}/recording/start`, "POST", {}],
+      [`/api/meetings/${meeting.id}/recording/recording-id/parts/1`, "POST", new ArrayBuffer(0)],
+      [`/api/meetings/${meeting.id}/recording/recording-id/heartbeat`, "POST", {}],
+      [`/api/meetings/${meeting.id}/recording/recording-id/consent`, "POST", { accepted: true }],
+      [`/api/meetings/${meeting.id}/recording/recording-id/transcript`, "GET"],
+      ["/api/recordings", "GET"],
+    ];
+
+    for (const [path, method, body] of blockedPaths) {
+      const response = await api.request(path, method, host.cookie, body);
+      expect(response.status, `${method} ${path}`).toBe(503);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        error: "Realtime media and recording are unavailable in this limited release.",
+      });
+    }
+  });
+
+  it("keeps the release gate disabled when its configuration variable is absent", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Ungated room");
+
+    const media = await api.request(`/api/meetings/${meeting.id}/media/publish`, "POST", host.cookie, {});
+    const recording = await api.request(`/api/meetings/${meeting.id}/recording`, "GET", host.cookie);
+
+    expect(media.status).toBe(400);
+    expect(recording.status).toBe(200);
   });
 
   it("prevents a non-host from starting or stopping recording", async () => {

@@ -72,7 +72,24 @@ type V0SessionStoreStub = {
   deleteSession: (sessionId: string) => Promise<void>;
 };
 
-type WorkerEnv = Partial<RealtimeEnv> & AccountEmailConfig & { SESSION_STORE?: unknown; ACCOUNT_DB?: D1AccountDatabase; DEV_TOOLS_ENABLED?: string };
+type WorkerEnv = Partial<RealtimeEnv> & AccountEmailConfig & {
+  SESSION_STORE?: unknown;
+  ACCOUNT_DB?: D1AccountDatabase;
+  DEV_TOOLS_ENABLED?: string;
+  LIMITED_RELEASE_MEDIA_DISABLED?: string;
+};
+
+const LIMITED_RELEASE_UNAVAILABLE_MESSAGE = "Realtime media and recording are unavailable in this limited release.";
+
+function isLimitedReleaseMediaDisabled(env: WorkerEnv): boolean {
+  return env.LIMITED_RELEASE_MEDIA_DISABLED === "true";
+}
+
+function isLimitedReleaseMediaPath(pathname: string): boolean {
+  return pathname === "/api/realtime/session" ||
+    pathname === "/api/recordings" ||
+    /^\/api\/meetings\/[^/]+\/(?:media|recording)(?:\/|$)/.test(pathname);
+}
 
 type RecordingMultipartUpload = {
   uploadId: string;
@@ -910,8 +927,13 @@ function parseJsonBody<T>(request: Request): Promise<T | null> {
   return request.json().catch(() => null) as Promise<T | null>;
 }
 
-function meetingUiHtml(devToolsEnabled = false): string {
-  const page = meetingUiTemplate().replace("__DEV_TOOLS_FLAG__", devToolsEnabled ? "true" : "false");
+function meetingUiHtml(devToolsEnabled = false, limitedReleaseMediaDisabled = false): string {
+  const page = meetingUiTemplate()
+    .replace("__DEV_TOOLS_FLAG__", devToolsEnabled ? "true" : "false")
+    .replace(/__LIMITED_RELEASE_MEDIA_DISABLED__/g, limitedReleaseMediaDisabled ? "true" : "false")
+    .replace(/__INITIAL_MEDIA_STATUS__/g, limitedReleaseMediaDisabled
+      ? "Realtime media is unavailable in this limited release."
+      : "Media not connected");
   return devToolsEnabled ? page : page.replace(/<!--DEV_TOOLS_START-->[\s\S]*?<!--DEV_TOOLS_END-->/g, "");
 }
 
@@ -1461,6 +1483,22 @@ function meetingUiTemplate(): string {
         background: rgba(248, 113, 113, 0.16);
         border-color: rgba(248, 113, 113, 0.45);
       }
+      .limited-release-notice {
+        display: none;
+        margin: 8px 0;
+        color: #ffe8ad;
+        line-height: 1.45;
+      }
+      [data-limited-release-media-disabled="true"] .limited-release-notice { display: block; }
+      [data-limited-release-media-disabled="true"] #toggleMicBtn,
+      [data-limited-release-media-disabled="true"] #toggleCameraBtn,
+      [data-limited-release-media-disabled="true"] #micControlBtn,
+      [data-limited-release-media-disabled="true"] #cameraControlBtn,
+      [data-limited-release-media-disabled="true"] #shareScreenBtn,
+      [data-limited-release-media-disabled="true"] #recordingControls,
+      [data-limited-release-media-disabled="true"] #recordingConsentActions {
+        display: none !important;
+      }
       .dev-toggle {
         padding: 8px 12px;
         font-size: 11px;
@@ -1893,7 +1931,7 @@ function meetingUiTemplate(): string {
     </style>
   </head>
   <body>
-    <div class="app-shell">
+    <div class="app-shell" data-limited-release-media-disabled="__LIMITED_RELEASE_MEDIA_DISABLED__">
       <div class="topbar">
         <div class="brand">BillionTalks</div>
         <div style="display:flex; align-items:center; gap:10px;">
@@ -2097,6 +2135,7 @@ function meetingUiTemplate(): string {
               <button type="button" class="secondary" id="toggleMicBtn" aria-label="Microphone" aria-pressed="true">Mic: On</button>
               <button type="button" class="secondary" id="toggleCameraBtn" aria-label="Camera" aria-pressed="true">Camera: On</button>
             </div>
+            <p class="limited-release-notice" role="status">Microphone, camera, screen sharing, and recording are unavailable in this limited release. Chat and participant controls remain available.</p>
             <div class="actions">
               <button type="button" class="primary" id="joinNowButton">Join Now</button>
               <button type="button" class="secondary" id="backToHomeFromPrejoin">Cancel</button>
@@ -2116,7 +2155,7 @@ function meetingUiTemplate(): string {
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span class="meeting-id" id="meetingIdBadge">Loading...</span>
                 <span class="meeting-id" id="meetingDurationTimer" role="timer" aria-label="Meeting duration" style="font-variant-numeric: tabular-nums;">00:00:00</span>
-                <span id="mediaStatus" class="media-status" data-connection-state="attention" aria-label="Realtime media connection status" aria-live="polite">Media not connected</span>
+                <span id="mediaStatus" class="media-status" data-connection-state="attention" aria-label="Realtime media connection status: __INITIAL_MEDIA_STATUS__" aria-live="polite">__INITIAL_MEDIA_STATUS__</span>
                 <button id="enableRemotePlaybackBtn" type="button" class="ghost" style="display:none;">Enable playback</button>
                 <button type="button" class="ghost" id="copyMeetingIdBtn">Copy meeting link</button>
               </div>
@@ -2149,6 +2188,7 @@ function meetingUiTemplate(): string {
               <button type="button" class="control active" id="micControlBtn" aria-label="Microphone" aria-pressed="true"><span aria-hidden="true">🎙️</span></button>
               <button type="button" class="control active" id="cameraControlBtn" aria-label="Camera" aria-pressed="true"><span aria-hidden="true">📷</span></button>
               <button type="button" class="control" id="shareScreenBtn" aria-label="Share screen" aria-pressed="false"><span aria-hidden="true">🖥️</span></button>
+              <span id="limitedReleaseMediaNotice" class="limited-release-notice" role="status">Microphone, camera, screen sharing, and recording are unavailable in this limited release. Chat and participant controls remain available.</span>
               <span id="screenShareUnavailableMessage" class="media-status" role="status" style="display:none;">Screen sharing is not supported by this browser or device.</span>
               <button type="button" class="control" id="participantsBtn" aria-label="Participants"><span aria-hidden="true">👥</span></button>
               <button type="button" class="control danger" id="leaveMeetingBtn" aria-label="Leave meeting"><span aria-hidden="true">✕</span></button>
@@ -2225,6 +2265,9 @@ function meetingUiTemplate(): string {
     </div>
 
     <script>
+      const LIMITED_RELEASE_MEDIA_DISABLED = __LIMITED_RELEASE_MEDIA_DISABLED__;
+      const LIMITED_RELEASE_MEDIA_MESSAGE = 'Realtime media is unavailable in this limited release.';
+      const LIMITED_RELEASE_RECORDING_MESSAGE = 'Recording is unavailable in this limited release.';
       const state = {
         route: 'home',
         meetingId: '',
@@ -2237,12 +2280,12 @@ function meetingUiTemplate(): string {
         mediaConnectionId: '',
         mediaStatus: 'idle',
         localDevice: {
-          micEnabled: true,
+          micEnabled: !LIMITED_RELEASE_MEDIA_DISABLED,
           micMuted: false,
-          cameraEnabled: true,
+          cameraEnabled: !LIMITED_RELEASE_MEDIA_DISABLED,
           screenShareEnabled: false,
-          micAvailable: true,
-          cameraAvailable: true,
+          micAvailable: !LIMITED_RELEASE_MEDIA_DISABLED,
+          cameraAvailable: !LIMITED_RELEASE_MEDIA_DISABLED,
         },
         error: null,
       };
@@ -2933,6 +2976,7 @@ function meetingUiTemplate(): string {
       }
 
       function updateMediaStatus(value) {
+        if (LIMITED_RELEASE_MEDIA_DISABLED) value = LIMITED_RELEASE_MEDIA_MESSAGE;
         let shown = value;
         if (isLowLevelMediaMessage(value)) {
           console.info('[billiontalks media] detail:', value);
@@ -2941,7 +2985,9 @@ function meetingUiTemplate(): string {
         state.mediaStatus = shown;
         const status = document.getElementById('mediaStatus');
         if (status) {
-          const message = remotePlaybackBlocked
+          const message = LIMITED_RELEASE_MEDIA_DISABLED
+            ? LIMITED_RELEASE_MEDIA_MESSAGE
+            : remotePlaybackBlocked
             ? 'Remote media playback may require user interaction. Select Enable playback.'
             : shown;
           status.textContent = message;
@@ -3883,7 +3929,7 @@ function meetingUiTemplate(): string {
       }
 
       function refreshSfuSubscriptions() {
-        if (mediaRecoveryTerminal() || subscriberRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
+        if (LIMITED_RELEASE_MEDIA_DISABLED || mediaRecoveryTerminal() || subscriberRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
         if (queuedSubscriberRefresh) return queuedSubscriberRefresh;
         queuedSubscriberRefresh = enqueueMediaOperation('subscriber', async () => {
           queuedSubscriberRefresh = null;
@@ -4273,6 +4319,13 @@ function meetingUiTemplate(): string {
         const acceptButton = document.getElementById('acceptRecordingBtn');
         const declineButton = document.getElementById('declineRecordingBtn');
         if (!statusElement || !controls || !startButton || !stopButton || !cancelButton || !optionsPanel || !consentActions || !acceptButton || !declineButton) return;
+        if (LIMITED_RELEASE_MEDIA_DISABLED) {
+          statusElement.textContent = LIMITED_RELEASE_RECORDING_MESSAGE;
+          controls.style.display = 'none';
+          consentActions.style.display = 'none';
+          optionsPanel.style.display = 'none';
+          return;
+        }
 
         const current = state.recordings[state.recordings.length - 1];
         const active = current && current.status === 'RECORDING';
@@ -4326,6 +4379,7 @@ function meetingUiTemplate(): string {
       }
 
       async function refreshRecordingStatus() {
+        if (LIMITED_RELEASE_MEDIA_DISABLED) return;
         if (!state.meetingId || state.route !== 'meeting') return;
         const meetingId = state.meetingId;
         if (recordingsMeetingId !== meetingId) {
@@ -4597,6 +4651,7 @@ function meetingUiTemplate(): string {
       }
 
       async function updateRecording(action) {
+        if (LIMITED_RELEASE_MEDIA_DISABLED) return;
         if (!state.isHost || recordingActionPending || !state.meetingId || state.route !== 'meeting') return;
         const meetingId = state.meetingId;
         const latest = state.recordings[state.recordings.length - 1];
@@ -4964,7 +5019,12 @@ function meetingUiTemplate(): string {
         const placeholder = selfTile.querySelector('.placeholder');
         if (placeholder) {
           placeholder.style.display = 'block';
-          placeholder.textContent = 'You';
+          placeholder.textContent = LIMITED_RELEASE_MEDIA_DISABLED ? 'Video unavailable in this limited release' : 'You';
+        }
+
+        if (LIMITED_RELEASE_MEDIA_DISABLED) {
+          selfTile.classList.add('camera-unavailable');
+          return;
         }
 
         if (!state.localDevice.cameraAvailable || !state.localDevice.cameraEnabled || !localMediaState.cameraStream) {
@@ -5076,7 +5136,7 @@ function meetingUiTemplate(): string {
       }
 
       function acquireDesiredLocalMedia() {
-        if (isSimulatedMeeting()) return;
+        if (LIMITED_RELEASE_MEDIA_DISABLED || isSimulatedMeeting()) return;
         const local = state.localDevice;
         if (local.micEnabled && localMediaState.micStream && !localMediaState.micStream.getAudioTracks().some((track) => track.readyState !== 'ended')) {
           Object.assign(localMediaState, stopLocalMediaStream(localMediaState, 'mic'));
@@ -5089,6 +5149,7 @@ function meetingUiTemplate(): string {
       }
 
       async function toggleMicrophone() {
+        if (LIMITED_RELEASE_MEDIA_DISABLED) return;
         if (state.localDevice.micEnabled && localMediaState.micStream) {
           stopLocalMicrophone();
           return;
@@ -5148,6 +5209,7 @@ function meetingUiTemplate(): string {
       }
 
       async function toggleCamera() {
+        if (LIMITED_RELEASE_MEDIA_DISABLED) return;
         if (state.localDevice.cameraEnabled && localMediaState.cameraStream) {
           stopLocalCamera();
           return;
@@ -5510,6 +5572,7 @@ function meetingUiTemplate(): string {
       }
 
       async function handleScreenShareToggle() {
+        if (LIMITED_RELEASE_MEDIA_DISABLED) return;
         if (state.localDevice.screenShareEnabled) {
           stopScreenShareCapture();
           return;
@@ -6363,6 +6426,12 @@ function meetingUiTemplate(): string {
 const routeHandler = {
   async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
     const url = new URL(request.url);
+    if (isLimitedReleaseMediaDisabled(env) && isLimitedReleaseMediaPath(url.pathname)) {
+      return Response.json(
+        { ok: false, error: LIMITED_RELEASE_UNAVAILABLE_MESSAGE },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     // Reject cross-origin browser writes to account endpoints, including authenticated cookie actions.
     if (
       (url.pathname.startsWith("/api/accounts/") || url.pathname.startsWith("/api/schedules") ||
@@ -6494,7 +6563,7 @@ const routeHandler = {
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
       const { session } = await getOrCreateSession(request, env);
       return withSessionCookie(
-        new Response(meetingUiHtml(isDevToolsEnabled(request, env)), {
+        new Response(meetingUiHtml(isDevToolsEnabled(request, env), isLimitedReleaseMediaDisabled(env)), {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
           },
