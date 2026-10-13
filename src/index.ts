@@ -21,6 +21,8 @@ import { handleScheduledMeetingRequest } from "./scheduler/api";
 import { D1ScheduleRepository } from "./scheduler/schedules";
 import { createAccountEmailSender, type AccountEmailConfig } from "./account/email-delivery";
 import { accountPage } from "./account/ui";
+import { handleNotificationsRequest, handlePreferencesRequest, createAccountNotification } from "./settings/api";
+import { notificationsPage } from "./settings/ui";
 import {
   activateRecordingMetadata,
   applyRecordingConsent,
@@ -6241,6 +6243,7 @@ const routeHandler = {
     if (
       (url.pathname.startsWith("/api/accounts/") || url.pathname.startsWith("/api/schedules") ||
         url.pathname.startsWith("/api/contacts") || url.pathname.startsWith("/api/invitations") ||
+        url.pathname.startsWith("/api/preferences") || url.pathname.startsWith("/api/notifications") ||
         /^\/api\/meetings\/[^/]+\/recording(?:\/|$)/.test(url.pathname)) &&
       !["GET", "HEAD", "OPTIONS"].includes(request.method)
     ) {
@@ -6307,6 +6310,20 @@ const routeHandler = {
 
     if (request.method === "GET" && url.pathname === "/account") {
       return new Response(accountPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
+    if (request.method === "GET" && url.pathname === "/notifications") {
+      return new Response(notificationsPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+    }
+
+    if (url.pathname === "/api/preferences") {
+      const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+      return handlePreferencesRequest(request, account?.id ?? null, env.ACCOUNT_DB);
+    }
+
+    if (url.pathname === "/api/notifications" || url.pathname.startsWith("/api/notifications/")) {
+      const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+      return handleNotificationsRequest(request, account?.id ?? null, env.ACCOUNT_DB);
     }
 
     if (request.method === "GET" && url.pathname === "/dashboard") {
@@ -7646,7 +7663,21 @@ const routeHandler = {
         await Promise.all(mediaStates.map((state) => cleanupSfuParticipant(env, meetingMatch[1], state.userId)));
         if (env.ACCOUNT_DB) {
           try {
-            await new D1ScheduleRepository(env.ACCOUNT_DB).markEnded(meetingMatch[1], new Date().toISOString());
+            const endedAt = new Date().toISOString();
+            const scheduleRepository = new D1ScheduleRepository(env.ACCOUNT_DB);
+            await scheduleRepository.markEnded(meetingMatch[1], endedAt);
+            const endedSchedule = await scheduleRepository.getOwned(meetingMatch[1], session.userId);
+            if (endedSchedule?.status === "ENDED") {
+              await createAccountNotification(env.ACCOUNT_DB, {
+                accountId: session.userId,
+                eventKey: `schedule:${endedSchedule.id}:ended`,
+                category: "MEETING",
+                title: "Meeting ended",
+                body: `${endedSchedule.title} has ended.`,
+                meetingId: endedSchedule.id,
+                createdAt: endedAt,
+              });
+            }
           } catch (error) {
             console.error("The live meeting ended, but its scheduled lifecycle could not be updated.", error);
             return withSessionCookie(

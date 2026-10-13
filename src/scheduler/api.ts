@@ -1,5 +1,6 @@
 import type { D1AccountDatabase } from "../account/repository";
 import type { MeetingService } from "../meeting";
+import { createAccountNotification } from "../settings/api";
 import { D1ScheduleRepository, ensureScheduledLiveRoom, ScheduleConflictError, ScheduleValidationError, validateScheduledMeetingInput } from "./schedules";
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -89,6 +90,15 @@ export async function handleScheduledMeetingRequest(
       const input = validateScheduledMeetingInput(await readJson(request), now.getTime());
       const { startsAt, ...scheduleInput } = input;
       const meeting = await repository.create(ownerAccountId, { ...scheduleInput, startsAt }, now.toISOString());
+      await createAccountNotification(database, {
+        accountId: ownerAccountId,
+        eventKey: `schedule:${meeting.id}:created`,
+        category: "MEETING",
+        title: "Meeting scheduled",
+        body: `${meeting.title} was added to your schedule.`,
+        meetingId: meeting.id,
+        createdAt: now.toISOString(),
+      });
       return jsonResponse({ ok: true, data: { ...meeting, shareUrl: shareUrl(request, meeting.id) } }, 201);
     }
 
@@ -107,12 +117,30 @@ export async function handleScheduledMeetingRequest(
       const input = validateScheduledMeetingInput(body, now.getTime());
       const { startsAt, ...scheduleInput } = input;
       const meeting = await repository.updateOwned(id, ownerAccountId, revision, { ...scheduleInput, startsAt }, now.toISOString());
+      await createAccountNotification(database, {
+        accountId: ownerAccountId,
+        eventKey: `schedule:${meeting.id}:updated:${meeting.revision}`,
+        category: "MEETING",
+        title: "Meeting updated",
+        body: `${meeting.title} was updated in your schedule.`,
+        meetingId: meeting.id,
+        createdAt: now.toISOString(),
+      });
       return jsonResponse({ ok: true, data: { ...meeting, shareUrl: shareUrl(request, meeting.id) } });
     }
 
     if (!action && request.method === "DELETE") {
       const revision = getRevision(await readJson(request));
       const meeting = await repository.cancelOwned(id, ownerAccountId, revision, now.toISOString());
+      await createAccountNotification(database, {
+        accountId: ownerAccountId,
+        eventKey: `schedule:${meeting.id}:cancelled:${meeting.revision}`,
+        category: "MEETING",
+        title: "Meeting cancelled",
+        body: `${meeting.title} was cancelled.`,
+        meetingId: meeting.id,
+        createdAt: now.toISOString(),
+      });
       return jsonResponse({ ok: true, data: meeting });
     }
 
@@ -136,6 +164,15 @@ export async function handleScheduledMeetingRequest(
         (meetingId) => meetingService.getMeeting(meetingId),
       );
       const started = await repository.markStarted(id, ownerAccountId, starting.revision, now.toISOString());
+      await createAccountNotification(database, {
+        accountId: ownerAccountId,
+        eventKey: `schedule:${started.id}:started`,
+        category: "MEETING",
+        title: "Meeting started",
+        body: `${started.title} is now open.`,
+        meetingId: started.id,
+        createdAt: now.toISOString(),
+      });
       return jsonResponse({ ok: true, data: { schedule: started, meeting: room, shareUrl: shareUrl(request, id) } });
     }
 

@@ -374,7 +374,7 @@ export function schedulerPreviewPage(): string {
         <span class="nav-item disabled" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Calendar<span class="soon-badge">Soon</span></span>
         <span class="nav-item disabled" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>Contacts<span class="soon-badge">Soon</span></span>
         <span class="nav-item disabled" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="3"/><path d="M8 4v3M16 4v3"/></svg>Recordings<span class="soon-badge">Soon</span></span>
-        <a class="nav-item" href="/account#profile"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>Settings</a>
+        <a class="nav-item" href="/account#preferences"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>Settings</a>
       </nav>
       <div class="sidebar-footer">
         <a class="sign-out" href="/dashboard"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 18-6-6 6-6M9 12h12M5 4h4M5 20h4"/></svg>Back to dashboard</a>
@@ -540,7 +540,7 @@ export function schedulerPreviewPage(): string {
       const accessFields = [...form.querySelectorAll('input[name="guestAccess"]')];
       const error = document.getElementById('schedulerError');
       const scheduleList = document.getElementById('scheduleList');
-      const state = { editingId: null, revision: null, link: '' };
+      const state = { editingId: null, revision: null, link: '', preferences: null };
       const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       const deviceOption = document.getElementById('deviceTimezone');
       deviceOption.value = deviceTimezone;
@@ -552,6 +552,19 @@ export function schedulerPreviewPage(): string {
         option.value = zone;
         option.textContent = zone;
         timezoneField.append(option);
+      }
+      function applyPreferences() {
+        if (!state.preferences) return;
+        duration.value = String(state.preferences.defaultDurationMinutes);
+        const guestAccess = form.querySelector('input[name="guestAccess"][value="' + state.preferences.defaultGuestAccess + '"]');
+        if (guestAccess) guestAccess.checked = true;
+        if (![...timezoneField.options].some((option) => option.value === state.preferences.timeZone)) {
+          const option = document.createElement('option');
+          option.value = state.preferences.timeZone;
+          option.textContent = state.preferences.timeZone;
+          timezoneField.append(option);
+        }
+        timezoneField.value = state.preferences.timeZone;
       }
       function selectedAccess() { return form.querySelector('input[name="guestAccess"]:checked').value; }
       function accessLabel(value) { return ({ HOST_APPROVAL: 'Host approval', OPEN: 'Open access', LOCKED: 'Locked' })[value] || 'Host approval'; }
@@ -602,6 +615,7 @@ export function schedulerPreviewPage(): string {
         state.editingId = null;
         state.revision = null;
         timezoneField.value = deviceTimezone;
+        applyPreferences();
         document.getElementById('submitScheduleButton').textContent = 'Schedule meeting';
         updateSummaryLink('');
         showError('');
@@ -718,6 +732,15 @@ export function schedulerPreviewPage(): string {
           const profile = await api('/api/accounts/me');
           document.getElementById('schedulerAccountName').textContent = profile.account.fullName;
           document.getElementById('schedulerAccountEmail').textContent = profile.account.email;
+          try {
+            const accountSettings = await api('/api/preferences');
+            state.preferences = accountSettings.preferences;
+            applyPreferences();
+          } catch (failure) {
+            showError(failure instanceof Error
+              ? 'Your saved meeting defaults could not be loaded. Device defaults are in use. ' + failure.message
+              : 'Your saved meeting defaults could not be loaded. Device defaults are in use.');
+          }
           await loadSchedules();
           const requestedId = new URLSearchParams(window.location.search).get('meeting');
           if (requestedId) await editSchedule(requestedId);

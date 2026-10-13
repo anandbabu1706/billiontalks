@@ -152,6 +152,8 @@ export function accountPage(): string {
     <button data-page="login" class="secondary">Sign in</button>
     <button data-page="register" class="secondary">Create account</button>
     <button data-page="profile" class="secondary">Profile</button>
+    <button data-page="preferences" class="secondary">Settings</button>
+    <a class="back" href="/notifications">Notifications</a>
   </nav>
   <div id="status" class="status" role="status" aria-live="polite"></div>
   <datalist id="countryOptions">${renderCountryOptions(options)}</datalist>
@@ -222,6 +224,24 @@ export function accountPage(): string {
       <div class="actions"><button type="submit">Save changes</button><button type="button" id="logout" class="secondary">Sign out</button></div>
     </form>
   </section>
+  <section data-panel="preferences" hidden>
+    <h1>Account and meeting settings</h1>
+    <p>Choose defaults for new meetings and the in-app updates you receive.</p>
+    <form id="preferences">
+      <label>Time zone<input name="timeZone" maxlength="100" required placeholder="e.g. Europe/London"></label>
+      <label>Default meeting duration
+        <select name="defaultDurationMinutes"><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1 hour 30 minutes</option><option value="120">2 hours</option></select>
+      </label>
+      <label>Default guest access
+        <select name="defaultGuestAccess"><option value="HOST_APPROVAL">Host approval</option><option value="OPEN">Open access</option><option value="LOCKED">Locked</option></select>
+      </label>
+      <div class="toggle"><input id="notifyMeetingEvents" name="notifyMeetingEvents" type="checkbox"><label for="notifyMeetingEvents">In-app updates for meeting schedule changes</label></div>
+      <div class="toggle"><input id="notifyInvitationEvents" name="notifyInvitationEvents" type="checkbox"><label for="notifyInvitationEvents">In-app updates when invitees respond</label></div>
+      <p class="hint" id="entitlementSummary">Plan access is loading…</p>
+      <div class="actions"><button type="submit">Save settings</button></div>
+    </form>
+    <a class="back" href="/notifications">View notifications</a>
+  </section>
   <a class="back" href="/">← Back to meetings</a>
   </div>
 </main>
@@ -240,7 +260,7 @@ export function accountPage(): string {
   function view(page) {
     if (!panels.some((panel) => panel.dataset.panel === page)) page = 'login';
     panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== page; });
-    const activePage = ['login', 'register', 'profile'].includes(page) ? page : null;
+    const activePage = ['login', 'register', 'profile', 'preferences'].includes(page) ? page : null;
     document.querySelector('main').dataset.page = page;
     navigationButtons.forEach((button) => {
       if (button.dataset.page === activePage) button.setAttribute('aria-current', 'page');
@@ -249,6 +269,7 @@ export function accountPage(): string {
     history.replaceState(null, '', '#' + page);
     message('');
     if (page === 'profile') void loadProfile();
+    if (page === 'preferences') void loadPreferences();
   }
   function toE164(country, nationalNumber) {
     const digits = String(nationalNumber || '').replace(/\\D/gu, '').replace(/^0+/u, '');
@@ -321,6 +342,50 @@ export function accountPage(): string {
     const country = selectedCountry(values.country);
     return { fullName: values.fullName, country: country.code, mobileNumber: toE164(country.code, values.mobileNumber), marketingConsent: form.elements.marketingConsent.checked };
   }, async () => message('Profile updated.'));
+  document.getElementById('preferences').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    const values = new FormData(form);
+    try {
+      const response = await fetch('/api/preferences', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timeZone: values.get('timeZone'),
+          defaultDurationMinutes: Number(values.get('defaultDurationMinutes')),
+          defaultGuestAccess: values.get('defaultGuestAccess'),
+          notifyMeetingEvents: form.elements.notifyMeetingEvents.checked,
+          notifyInvitationEvents: form.elements.notifyInvitationEvents.checked,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw Error(payload.error || 'Unable to save settings.');
+      message('Settings saved.');
+    } catch (error) {
+      message(error instanceof Error ? error.message : 'Unable to save settings.', true);
+    }
+  });
+  async function loadPreferences() {
+    try {
+      const response = await fetch('/api/preferences', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      const payload = await response.json();
+      if (response.status === 401) throw Error('Sign in to access your settings.');
+      if (!response.ok || !payload.ok) throw Error(payload.error || 'Unable to load settings.');
+      const form = document.getElementById('preferences');
+      const settings = payload.data.preferences;
+      form.elements.timeZone.value = settings.timeZone;
+      form.elements.defaultDurationMinutes.value = String(settings.defaultDurationMinutes);
+      form.elements.defaultGuestAccess.value = settings.defaultGuestAccess;
+      form.elements.notifyMeetingEvents.checked = settings.notifyMeetingEvents;
+      form.elements.notifyInvitationEvents.checked = settings.notifyInvitationEvents;
+      document.getElementById('entitlementSummary').textContent =
+        'Current access: ' + payload.data.entitlement.planCode + ' (' + payload.data.entitlement.status.toLowerCase() + '). Existing features remain available; plan-based restrictions are not enabled.';
+    } catch (error) {
+      message(error instanceof Error ? error.message : 'Unable to load settings.', true);
+    }
+  }
   async function loadProfile() {
     try {
       const data = await api('me', 'GET');

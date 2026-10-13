@@ -1,6 +1,7 @@
 import { normalizeEmail, normalizeFullName, AccountValidationError } from "../account/validation";
 import type { AccountEmailSender } from "../account/email-delivery";
 import type { D1AccountDatabase, D1AccountStatement } from "../account/repository";
+import { createAccountNotification } from "../settings/api";
 
 export type ContactRecord = {
   id: string;
@@ -48,6 +49,7 @@ type InvitationRow = {
 
 type PublicInvitationRow = {
   invitation_id: string;
+  owner_account_id: string;
   meeting_id: string;
   meeting_title: string;
   starts_at: string;
@@ -249,7 +251,7 @@ async function loadInvitation(
   ownerId: string,
 ): Promise<InvitationRow | null> {
   return database.prepare(
-    `SELECT i.invitation_id, i.meeting_id, s.title AS meeting_title, s.starts_at, s.time_zone,
+    `SELECT i.invitation_id, i.owner_account_id, i.meeting_id, s.title AS meeting_title, s.starts_at, s.time_zone,
       s.duration_minutes, s.guest_access, s.status AS meeting_status, i.recipient_name,
       i.recipient_email, i.status, i.delivery_status, i.expires_at, i.responded_at, i.created_at
      FROM meeting_invitations i JOIN scheduled_meetings s ON s.meeting_id = i.meeting_id
@@ -386,7 +388,7 @@ async function resendInvitation(
 
 async function invitationPublicRow(database: D1AccountDatabase, hash: string): Promise<PublicInvitationRow | null> {
   return database.prepare(
-    `SELECT i.invitation_id, i.meeting_id, s.title AS meeting_title, s.starts_at, s.time_zone,
+    `SELECT i.invitation_id, i.owner_account_id, i.meeting_id, s.title AS meeting_title, s.starts_at, s.time_zone,
       s.duration_minutes, s.guest_access, s.status AS meeting_status, i.status, i.expires_at
      FROM meeting_invitations i JOIN scheduled_meetings s ON s.meeting_id = i.meeting_id
      WHERE i.token_hash = ?`,
@@ -472,6 +474,16 @@ export async function handleInvitationsRequest(
       }
       const row = await invitationPublicRow(database, hash);
       if (!row) throw new Error("The updated invitation could not be read.");
+      const responseStatus = body.response as "ACCEPTED" | "DECLINED";
+      await createAccountNotification(database, {
+        accountId: row.owner_account_id,
+        eventKey: `invitation:${row.invitation_id}:${responseStatus.toLowerCase()}`,
+        category: "INVITATION",
+        title: `Invitation ${responseStatus.toLowerCase()}`,
+        body: `An invitee ${responseStatus === "ACCEPTED" ? "accepted" : "declined"} ${row.meeting_title}.`,
+        meetingId: row.meeting_id,
+        createdAt: timestamp,
+      });
       return json({ ok: true, data: publicInvitation(row) });
     }
     if (invitationMatch && request.method === "GET" && !invitationMatch[2]) {

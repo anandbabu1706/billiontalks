@@ -35,7 +35,8 @@ describe("BT-V1-002 signed-in dashboard", () => {
     expect(html).toContain("border-top-color: #4a89ee");
     expect(html).toContain("box-shadow: 0 14px 32px");
     expect(html).toContain("Private to your account");
-    expect(html).toContain("/account#profile");
+    expect(html).toContain("/account#preferences");
+    expect(html).toContain('id="notificationCount"');
     expect(html).toContain("Coming soon");
     expect(html).toContain("Calendar");
     expect(html).toContain('class="nav-item" href="/calendar"');

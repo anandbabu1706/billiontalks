@@ -142,6 +142,7 @@ export function dashboardPage(): string {
     .header-soon { font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .account-summary { display: flex; align-items: center; gap: 12px; min-width: 0; }
     .notification {
+      position: relative;
       display: grid;
       place-items: center;
       width: 39px;
@@ -150,9 +151,11 @@ export function dashboardPage(): string {
       border-radius: 11px;
       background: #fff;
       color: #8b98ab;
-      cursor: default;
+      cursor: pointer;
     }
     .notification svg { width: 18px; height: 18px; }
+    .notification-badge { position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px; border: 2px solid #fff; border-radius: 999px; background: #e34b64; color: #fff; font-size: 9px; font-weight: 800; line-height: 13px; text-align: center; }
+    .notification-badge:empty { display: none; }
     .avatar {
       display: grid;
       place-items: center;
@@ -448,7 +451,7 @@ export function dashboardPage(): string {
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/></svg>
           Recordings <span class="soon-badge">Soon</span>
         </span>
-        <a class="nav-item" href="/account#profile">
+        <a class="nav-item" href="/account#preferences">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>
           Settings
         </a>
@@ -473,9 +476,10 @@ export function dashboardPage(): string {
           <span class="header-soon">Coming soon</span>
         </div>
         <div class="account-summary">
-          <span class="notification" aria-label="Notifications coming soon" title="Notifications coming soon">
+          <a class="notification" id="notificationsLink" href="/notifications" aria-label="Notifications" title="Notifications">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
-          </span>
+            <span class="notification-badge" id="notificationCount" aria-hidden="true"></span>
+          </a>
           <span class="avatar" id="identityAvatar" aria-hidden="true">BT</span>
           <span class="account-copy">
             <strong id="identityName">Loading account...</strong>
@@ -575,7 +579,7 @@ export function dashboardPage(): string {
                   <span class="quick-item-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg></span>
                   <span><strong>Contacts</strong><span>Coming soon</span></span>
                 </div>
-                <a class="quick-item" href="/account#profile">
+                <a class="quick-item" href="/account#preferences">
                   <span class="quick-item-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
                   <span><strong>Account Settings</strong><span>Manage your profile</span></span>
                   <span class="arrow" aria-hidden="true">›</span>
@@ -732,9 +736,10 @@ export function dashboardPage(): string {
           document.getElementById('identityEmail').textContent = account.account.email;
           document.getElementById('identityAvatar').textContent = initials;
           document.getElementById('welcomeName').textContent = firstName;
-          const [historyResult, schedulesResult] = await Promise.allSettled([
+          const [historyResult, schedulesResult, notificationResult] = await Promise.allSettled([
             api('/api/meetings/history'),
             api('/api/schedules?upcoming=1'),
+            api('/api/notifications?limit=1'),
           ]);
           if (historyResult.status === 'rejected') throw historyResult.reason;
           renderHistory(historyResult.value);
@@ -743,6 +748,14 @@ export function dashboardPage(): string {
           document.getElementById('upcomingMeta').textContent = upcomingMeetings.length + (upcomingMeetings.length === 1 ? ' meeting' : ' meetings');
           renderNextMeeting();
           renderUpcoming();
+          const notificationLink = document.getElementById('notificationsLink');
+          if (notificationResult.status === 'fulfilled') {
+            const count = notificationResult.value.unreadCount;
+            document.getElementById('notificationCount').textContent = count > 99 ? '99+' : count ? String(count) : '';
+            notificationLink.setAttribute('aria-label', count ? 'Notifications, ' + count + ' unread' : 'Notifications, no unread items');
+          } else {
+            notificationLink.title = 'Notification count is unavailable. Open notifications to retry.';
+          }
         } catch (failure) {
           showError(failure instanceof Error ? failure.message : 'Unable to load your dashboard.');
         }
