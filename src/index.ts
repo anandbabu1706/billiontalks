@@ -6426,6 +6426,12 @@ function meetingUiTemplate(): string {
 const routeHandler = {
   async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
     const url = new URL(request.url);
+    if (url.hostname.toLowerCase() === "www.billiontalks.com") {
+      url.protocol = "https:";
+      url.hostname = "billiontalks.com";
+      url.port = "";
+      return Response.redirect(url.toString(), 308);
+    }
     if (isLimitedReleaseMediaDisabled(env) && isLimitedReleaseMediaPath(url.pathname)) {
       return Response.json(
         { ok: false, error: LIMITED_RELEASE_UNAVAILABLE_MESSAGE },

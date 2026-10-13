@@ -3,6 +3,7 @@
   "name": "billiontalks-realtime-backend",
   "main": "src/index.ts",
   "compatibility_date": "2025-07-18",
+  "workers_dev": true,
   "rules": [
     {
       "type": "Data",

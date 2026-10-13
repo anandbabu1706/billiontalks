@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import app, { MeetingStateDurableObject } from "../src/index";
 import { DurableMeetingRepository, InMemoryMeetingRepository, MeetingService, NullMediaProvider, type Meeting } from "../src/meeting";
 
+describe("canonical production hostname", () => {
+  it("redirects www to the apex while preserving path and query", async () => {
+    const response = await app.fetch(new Request("http://www.billiontalks.com/meetings/room?meeting=btm_example&tab=chat"));
+
+    expect(response.status).toBe(308);
+    expect(response.headers.get("Location")).toBe("https://billiontalks.com/meetings/room?meeting=btm_example&tab=chat");
+  });
+
+  it("does not redirect unrelated hosts", async () => {
+    const response = await app.fetch(new Request("http://localhost/not-found"));
+
+    expect(response.status).toBe(404);
+    expect(response.headers.has("Location")).toBe(false);
+  });
+});
+
 function durableFixture() {
   const objects = new Map<string, MeetingStateDurableObject>();
   const snapshots = new Map<string, Map<string, unknown>>();
