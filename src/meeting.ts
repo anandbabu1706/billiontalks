@@ -34,10 +34,41 @@ export enum MeetingAdmissionStatus {
 
 export enum MeetingRecordingStatus {
   NOT_STARTED = "NOT_STARTED",
+  CONSENT_PENDING = "CONSENT_PENDING",
+  CONSENTED = "CONSENTED",
   RECORDING = "RECORDING",
   STOPPED = "STOPPED",
   FAILED = "FAILED",
 }
+
+export type MeetingRecordingOptions = {
+  includeAudio: boolean;
+  includeVideo: boolean;
+};
+
+export type RecordingConsent = {
+  userId: string;
+  displayName: string;
+  status: "PENDING" | "ACCEPTED" | "DECLINED";
+  respondedAt?: string;
+};
+
+export type MeetingTranscriptRecord = {
+  recordId: string;
+  meetingId: string;
+  recordingId: string;
+  speakerId?: string;
+  startedAt: string;
+  endedAt: string;
+  text: string;
+};
+
+export type MeetingTranscript = {
+  meetingId: string;
+  recordingId: string;
+  status: "UNAVAILABLE" | "PROCESSING" | "READY" | "FAILED";
+  records: MeetingTranscriptRecord[];
+};
 
 export type MeetingParticipant = {
   id: string;
@@ -87,9 +118,14 @@ export type MeetingRecordingMetadata = {
   meetingId: string;
   recordingId?: string;
   status: MeetingRecordingStatus;
+  requestedAt?: string;
   startedAt?: string;
+  lastHeartbeatAt?: string;
   stoppedAt?: string;
   initiatedByUserId?: string;
+  options?: MeetingRecordingOptions;
+  consents?: RecordingConsent[];
+  transcriptStatus?: MeetingTranscript["status"];
   storageRef?: {
     provider: "r2";
     objectKey: string;
@@ -99,7 +135,7 @@ export type MeetingRecordingMetadata = {
     parts: Array<{ partNumber: number; etag: string; size: number }>;
   };
   sizeBytes?: number;
-  failureCode?: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED";
+  failureCode?: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED" | "CONSENT_DECLINED" | "HOST_CANCELLED" | "INTERRUPTED";
 };
 
 export type RecordingUploadedPart = {
@@ -282,16 +318,143 @@ function assertRecordingHost(meeting: Meeting | undefined, actorUserId: string):
   }
 }
 
-function createStartedRecording(meeting: Meeting, actorUserId: string): MeetingRecordingMetadata {
+export function createRecordingRequest(
+  meeting: Meeting,
+  actorUserId: string,
+  options: MeetingRecordingOptions,
+): MeetingRecordingMetadata {
+  if (!options.includeAudio && !options.includeVideo) {
+    throw new Error("Select audio, video, or both to record.");
+  }
   const recordingId = `rec_${crypto.randomUUID()}`;
+  const consents = meeting.participants
+    .filter((participant) => participant.state === ParticipantState.JOINED)
+    .map((participant): RecordingConsent => ({
+      userId: participant.userId,
+      displayName: participant.displayName,
+      status: participant.userId === actorUserId ? "ACCEPTED" : "PENDING",
+      ...(participant.userId === actorUserId ? { respondedAt: new Date().toISOString() } : {}),
+    }));
+  const consentPending = consents.some((consent) => consent.status === "PENDING");
   return {
     meetingId: meeting.id,
     recordingId,
+    status: consentPending ? MeetingRecordingStatus.CONSENT_PENDING : MeetingRecordingStatus.CONSENTED,
+    requestedAt: new Date().toISOString(),
+    initiatedByUserId: actorUserId,
+    options,
+    consents,
+  };
+}
+
+export function activateRecordingMetadata(recording: MeetingRecordingMetadata): MeetingRecordingMetadata {
+  if (recording.status !== MeetingRecordingStatus.CONSENTED) {
+    throw new Error("All joined participants must consent before recording starts.");
+  }
+  if (!recording.recordingId) throw new Error("Recording metadata is unavailable.");
+  return {
+    ...recording,
     status: MeetingRecordingStatus.RECORDING,
     startedAt: new Date().toISOString(),
-    initiatedByUserId: actorUserId,
-    storageRef: { provider: "r2", objectKey: buildRecordingObjectKey(meeting.id, recordingId) },
+    lastHeartbeatAt: new Date().toISOString(),
+    transcriptStatus: "UNAVAILABLE",
+    storageRef: { provider: "r2", objectKey: buildRecordingObjectKey(recording.meetingId, recording.recordingId) },
   };
+}
+
+export function expireInterruptedRecordings(
+  recordings: MeetingRecordingMetadata[],
+  now = Date.now(),
+): MeetingRecordingMetadata[] {
+  const interruptionThresholdMs = 120_000;
+  return recordings.map((recording) => {
+    const heartbeat = recording.lastHeartbeatAt ? Date.parse(recording.lastHeartbeatAt) : Number.NaN;
+    if (
+      recording.status !== MeetingRecordingStatus.RECORDING ||
+      !Number.isFinite(heartbeat) ||
+      now - heartbeat <= interruptionThresholdMs
+    ) return recording;
+    return {
+      ...recording,
+      status: MeetingRecordingStatus.FAILED,
+      stoppedAt: new Date(now).toISOString(),
+      failureCode: "INTERRUPTED",
+    };
+  });
+}
+
+export function applyRecordingConsent(
+  meeting: Meeting | undefined,
+  recording: MeetingRecordingMetadata,
+  actorUserId: string,
+  accepted: boolean,
+): MeetingRecordingMetadata {
+  if (!meeting) throw new Error("Meeting not found.");
+  const participant = meeting.participants.find((entry) =>
+    entry.userId === actorUserId && entry.state === ParticipantState.JOINED,
+  );
+  if (!participant) throw new Error("Only joined meeting participants may respond to recording consent.");
+  if (recording.status !== MeetingRecordingStatus.CONSENT_PENDING && recording.status !== MeetingRecordingStatus.RECORDING) {
+    throw new Error("Recording consent is no longer pending.");
+  }
+  const consent = recording.consents?.find((entry) => entry.userId === actorUserId);
+  if (!consent || consent.status !== "PENDING") throw new Error("Recording consent response was already submitted.");
+  const respondedAt = new Date().toISOString();
+  const consents = recording.consents!.map((entry) =>
+    entry.userId === actorUserId
+      ? { ...entry, status: accepted ? "ACCEPTED" as const : "DECLINED" as const, respondedAt }
+      : entry,
+  );
+  if (!accepted && recording.status === MeetingRecordingStatus.CONSENT_PENDING) {
+    return {
+      ...recording,
+      consents,
+      status: MeetingRecordingStatus.FAILED,
+      stoppedAt: respondedAt,
+      failureCode: "CONSENT_DECLINED",
+    };
+  }
+  return {
+    ...recording,
+    consents,
+    status: recording.status === MeetingRecordingStatus.RECORDING
+      ? MeetingRecordingStatus.RECORDING
+      : consents.every((entry) => entry.status === "ACCEPTED")
+        ? MeetingRecordingStatus.CONSENTED
+        : MeetingRecordingStatus.CONSENT_PENDING,
+  };
+}
+
+export function reconcileRecordingConsents(
+  meeting: Meeting,
+  recordings: MeetingRecordingMetadata[],
+): MeetingRecordingMetadata[] {
+  const joinedParticipants = meeting.participants.filter((participant) => participant.state === ParticipantState.JOINED);
+  return recordings.map((recording) => {
+    if (![MeetingRecordingStatus.CONSENT_PENDING, MeetingRecordingStatus.CONSENTED, MeetingRecordingStatus.RECORDING].includes(recording.status)) {
+      return recording;
+    }
+    const joinedIds = new Set(joinedParticipants.map((participant) => participant.userId));
+    const consents = (recording.consents ?? []).filter((consent) =>
+      consent.status !== "PENDING" || joinedIds.has(consent.userId),
+    );
+    const existingIds = new Set(consents.map((consent) => consent.userId));
+    for (const participant of joinedParticipants) {
+      if (!existingIds.has(participant.userId)) {
+        consents.push({ userId: participant.userId, displayName: participant.displayName, status: "PENDING" });
+      }
+    }
+    const status = recording.status === MeetingRecordingStatus.RECORDING
+      ? MeetingRecordingStatus.RECORDING
+      : consents.some((consent) => consent.status === "PENDING")
+        ? MeetingRecordingStatus.CONSENT_PENDING
+        : MeetingRecordingStatus.CONSENTED;
+    return { ...recording, status, consents };
+  });
+}
+
+function emptyMeetingTranscript(meetingId: string, recordingId: string): MeetingTranscript {
+  return { meetingId, recordingId, status: "UNAVAILABLE", records: [] };
 }
 
 function normalizeMeetingAccessMode(value: unknown, label: string): MeetingAccessMode {
@@ -309,11 +472,15 @@ export interface MeetingRepository {
   getMeeting(meetingId: string): Promise<Meeting | undefined> | Meeting | undefined;
   listMeetingHistoryReferences(userId: string): Promise<string[]>;
   getRecordingMetadata(meetingId: string): Promise<MeetingRecordingMetadata[]>;
-  startRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
+  startRecording(meetingId: string, actorUserId: string, options: MeetingRecordingOptions): Promise<MeetingRecordingMetadata>;
+  activateRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
+  respondRecordingConsent(meetingId: string, recordingId: string, actorUserId: string, accepted: boolean): Promise<MeetingRecordingMetadata>;
+  heartbeatRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<void>;
+  getTranscript(meetingId: string, recordingId: string): Promise<MeetingTranscript>;
   attachRecordingUpload(meetingId: string, recordingId: string, actorUserId: string, uploadId: string): Promise<MeetingRecordingMetadata>;
   recordRecordingPart(meetingId: string, recordingId: string, actorUserId: string, part: RecordingUploadedPart): Promise<void>;
   finalizeRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
-  failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata>;
+  failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED" | "CONSENT_DECLINED" | "HOST_CANCELLED" | "INTERRUPTED"): Promise<MeetingRecordingMetadata>;
   stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata>;
   listChatMessages(meetingId: string): Promise<MeetingChatMessage[]> | MeetingChatMessage[];
   appendChatMessage(meetingId: string, senderUserId: string, content: string): Promise<MeetingChatMessage>;
@@ -336,11 +503,15 @@ type DurableObjectStubLike = {
   addMeetingHistoryReference: (userId: string, meetingId: string) => Promise<void>;
   listMeetingHistoryReferences: (userId: string) => Promise<string[]>;
   getRecordingMetadata: () => Promise<MeetingRecordingMetadata[]>;
-  startRecording: (actorUserId: string) => Promise<MeetingRecordingMetadata>;
+  startRecording: (actorUserId: string, options: MeetingRecordingOptions) => Promise<MeetingRecordingMetadata>;
+  activateRecording: (recordingId: string, actorUserId: string) => Promise<MeetingRecordingMetadata>;
+  respondRecordingConsent: (recordingId: string, actorUserId: string, accepted: boolean) => Promise<MeetingRecordingMetadata>;
+  heartbeatRecording: (recordingId: string, actorUserId: string) => Promise<void>;
+  getTranscript: (recordingId: string) => Promise<MeetingTranscript>;
   attachRecordingUpload: (recordingId: string, actorUserId: string, uploadId: string) => Promise<MeetingRecordingMetadata>;
   recordRecordingPart: (recordingId: string, actorUserId: string, part: RecordingUploadedPart) => Promise<void>;
   finalizeRecording: (recordingId: string, actorUserId: string) => Promise<MeetingRecordingMetadata>;
-  failRecording: (recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED") => Promise<MeetingRecordingMetadata>;
+  failRecording: (recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED" | "CONSENT_DECLINED" | "HOST_CANCELLED" | "INTERRUPTED") => Promise<MeetingRecordingMetadata>;
   stopRecording: (actorUserId: string) => Promise<MeetingRecordingMetadata>;
   listChatMessages: () => Promise<MeetingChatMessage[]>;
   appendChatMessage: (senderUserId: string, content: string) => Promise<MeetingChatMessage>;
@@ -355,6 +526,7 @@ export class InMemoryMeetingRepository implements MeetingRepository {
   private readonly meetings = new Map<string, Meeting>();
   private readonly meetingHistoryReferences = new Map<string, Set<string>>();
   private readonly recordingMetadata = new Map<string, MeetingRecordingMetadata[]>();
+  private readonly transcripts = new Map<string, MeetingTranscript>();
   private readonly chatMessages = new Map<string, MeetingChatMessage[]>();
   private readonly participantMediaConnections = new Map<string, MeetingMediaConnection>();
 
@@ -363,6 +535,8 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     this.indexMeetingParticipants(meeting);
     if (!this.recordingMetadata.has(meeting.id)) {
       this.recordingMetadata.set(meeting.id, [createInitialRecordingMetadata(meeting.id)]);
+    } else {
+      this.recordingMetadata.set(meeting.id, reconcileRecordingConsents(meeting, this.recordingMetadata.get(meeting.id)!));
     }
   }
 
@@ -384,18 +558,66 @@ export class InMemoryMeetingRepository implements MeetingRepository {
   }
 
   async getRecordingMetadata(meetingId: string): Promise<MeetingRecordingMetadata[]> {
-    return structuredClone(this.recordingMetadata.get(meetingId) ?? []);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const current = expireInterruptedRecordings(recordings);
+    if (current.some((recording, index) => recording !== recordings[index])) {
+      this.recordingMetadata.set(meetingId, current);
+    }
+    return structuredClone(current);
   }
 
-  async startRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+  async startRecording(meetingId: string, actorUserId: string, options: MeetingRecordingOptions): Promise<MeetingRecordingMetadata> {
     const meeting = this.meetings.get(meetingId);
     assertRecordingHost(meeting, actorUserId);
     if (meeting.status !== MeetingStatus.ACTIVE) throw new Error("Meeting is not active.");
     const recordings = this.recordingMetadata.get(meetingId) ?? [];
-    if (recordings.some((recording) => recording.status === MeetingRecordingStatus.RECORDING)) throw new Error("Recording is already active.");
-    const updated = createStartedRecording(meeting, actorUserId);
+    if (recordings.some((recording) => [MeetingRecordingStatus.CONSENT_PENDING, MeetingRecordingStatus.CONSENTED, MeetingRecordingStatus.RECORDING].includes(recording.status))) {
+      throw new Error("A recording is already active.");
+    }
+    const updated = createRecordingRequest(meeting, actorUserId, options);
     this.recordingMetadata.set(meetingId, [...recordings, updated]);
     return structuredClone(updated);
+  }
+
+  async activateRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+    const meeting = this.meetings.get(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.initiatedByUserId === actorUserId);
+    if (!recording) throw new Error("Recording request not found.");
+    const updated = activateRecordingMetadata(recording);
+    this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    this.transcripts.set(`${meetingId}:${recordingId}`, emptyMeetingTranscript(meetingId, recordingId));
+    return structuredClone(updated);
+  }
+
+  async respondRecordingConsent(meetingId: string, recordingId: string, actorUserId: string, accepted: boolean): Promise<MeetingRecordingMetadata> {
+    const meeting = this.meetings.get(meetingId);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const recording = recordings.find((entry) => entry.recordingId === recordingId);
+    if (!recording) throw new Error("Recording request not found.");
+    const updated = applyRecordingConsent(meeting, recording, actorUserId, accepted);
+    this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    return structuredClone(updated);
+  }
+
+  async heartbeatRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<void> {
+    const meeting = this.meetings.get(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const recording = recordings.find((entry) =>
+      entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING &&
+      entry.initiatedByUserId === actorUserId,
+    );
+    if (!recording) throw new Error("Active recording not found.");
+    const updated = { ...recording, lastHeartbeatAt: new Date().toISOString() };
+    this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+  }
+
+  async getTranscript(meetingId: string, recordingId: string): Promise<MeetingTranscript> {
+    const recording = (this.recordingMetadata.get(meetingId) ?? []).find((entry) => entry.recordingId === recordingId);
+    if (!recording) throw new Error("Recording not found.");
+    return structuredClone(this.transcripts.get(`${meetingId}:${recordingId}`) ?? emptyMeetingTranscript(meetingId, recordingId));
   }
 
   async attachRecordingUpload(meetingId: string, recordingId: string, actorUserId: string, uploadId: string): Promise<MeetingRecordingMetadata> {
@@ -437,12 +659,16 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     return structuredClone(updated);
   }
 
-  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata> {
+  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED" | "CONSENT_DECLINED" | "HOST_CANCELLED" | "INTERRUPTED"): Promise<MeetingRecordingMetadata> {
     const meeting = this.meetings.get(meetingId);
     assertRecordingHost(meeting, actorUserId);
     const recordings = this.recordingMetadata.get(meetingId) ?? [];
-    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
-    if (!recording) throw new Error("Active recording not found.");
+    const recording = recordings.find((entry) =>
+      entry.recordingId === recordingId &&
+      [MeetingRecordingStatus.RECORDING, MeetingRecordingStatus.CONSENT_PENDING, MeetingRecordingStatus.CONSENTED].includes(entry.status) &&
+      entry.initiatedByUserId === actorUserId,
+    );
+    if (!recording) throw new Error("Active recording request not found.");
     const updated: MeetingRecordingMetadata = { ...recording, status: MeetingRecordingStatus.FAILED, stoppedAt: new Date().toISOString(), failureCode };
     this.recordingMetadata.set(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
     return structuredClone(updated);
@@ -519,6 +745,9 @@ export class DurableMeetingRepository implements MeetingRepository {
       await this.storage.put(`meeting:${meeting.id}`, meeting);
       if (!(await this.storage.get(`recordings:${meeting.id}`))) {
         await this.storage.put(`recordings:${meeting.id}`, [createInitialRecordingMetadata(meeting.id)]);
+      } else {
+        const recordings = (await this.getRecordingMetadata(meeting.id));
+        await this.storage.put(`recordings:${meeting.id}`, reconcileRecordingConsents(meeting, recordings));
       }
       await Promise.all(meeting.participants.filter(hasJoinedMeetingHistory).map(async (participant) => {
         const key = `meeting-history:${participant.userId}`;
@@ -569,24 +798,80 @@ export class DurableMeetingRepository implements MeetingRepository {
       return this.namespace.get(this.namespace.idFromName(meetingId)).getRecordingMetadata();
     }
     if (this.storage) {
-      return ((await this.storage.get(`recordings:${meetingId}`)) as MeetingRecordingMetadata[] | undefined) ?? [];
+      const recordings = ((await this.storage.get(`recordings:${meetingId}`)) as MeetingRecordingMetadata[] | undefined) ?? [];
+      const current = expireInterruptedRecordings(recordings);
+      if (current.some((recording, index) => recording !== recordings[index])) {
+        await this.storage.put(`recordings:${meetingId}`, current);
+      }
+      return current;
     }
-    return structuredClone(this.recordingMetadata.get(meetingId) ?? []);
+    const recordings = this.recordingMetadata.get(meetingId) ?? [];
+    const current = expireInterruptedRecordings(recordings);
+    if (current.some((recording, index) => recording !== recordings[index])) this.recordingMetadata.set(meetingId, current);
+    return structuredClone(current);
   }
 
-  async startRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+  async startRecording(meetingId: string, actorUserId: string, options: MeetingRecordingOptions): Promise<MeetingRecordingMetadata> {
     if (this.namespace) {
-      return this.namespace.get(this.namespace.idFromName(meetingId)).startRecording(actorUserId);
+      return this.namespace.get(this.namespace.idFromName(meetingId)).startRecording(actorUserId, options);
     }
     const meeting = await this.getMeeting(meetingId);
     assertRecordingHost(meeting, actorUserId);
     if (meeting.status !== MeetingStatus.ACTIVE) throw new Error("Meeting is not active.");
     const recordings = await this.getRecordingMetadata(meetingId);
-    if (recordings.some((recording) => recording.status === MeetingRecordingStatus.RECORDING)) throw new Error("Recording is already active.");
-    const updated = createStartedRecording(meeting, actorUserId);
+    if (recordings.some((recording) => [MeetingRecordingStatus.CONSENT_PENDING, MeetingRecordingStatus.CONSENTED, MeetingRecordingStatus.RECORDING].includes(recording.status))) {
+      throw new Error("A recording is already active.");
+    }
+    const updated = createRecordingRequest(meeting, actorUserId, options);
     await this.storage?.put(`recordings:${meetingId}`, [...recordings, updated]);
     this.recordingMetadata.set(meetingId, [...recordings, updated]);
     return updated;
+  }
+
+  async activateRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).activateRecording(recordingId, actorUserId);
+    const meeting = await this.getMeeting(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = await this.getRecordingMetadata(meetingId);
+    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.initiatedByUserId === actorUserId);
+    if (!recording) throw new Error("Recording request not found.");
+    const updated = activateRecordingMetadata(recording);
+    await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    await this.storage?.put(`transcript:${recordingId}`, emptyMeetingTranscript(meetingId, recordingId));
+    return updated;
+  }
+
+  async respondRecordingConsent(meetingId: string, recordingId: string, actorUserId: string, accepted: boolean): Promise<MeetingRecordingMetadata> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).respondRecordingConsent(recordingId, actorUserId, accepted);
+    const meeting = await this.getMeeting(meetingId);
+    const recordings = await this.getRecordingMetadata(meetingId);
+    const recording = recordings.find((entry) => entry.recordingId === recordingId);
+    if (!recording) throw new Error("Recording request not found.");
+    const updated = applyRecordingConsent(meeting, recording, actorUserId, accepted);
+    await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+    return updated;
+  }
+
+  async heartbeatRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<void> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).heartbeatRecording(recordingId, actorUserId);
+    const meeting = await this.getMeeting(meetingId);
+    assertRecordingHost(meeting, actorUserId);
+    const recordings = await this.getRecordingMetadata(meetingId);
+    const recording = recordings.find((entry) =>
+      entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING &&
+      entry.initiatedByUserId === actorUserId,
+    );
+    if (!recording) throw new Error("Active recording not found.");
+    const updated = { ...recording, lastHeartbeatAt: new Date().toISOString() };
+    await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
+  }
+
+  async getTranscript(meetingId: string, recordingId: string): Promise<MeetingTranscript> {
+    if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).getTranscript(recordingId);
+    const recording = (await this.getRecordingMetadata(meetingId)).find((entry) => entry.recordingId === recordingId);
+    if (!recording) throw new Error("Recording not found.");
+    return ((await this.storage?.get(`transcript:${recordingId}`)) as MeetingTranscript | undefined)
+      ?? emptyMeetingTranscript(meetingId, recordingId);
   }
 
   async attachRecordingUpload(meetingId: string, recordingId: string, actorUserId: string, uploadId: string): Promise<MeetingRecordingMetadata> {
@@ -631,13 +916,17 @@ export class DurableMeetingRepository implements MeetingRepository {
     return updated;
   }
 
-  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata> {
+  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED" | "CONSENT_DECLINED" | "HOST_CANCELLED" | "INTERRUPTED"): Promise<MeetingRecordingMetadata> {
     if (this.namespace) return this.namespace.get(this.namespace.idFromName(meetingId)).failRecording(recordingId, actorUserId, failureCode);
     const meeting = await this.getMeeting(meetingId);
     assertRecordingHost(meeting, actorUserId);
     const recordings = await this.getRecordingMetadata(meetingId);
-    const recording = recordings.find((entry) => entry.recordingId === recordingId && entry.status === MeetingRecordingStatus.RECORDING && entry.initiatedByUserId === actorUserId);
-    if (!recording) throw new Error("Active recording not found.");
+    const recording = recordings.find((entry) =>
+      entry.recordingId === recordingId &&
+      [MeetingRecordingStatus.RECORDING, MeetingRecordingStatus.CONSENT_PENDING, MeetingRecordingStatus.CONSENTED].includes(entry.status) &&
+      entry.initiatedByUserId === actorUserId,
+    );
+    if (!recording) throw new Error("Active recording request not found.");
     const updated: MeetingRecordingMetadata = { ...recording, status: MeetingRecordingStatus.FAILED, stoppedAt: new Date().toISOString(), failureCode };
     await this.writeRecordingMetadata(meetingId, recordings.map((entry) => entry.recordingId === recordingId ? updated : entry));
     return updated;
@@ -1275,6 +1564,11 @@ export class MeetingService {
     return this.repository.getRecordingMetadata(meetingId);
   }
 
+  async getTranscript(meetingId: string, recordingId: string, userId: string): Promise<MeetingTranscript> {
+    await this.getRecordingMetadata(meetingId, userId);
+    return this.repository.getTranscript(meetingId, recordingId);
+  }
+
   async listMeetingHistory(userId: string): Promise<MeetingHistoryEntry[]> {
     const meetingIds = await this.repository.listMeetingHistoryReferences(userId);
     const entries = await Promise.all(meetingIds.map(async (meetingId) => {
@@ -1298,8 +1592,20 @@ export class MeetingService {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
-  async startRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
-    return this.repository.startRecording(meetingId, actorUserId);
+  async startRecording(meetingId: string, actorUserId: string, options: MeetingRecordingOptions): Promise<MeetingRecordingMetadata> {
+    return this.repository.startRecording(meetingId, actorUserId, options);
+  }
+
+  async activateRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
+    return this.repository.activateRecording(meetingId, recordingId, actorUserId);
+  }
+
+  async respondRecordingConsent(meetingId: string, recordingId: string, actorUserId: string, accepted: boolean): Promise<MeetingRecordingMetadata> {
+    return this.repository.respondRecordingConsent(meetingId, recordingId, actorUserId, accepted);
+  }
+
+  async heartbeatRecording(meetingId: string, recordingId: string, actorUserId: string): Promise<void> {
+    return this.repository.heartbeatRecording(meetingId, recordingId, actorUserId);
   }
 
   async stopRecording(meetingId: string, actorUserId: string): Promise<MeetingRecordingMetadata> {
@@ -1318,7 +1624,7 @@ export class MeetingService {
     return this.repository.finalizeRecording(meetingId, recordingId, actorUserId);
   }
 
-  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED"): Promise<MeetingRecordingMetadata> {
+  async failRecording(meetingId: string, recordingId: string, actorUserId: string, failureCode: "CAPTURE_FAILED" | "STORAGE_FAILED" | "UPLOAD_FAILED" | "CONSENT_DECLINED" | "HOST_CANCELLED" | "INTERRUPTED"): Promise<MeetingRecordingMetadata> {
     return this.repository.failRecording(meetingId, recordingId, actorUserId, failureCode);
   }
 

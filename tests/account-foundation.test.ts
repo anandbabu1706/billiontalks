@@ -7,6 +7,7 @@ import { D1PasswordResetRepository, PasswordResetService } from "../src/account/
 import { hashPassword, verifyPassword } from "../src/account/password";
 import { AccountIdentityConflictError, D1AccountRepository, type AccountRepository, type D1AccountDatabase, type D1AccountStatement } from "../src/account/repository";
 import { AccountService } from "../src/account/service";
+import { InMemoryMeetingRepository, MeetingService, NullMediaProvider } from "../src/meeting";
 import {
   AccountValidationError,
   normalizeCountryCode,
@@ -440,6 +441,35 @@ async function authenticatedProfileFixture() {
   const login = await accountFetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
   return { fixture, account, cookie: accountCookie(login) };
 }
+
+describe("account-authorized recording listing", () => {
+  it("lists safe recording metadata only for the authenticated account", async () => {
+    const fixture = createAccountDatabaseFixture();
+    const account = seedVerifiedAccount(fixture);
+    const login = await accountFetch(loginRequest(account.email, "a long passphrase"), { ACCOUNT_DB: fixture.database });
+    const cookie = accountCookie(login);
+    const repository = new InMemoryMeetingRepository();
+    const meetings = new MeetingService(repository, new NullMediaProvider());
+    const meeting = await meetings.createMeeting({ title: "Account recording", hostUserId: account.id });
+    const recording = await meetings.startRecording(meeting.id, account.id, { includeAudio: true, includeVideo: false });
+    const environment = { ACCOUNT_DB: fixture.database, MEETING_STORE: repository };
+
+    const anonymous = await accountFetch(new Request("https://localhost/api/recordings"), environment);
+    const listed = await accountFetch(new Request("https://localhost/api/recordings", { headers: { Cookie: cookie } }), environment);
+    const payload = await listed.json();
+
+    expect(anonymous.status).toBe(401);
+    expect(listed.status).toBe(200);
+    expect(payload.data).toContainEqual(expect.objectContaining({
+      meetingId: meeting.id,
+      meetingTitle: "Account recording",
+      recordingId: recording.recordingId,
+      status: "CONSENTED",
+      options: { includeAudio: true, includeVideo: false },
+    }));
+    expect(JSON.stringify(payload)).not.toMatch(/storageRef|storageUpload|objectKey|uploadId/);
+  });
+});
 
 function logoutRequest(cookie?: string): Request {
   return new Request("https://localhost/api/accounts/logout", {

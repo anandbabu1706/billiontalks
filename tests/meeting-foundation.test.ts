@@ -178,6 +178,16 @@ function createChatApiFixture(namespace = createDurableObjectNamespace()) {
   };
 }
 
+async function startHostRecording(
+  api: ReturnType<typeof createChatApiFixture>,
+  host: { cookie: string },
+  meeting: { id: string },
+  options = { includeAudio: true, includeVideo: true },
+): Promise<Response> {
+  const path = `/api/meetings/${meeting.id}/recording/start`;
+  return api.request(path, "POST", host.cookie, { options });
+}
+
 async function createJoinedChatRoom(namespace = createDurableObjectNamespace()) {
   const api = createChatApiFixture(namespace);
   const host = await api.createSession();
@@ -539,7 +549,7 @@ describe("MeetingService lifecycle", () => {
     const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
     const host = await api.createSession();
     const meeting = await api.createOpenMeeting(host.cookie, "Recording room");
-    const response = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const response = await startHostRecording(api, host, meeting);
     const payload = await response.json();
     const stored = backingStorage.get(meeting.id)?.get("recordings") as Array<{ storageRef: { objectKey: string } }>;
 
@@ -566,6 +576,145 @@ describe("MeetingService lifecycle", () => {
     expect(participantStop.status).toBe(403);
   });
 
+  it("rejects cross-origin recording mutations", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Cross-origin recording");
+    const response = await api.rawRequest(
+      `/api/meetings/${meeting.id}/recording/start`,
+      "POST",
+      host.cookie,
+      JSON.stringify({ options: { includeAudio: true, includeVideo: true } }),
+      "application/json",
+      { Origin: "https://attacker.example", "Sec-Fetch-Site": "cross-site" },
+    );
+    const status = await api.request(`/api/meetings/${meeting.id}/recording`, "GET", host.cookie);
+
+    expect(response.status).toBe(403);
+    expect((await status.json()).data).toHaveLength(1);
+  });
+
+  it("requires participant consent and applies the selected recording options before capture", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const request = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie, {
+      options: { includeAudio: false, includeVideo: true },
+    });
+    const requested = await request.json();
+    const unrelated = await api.createSession();
+    const denied = await api.request(`/api/meetings/${meeting.id}/recording`, "GET", unrelated.cookie);
+    const consent = await api.request(
+      `/api/meetings/${meeting.id}/recording/${requested.data.recordingId}/consent`,
+      "POST",
+      participant.cookie,
+      { accepted: true },
+    );
+    const consented = await consent.json();
+    const activated = await api.request(
+      `/api/meetings/${meeting.id}/recording/start`,
+      "POST",
+      host.cookie,
+      { recordingId: requested.data.recordingId },
+    );
+    const active = await activated.json();
+
+    expect(request.status).toBe(200);
+    expect(requested.data).toMatchObject({
+      status: "CONSENT_PENDING",
+      options: { includeAudio: false, includeVideo: true },
+    });
+    expect(denied.status).toBe(403);
+    expect(consent.status).toBe(200);
+    expect(consented.data.status).toBe("CONSENTED");
+    expect(activated.status).toBe(200);
+    expect(active.data).toMatchObject({
+      recordingId: requested.data.recordingId,
+      status: "RECORDING",
+      options: { includeAudio: false, includeVideo: true },
+    });
+    expect(active.data).not.toHaveProperty("storageRef");
+    expect(consented.data.consents.find((entry: { userId: string }) => entry.userId === participant.userId).status).toBe("ACCEPTED");
+  });
+
+  it("records a participant decline as a failed, non-completed recording", async () => {
+    const { api, host, participant, meeting } = await createJoinedChatRoom();
+    const request = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const requested = await request.json();
+    const declined = await api.request(
+      `/api/meetings/${meeting.id}/recording/${requested.data.recordingId}/consent`,
+      "POST",
+      participant.cookie,
+      { accepted: false },
+    );
+    const declinedPayload = await declined.json();
+    const attemptStart = await api.request(
+      `/api/meetings/${meeting.id}/recording/start`,
+      "POST",
+      host.cookie,
+      { recordingId: requested.data.recordingId },
+    );
+
+    expect(declined.status).toBe(200);
+    expect(declinedPayload.data).toMatchObject({ status: "FAILED", failureCode: "CONSENT_DECLINED" });
+    expect(attemptStart.status).toBe(409);
+    expect(api.recordingObjects.size).toBe(0);
+  });
+
+  it("requires newly joined participants to consent before their media can be captured", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Recording join consent");
+    const started = await startHostRecording(api, host, meeting);
+    const recording = (await started.json()).data;
+    const participant = await api.createSession();
+    const joined = await api.request(`/api/meetings/${meeting.id}/join`, "POST", participant.cookie, {
+      displayName: "New guest",
+    });
+    expect(joined.status).toBe(200);
+
+    const promptedStatus = await api.request(`/api/meetings/${meeting.id}/recording`, "GET", participant.cookie);
+    const prompted = (await promptedStatus.json()).data.find((entry: { recordingId?: string }) => entry.recordingId === recording.recordingId);
+    expect(prompted.consents.find((entry: { userId: string }) => entry.userId === participant.userId).status).toBe("PENDING");
+
+    const consent = await api.request(
+      `/api/meetings/${meeting.id}/recording/${recording.recordingId}/consent`,
+      "POST",
+      participant.cookie,
+      { accepted: true },
+    );
+    expect((await consent.json()).data.status).toBe("RECORDING");
+  });
+
+  it("returns an authorized empty transcript foundation without fabricating content", async () => {
+    const api = createChatApiFixture();
+    const host = await api.createSession();
+    const guest = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Transcript foundation");
+    const recording = await startHostRecording(api, host, meeting);
+    const recordingPayload = await recording.json();
+    const transcriptResponse = await api.request(
+      `/api/meetings/${meeting.id}/recording/${recordingPayload.data.recordingId}/transcript`,
+      "GET",
+      host.cookie,
+    );
+    const transcript = await transcriptResponse.json();
+    const unauthorized = await api.request(
+      `/api/meetings/${meeting.id}/recording/${recordingPayload.data.recordingId}/transcript`,
+      "GET",
+      guest.cookie,
+    );
+    const accountList = await api.request("/api/recordings", "GET", guest.cookie);
+
+    expect(transcriptResponse.status).toBe(200);
+    expect(transcript.data).toEqual({
+      meetingId: meeting.id,
+      recordingId: recordingPayload.data.recordingId,
+      status: "UNAVAILABLE",
+      records: [],
+    });
+    expect(unauthorized.status).toBe(403);
+    expect(accountList.status).toBe(401);
+  });
+
   it("rejects a duplicate recording start while one is active", async () => {
     const { api, host, meeting } = await createJoinedChatRoom();
     const first = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
@@ -584,7 +733,7 @@ describe("MeetingService lifecycle", () => {
     const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
     const host = await api.createSession();
     const meeting = await api.createOpenMeeting(host.cookie, "Recording stop room");
-    const started = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const started = await startHostRecording(api, host, meeting);
     const startedPayload = await started.json();
     const partResponse = await api.uploadRecordingPart(meeting.id, startedPayload.data.recordingId, host.cookie, new Uint8Array([1, 2, 3, 4]));
     expect(partResponse.status).toBe(200);
@@ -611,7 +760,7 @@ describe("MeetingService lifecycle", () => {
     const api = createChatApiFixture();
     const host = await api.createSession();
     const meeting = await api.createOpenMeeting(host.cookie, "Capture failure room");
-    const started = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const started = await startHostRecording(api, host, meeting);
     const recording = (await started.json()).data;
     const failed = await api.request(`/api/meetings/${meeting.id}/recording/${recording.recordingId}/fail`, "POST", host.cookie, { failureCode: "CAPTURE_FAILED" });
     const failedPayload = await failed.json();
@@ -634,7 +783,7 @@ describe("MeetingService lifecycle", () => {
     const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
     const host = await api.createSession();
     const meeting = await api.createOpenMeeting(host.cookie, "Restart recording room");
-    const started = await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    const started = await startHostRecording(api, host, meeting);
     const startedPayload = await started.json();
 
     const restartedApi = createChatApiFixture(createDurableObjectNamespace(backingStorage));
@@ -647,12 +796,42 @@ describe("MeetingService lifecycle", () => {
     expect(JSON.stringify(statusPayload)).not.toMatch(/https?:\/\/|objectKey|storageRef/);
   });
 
+  it("marks stale host captures as interrupted instead of implying completion", async () => {
+    const backingStorage = new Map<string, Map<string, unknown>>();
+    const api = createChatApiFixture(createDurableObjectNamespace(backingStorage));
+    const host = await api.createSession();
+    const meeting = await api.createOpenMeeting(host.cookie, "Interrupted recording room");
+    const started = await startHostRecording(api, host, meeting);
+    const recording = (await started.json()).data;
+    const heartbeat = await api.request(
+      `/api/meetings/${meeting.id}/recording/${recording.recordingId}/heartbeat`,
+      "POST",
+      host.cookie,
+    );
+    expect(heartbeat.status).toBe(200);
+    const stored = backingStorage.get(meeting.id)?.get("recordings") as Array<Record<string, unknown>>;
+    stored[1] = { ...stored[1], lastHeartbeatAt: new Date(Date.now() - 180_000).toISOString() };
+    backingStorage.get(meeting.id)!.set("recordings", stored);
+
+    const statusResponse = await api.request(`/api/meetings/${meeting.id}/recording`, "GET", host.cookie);
+    const statusPayload = await statusResponse.json();
+
+    expect(statusResponse.status).toBe(200);
+    expect(statusPayload.data[1]).toMatchObject({
+      recordingId: recording.recordingId,
+      status: "FAILED",
+      failureCode: "INTERRUPTED",
+    });
+    expect(statusPayload.data[1].status).not.toBe("STOPPED");
+    expect(api.recordingObjects.size).toBe(0);
+  });
+
   it("keeps recording metadata isolated between meetings", async () => {
     const api = createChatApiFixture();
     const host = await api.createSession();
     const firstMeeting = await api.createOpenMeeting(host.cookie, "First recording room");
     const secondMeeting = await api.createOpenMeeting(host.cookie, "Second recording room");
-    await api.request(`/api/meetings/${firstMeeting.id}/recording/start`, "POST", host.cookie);
+    await startHostRecording(api, host, firstMeeting);
 
     const firstStatus = await api.request(`/api/meetings/${firstMeeting.id}/recording`, "GET", host.cookie);
     const secondStatus = await api.request(`/api/meetings/${secondMeeting.id}/recording`, "GET", host.cookie);
@@ -740,7 +919,7 @@ describe("MeetingService lifecycle", () => {
     const api = createChatApiFixture();
     const host = await api.createSession();
     const meeting = await api.createOpenMeeting(host.cookie, "Recording history room");
-    await api.request(`/api/meetings/${meeting.id}/recording/start`, "POST", host.cookie);
+    await startHostRecording(api, host, meeting);
 
     const response = await api.request("/api/meetings/history", "GET", host.cookie);
     const payload = await response.json();

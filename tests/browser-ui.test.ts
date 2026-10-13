@@ -406,6 +406,8 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
           status: "RECORDING",
           startedAt: new Date().toISOString(),
           initiatedByUserId: "host-123",
+          options: { includeAudio: true, includeVideo: true },
+          consents: [{ userId: "host-123", displayName: "Alex", status: "ACCEPTED" }],
         },
       });
     }
@@ -735,6 +737,7 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
     expect((document.getElementById("recordingControls") as HTMLElement).style.display).toBe("flex");
     expect(document.getElementById("recordingStatus")?.textContent).toContain("Not started");
+    expect(document.getElementById("transcriptStatus")?.textContent).toContain("Transcription unavailable");
 
     // Muted capture remains connected to the recording mixer and contributes silence.
     (document.getElementById("micControlBtn") as HTMLButtonElement).click();
@@ -742,7 +745,7 @@ describe("BillionTalks browser UI regression tests", () => {
     document.getElementById("startRecordingBtn")?.click();
     await flush();
     expect(fetchMock).toHaveBeenCalledWith("/api/meetings/btm_test_123/recording/start", expect.objectContaining({ method: "POST" }));
-    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording meeting media");
+    expect(document.getElementById("recordingStatus")?.textContent).toContain("Recording video and audio");
 
     document.getElementById("stopRecordingBtn")?.click();
     await flush();
