@@ -6566,6 +6566,11 @@ const routeHandler = {
       );
     }
 
+    if (request.method === "GET" && url.pathname === "/" && !url.searchParams.has("meeting")) {
+      const account = await resolveAccountSession(request, env.ACCOUNT_DB);
+      return Response.redirect(new URL(account ? "/dashboard" : "/account", url), 302);
+    }
+
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
       const { session } = await getOrCreateSession(request, env);
       return withSessionCookie(
