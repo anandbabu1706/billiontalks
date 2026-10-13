@@ -24,12 +24,18 @@ afterEach(() => {
   openDoms.splice(0).forEach((dom) => dom.window.close());
 });
 
-async function openScheduler(preferredTimezone: string | null = "Asia/Kolkata") {
+async function openScheduler(preferredTimezone = "Asia/Kolkata", timezoneExplicit = true) {
   let submitted: Record<string, unknown> | null = null;
   const dom = new JSDOM(schedulerPreviewPage(), {
     runScripts: "dangerously",
     url: "https://meet.example/schedule",
     beforeParse(window) {
+      const nativeResolvedOptions = window.Intl.DateTimeFormat.prototype.resolvedOptions;
+      Object.defineProperty(window.Intl.DateTimeFormat.prototype, "resolvedOptions", {
+        value: function (this: Intl.DateTimeFormat) {
+          return { ...nativeResolvedOptions.call(this), timeZone: "America/Los_Angeles" };
+        },
+      });
       Object.defineProperty(window, "fetch", {
         value: async (input: RequestInfo | URL, init?: RequestInit) => {
           const path = String(input);
@@ -38,9 +44,12 @@ async function openScheduler(preferredTimezone: string | null = "Asia/Kolkata") 
             data = { account: { fullName: "Scheduler Owner", email: "owner@example.test" } };
           } else if (path === "/api/preferences") {
             data = {
-              preferences: preferredTimezone
-                ? { timeZone: preferredTimezone, defaultDurationMinutes: 60, defaultGuestAccess: "HOST_APPROVAL" }
-                : null,
+              preferences: {
+                timeZone: preferredTimezone,
+                timeZoneExplicit: timezoneExplicit,
+                defaultDurationMinutes: 60,
+                defaultGuestAccess: "HOST_APPROVAL",
+              },
             };
           } else if (path === "/api/schedules") {
             data = [existingMeeting];
@@ -66,10 +75,14 @@ async function openScheduler(preferredTimezone: string | null = "Asia/Kolkata") 
 }
 
 describe("BT-V1-003 scheduler time-zone selector", () => {
-  it("detects the device time zone for new meetings when no saved preference is available", async () => {
-    const { dom } = await openScheduler(null);
-    const detectedTimezone = dom.window.Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    expect((dom.window.document.getElementById("timezone") as HTMLSelectElement).value).toBe(detectedTimezone);
+  it("uses the detected device zone for new meetings when the stored time zone is only the default", async () => {
+    const { dom } = await openScheduler("UTC", false);
+    expect((dom.window.document.getElementById("timezone") as HTMLSelectElement).value).toBe("America/Los_Angeles");
+  });
+
+  it("preserves an explicitly selected UTC preference", async () => {
+    const { dom } = await openScheduler("UTC", true);
+    expect((dom.window.document.getElementById("timezone") as HTMLSelectElement).value).toBe("UTC");
   });
 
   it("shows readable India and UTC labels and searches by country and IANA identifier", async () => {

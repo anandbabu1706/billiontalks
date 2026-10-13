@@ -613,8 +613,12 @@ export function schedulerPreviewPage(): string {
         duration.value = String(state.preferences.defaultDurationMinutes);
         const guestAccess = form.querySelector('input[name="guestAccess"][value="' + state.preferences.defaultGuestAccess + '"]');
         if (guestAccess) guestAccess.checked = true;
-        ensureTimeZone(state.preferences.timeZone);
-        timezoneField.value = state.preferences.timeZone;
+        if (state.preferences.timeZoneExplicit) {
+          ensureTimeZone(state.preferences.timeZone);
+          timezoneField.value = state.preferences.timeZone;
+        } else {
+          timezoneField.value = deviceTimezone;
+        }
         renderTimeZones();
       }
       function selectedAccess() { return form.querySelector('input[name="guestAccess"]:checked').value; }

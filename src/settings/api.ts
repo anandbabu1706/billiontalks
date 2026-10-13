@@ -2,6 +2,7 @@ import type { D1AccountDatabase, D1AccountStatement } from "../account/repositor
 
 export type AccountPreferences = {
   timeZone: string;
+  timeZoneExplicit: boolean;
   defaultDurationMinutes: number;
   defaultGuestAccess: "OPEN" | "HOST_APPROVAL" | "LOCKED";
   notifyMeetingEvents: boolean;
@@ -20,6 +21,7 @@ export type AccountNotification = {
 
 type PreferenceRow = {
   time_zone: string;
+  time_zone_explicit: number;
   default_duration_minutes: number;
   default_guest_access: AccountPreferences["defaultGuestAccess"];
   notify_meeting_events: number;
@@ -48,6 +50,7 @@ function all<T>(statement: D1AccountStatement): Promise<{ results: T[] }> {
 function mapPreferences(row: PreferenceRow): AccountPreferences {
   return {
     timeZone: row.time_zone,
+    timeZoneExplicit: row.time_zone_explicit === 1,
     defaultDurationMinutes: row.default_duration_minutes,
     defaultGuestAccess: row.default_guest_access,
     notifyMeetingEvents: row.notify_meeting_events === 1,
@@ -70,6 +73,7 @@ function mapNotification(row: NotificationRow): AccountNotification {
 function defaultPreferences(): AccountPreferences {
   return {
     timeZone: "UTC",
+    timeZoneExplicit: false,
     defaultDurationMinutes: 60,
     defaultGuestAccess: "HOST_APPROVAL",
     notifyMeetingEvents: true,
@@ -142,7 +146,7 @@ export async function handlePreferencesRequest(
     if (request.method === "GET") {
       const [preferences, entitlement] = await Promise.all([
         database.prepare(
-          `SELECT time_zone, default_duration_minutes, default_guest_access,
+          `SELECT time_zone, time_zone_explicit, default_duration_minutes, default_guest_access,
             notify_meeting_events, notify_invitation_events
            FROM account_preferences WHERE account_id = ?`,
         ).bind(accountId).first<PreferenceRow>(),
@@ -175,7 +179,7 @@ export async function handlePreferencesRequest(
       return json({ ok: false, error: "Valid account, meeting, and notification preferences are required." }, 400);
     }
     await database.prepare(
-      `UPDATE account_preferences SET time_zone = ?, default_duration_minutes = ?, default_guest_access = ?,
+      `UPDATE account_preferences SET time_zone = ?, time_zone_explicit = 1, default_duration_minutes = ?, default_guest_access = ?,
         notify_meeting_events = ?, notify_invitation_events = ?, updated_at = ? WHERE account_id = ?`,
     ).bind(
       body.timeZone,
@@ -190,6 +194,7 @@ export async function handlePreferencesRequest(
       ok: true,
       data: {
         timeZone: body.timeZone,
+        timeZoneExplicit: true,
         defaultDurationMinutes: body.defaultDurationMinutes,
         defaultGuestAccess: body.defaultGuestAccess,
         notifyMeetingEvents: body.notifyMeetingEvents,

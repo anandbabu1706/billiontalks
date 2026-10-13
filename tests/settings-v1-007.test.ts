@@ -14,6 +14,7 @@ import app from "../src/index";
 
 type PreferenceRow = {
   time_zone: string;
+  time_zone_explicit: number;
   default_duration_minutes: number;
   default_guest_access: "OPEN" | "HOST_APPROVAL" | "LOCKED";
   notify_meeting_events: number;
@@ -69,6 +70,7 @@ function settingsDatabase() {
             if (accounts.has(accountId) && !preferences.has(accountId)) {
               preferences.set(accountId, {
                 time_zone: "UTC",
+                time_zone_explicit: 0,
                 default_duration_minutes: 60,
                 default_guest_access: "HOST_APPROVAL",
                 notify_meeting_events: 1,
@@ -84,6 +86,7 @@ function settingsDatabase() {
             const [timeZone, duration, access, meetingEvents, invitationEvents, , accountId] = values as [string, number, PreferenceRow["default_guest_access"], number, number, string, string];
             preferences.set(accountId, {
               time_zone: timeZone,
+              time_zone_explicit: 1,
               default_duration_minutes: duration,
               default_guest_access: access,
               notify_meeting_events: meetingEvents,
@@ -135,7 +138,7 @@ describe("BT-V1-007 settings, notifications, and entitlement foundation", () => 
     expect(initial.status).toBe(200);
     expect(await initial.json()).toMatchObject({
       data: {
-        preferences: { timeZone: "UTC", defaultDurationMinutes: 60, defaultGuestAccess: "HOST_APPROVAL" },
+        preferences: { timeZone: "UTC", timeZoneExplicit: false, defaultDurationMinutes: 60, defaultGuestAccess: "HOST_APPROVAL" },
         entitlement: { planCode: "BASELINE", status: "ACTIVE" },
       },
     });
@@ -148,8 +151,10 @@ describe("BT-V1-007 settings, notifications, and entitlement foundation", () => 
       notifyInvitationEvents: true,
     }), "account-1", database);
     expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ data: { timeZone: "Asia/Kolkata", timeZoneExplicit: true } });
     expect(preferences.get("account-1")).toMatchObject({
       time_zone: "Asia/Kolkata",
+      time_zone_explicit: 1,
       default_duration_minutes: 90,
       default_guest_access: "OPEN",
       notify_meeting_events: 0,
