@@ -714,8 +714,23 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("chatMessages")?.getAttribute("role")).toBe("log");
     document.getElementById("participantsBtn")?.click();
     expect(document.activeElement?.id).toBe("participantsHeading");
-    expect(document.querySelector("style")?.textContent).toContain("button:focus-visible");
-    expect(document.querySelector("style")?.textContent).toContain("min-height: 320px");
+    const meetingStyles = document.querySelector("style")?.textContent ?? "";
+    expect(meetingStyles).toContain("button:focus-visible");
+    expect(meetingStyles).toContain("linear-gradient(150deg, #1a3159, #122443 72%)");
+    expect(meetingStyles).toContain("min-height: min(72svh, 600px)");
+    expect(document.getElementById("mediaStatus")?.getAttribute("aria-label")).toContain("Realtime media connection status");
+  });
+
+  it("labels the local camera-off state separately from Realtime connection status", async () => {
+    const { document } = await enterHostRoom();
+    document.getElementById("toggleCameraBtn")?.click();
+    await flush();
+
+    const selfTile = document.querySelector(".tile.self");
+    expect(selfTile?.classList.contains("camera-off")).toBe(true);
+    expect(selfTile?.querySelector(".placeholder")?.textContent).toBe("Camera off");
+    expect(document.getElementById("mediaStatus")?.textContent).not.toBe("Camera off");
+    expect(document.getElementById("mediaStatus")?.getAttribute("aria-label")).toContain(document.getElementById("mediaStatus")?.textContent ?? "");
   });
 
   it("opens a meeting invite URL into the existing prejoin flow", async () => {

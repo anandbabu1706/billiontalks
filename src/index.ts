@@ -1134,6 +1134,7 @@ function meetingUiTemplate(): string {
         grid-template-columns: minmax(0, 1fr) 320px;
         min-height: 780px;
         overflow: hidden;
+        background: linear-gradient(145deg, rgba(21, 40, 74, 0.97), rgba(13, 27, 53, 0.97));
       }
       .stage-panel {
         padding: 16px 16px 12px;
@@ -1142,20 +1143,25 @@ function meetingUiTemplate(): string {
         gap: 12px;
       }
       .video-stage {
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.7), rgba(30, 41, 59, 0.9));
-        border: 1px solid var(--border);
+        background:
+          radial-gradient(ellipse at 50% 18%, rgba(65, 102, 170, 0.25), transparent 58%),
+          linear-gradient(150deg, #1a3159, #122443 72%);
+        border: 1px solid rgba(134, 169, 225, 0.32);
         border-radius: 18px;
         min-height: 500px;
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+        align-content: start;
         gap: 12px;
         padding: 12px;
       }
       .tile {
         position: relative;
         border-radius: 18px;
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(51, 65, 85, 0.95));
-        border: 1px solid var(--border);
+        background:
+          radial-gradient(circle at 50% 38%, rgba(94, 131, 205, 0.2), transparent 50%),
+          linear-gradient(145deg, #263f68, #1a2e50 76%);
+        border: 1px solid rgba(146, 177, 229, 0.3);
         min-height: 180px;
         display: flex;
         align-items: center;
@@ -1164,9 +1170,17 @@ function meetingUiTemplate(): string {
         color: var(--text);
       }
       .tile .placeholder {
+        max-width: calc(100% - 32px);
+        padding: 13px 20px;
+        border: 1px solid rgba(173, 198, 240, 0.22);
+        border-radius: 999px;
+        background: rgba(19, 39, 72, 0.72);
+        box-shadow: 0 8px 24px rgba(4, 12, 30, 0.16);
         font-weight: 700;
         letter-spacing: 0.04em;
-        opacity: 0.8;
+        line-height: 1.35;
+        text-align: center;
+        overflow-wrap: anywhere;
       }
       .tile .meta {
         position: absolute;
@@ -1175,14 +1189,20 @@ function meetingUiTemplate(): string {
         display: flex;
         align-items: center;
         gap: 8px;
-        background: rgba(15, 23, 42, 0.65);
+        background: rgba(12, 27, 53, 0.9);
+        border: 1px solid rgba(164, 190, 233, 0.2);
         border-radius: 999px;
         padding: 5px 8px;
         font-size: 12px;
       }
       .tile.self {
-        background: linear-gradient(135deg, rgba(79, 117, 255, 0.38), rgba(51, 65, 85, 0.96));
+        background:
+          radial-gradient(circle at 48% 32%, rgba(123, 160, 239, 0.32), transparent 54%),
+          linear-gradient(145deg, #29477c, #1a3158 78%);
       }
+      .tile.self .meta .dot { background: var(--primary); }
+      .tile.self.camera-unavailable .placeholder { border-color: rgba(251, 191, 36, 0.38); }
+      .tile.self.camera-off .placeholder { color: #dce8ff; }
       .presentation-canvas {
         display: none;
         position: relative;
@@ -1193,7 +1213,7 @@ function meetingUiTemplate(): string {
         justify-content: center;
         border: 1px solid var(--border);
         border-radius: 14px;
-        background: #05080e;
+        background: radial-gradient(ellipse at center, #1a3158 0%, #10213f 72%);
       }
       .presentation-canvas video {
         display: block;
@@ -1211,7 +1231,7 @@ function meetingUiTemplate(): string {
         padding: 8px 11px;
         border: 1px solid rgba(255, 255, 255, 0.24);
         border-radius: 10px;
-        background: rgba(15, 23, 42, 0.86);
+        background: rgba(16, 34, 65, 0.94);
         color: white;
         cursor: pointer;
       }
@@ -1258,8 +1278,8 @@ function meetingUiTemplate(): string {
         min-height: 0;
         margin: 0;
         border-radius: 14px;
-        background: #05080e;
-        box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.88);
+        background: #10213f;
+        box-shadow: 0 0 0 100vmax rgba(4, 12, 29, 0.9);
       }
       .video-stage.presentation-focused .presentation-canvas,
       .video-stage:fullscreen .presentation-canvas {
@@ -1267,7 +1287,7 @@ function meetingUiTemplate(): string {
       }
       .side-panel {
         border-left: 1px solid var(--border);
-        background: rgba(10, 16, 28, 0.75);
+        background: linear-gradient(180deg, rgba(23, 43, 77, 0.94), rgba(15, 31, 59, 0.97));
         padding: 16px;
       }
       .chat-panel {
@@ -1515,8 +1535,36 @@ function meetingUiTemplate(): string {
         font-family: "SFMono-Regular", ui-monospace, monospace;
       }
       .media-status {
-        color: var(--muted);
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 9px;
+        border: 1px solid rgba(151, 180, 230, 0.25);
+        border-radius: 999px;
+        background: rgba(18, 39, 73, 0.84);
+        color: #d1def5;
         font-size: 12px;
+      }
+      #mediaStatus::before {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        border-radius: 50%;
+        background: #fbbf24;
+        content: "";
+      }
+      #mediaStatus[data-connection-state="connected"] {
+        border-color: rgba(61, 220, 151, 0.38);
+        color: #d8ffed;
+      }
+      #mediaStatus[data-connection-state="connected"]::before { background: var(--success); }
+      #mediaStatus[data-connection-state="attention"] {
+        border-color: rgba(251, 191, 36, 0.38);
+        color: #ffe8ad;
+      }
+      #mediaStatus[data-connection-state="connecting"]::before {
+        background: #8fb2ff;
+        box-shadow: 0 0 0 3px rgba(143, 178, 255, 0.14);
       }
       .media-status.error {
         color: #fbbf24;
@@ -1766,14 +1814,26 @@ function meetingUiTemplate(): string {
           border-left: none;
           border-top: 1px solid var(--border);
         }
-        .video-stage {
-          grid-template-columns: 1fr;
+        .video-stage:not(.presentation-active) {
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+          min-height: min(62svh, 560px);
         }
         .video-stage.presentation-active {
           grid-template-columns: minmax(0, 1fr) 128px;
         }
       }
       @media (max-width: 720px) {
+        .meeting-shell { min-height: 0; }
+        .stage-panel { padding: 12px; }
+        .side-panel { padding: 14px; }
+        .meeting-header { align-items: flex-start; flex-direction: column; }
+        .meeting-header > div:last-child { width: 100%; min-width: 0; }
+        .meeting-id { max-width: 100%; overflow-wrap: anywhere; }
+        .video-stage:not(.presentation-active) {
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+          min-height: min(72svh, 600px);
+        }
+        .video-stage:not(.presentation-active) .tile { min-height: clamp(140px, 38vw, 200px); }
         .video-stage.presentation-active {
           grid-template-columns: minmax(0, 1fr);
           grid-template-rows: minmax(220px, 1fr) auto;
@@ -1822,15 +1882,6 @@ function meetingUiTemplate(): string {
       }
       @media (max-width: 720px) {
         .app-shell { padding: 16px; }
-        .meeting-shell { min-height: 0; }
-        .meeting-header { align-items: flex-start; flex-direction: column; }
-        .meeting-header > div:last-child { width: 100%; min-width: 0; }
-        .meeting-id { max-width: 100%; overflow-wrap: anywhere; }
-        .video-stage:not(.presentation-active) {
-          grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
-          min-height: 320px;
-        }
-        .video-stage:not(.presentation-active) .tile { min-height: clamp(120px, 32vw, 180px); }
         .registration-shell { display: block; margin-top: 12px; border-radius: 18px; }
         .registration-aside { min-height: auto; padding: 26px 22px; }
         .registration-aside h1 { margin: 42px 0 12px; font-size: 34px; }
@@ -2065,7 +2116,7 @@ function meetingUiTemplate(): string {
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span class="meeting-id" id="meetingIdBadge">Loading...</span>
                 <span class="meeting-id" id="meetingDurationTimer" role="timer" aria-label="Meeting duration" style="font-variant-numeric: tabular-nums;">00:00:00</span>
-                <span id="mediaStatus" class="media-status" aria-live="polite">Media not connected</span>
+                <span id="mediaStatus" class="media-status" data-connection-state="attention" aria-label="Realtime media connection status" aria-live="polite">Media not connected</span>
                 <button id="enableRemotePlaybackBtn" type="button" class="ghost" style="display:none;">Enable playback</button>
                 <button type="button" class="ghost" id="copyMeetingIdBtn">Copy meeting link</button>
               </div>
@@ -2889,9 +2940,18 @@ function meetingUiTemplate(): string {
         }
         state.mediaStatus = shown;
         const status = document.getElementById('mediaStatus');
-        if (status) status.textContent = remotePlaybackBlocked
-          ? 'Remote media playback may require user interaction. Select Enable playback.'
-          : shown;
+        if (status) {
+          const message = remotePlaybackBlocked
+            ? 'Remote media playback may require user interaction. Select Enable playback.'
+            : shown;
+          status.textContent = message;
+          status.setAttribute('aria-label', 'Realtime media connection status: ' + message);
+          status.dataset.connectionState = message === 'Media connected'
+            ? 'connected'
+            : /could not connect|failed|not connected|unavailable|unable/i.test(message)
+              ? 'attention'
+              : 'connecting';
+        }
       }
 
       function activePeerConnection(direction) {
@@ -4894,6 +4954,13 @@ function meetingUiTemplate(): string {
           existingPreview.remove();
         }
 
+        const cameraUnavailable = !state.localDevice.cameraAvailable;
+        const cameraOff = state.localDevice.cameraAvailable && !state.localDevice.cameraEnabled;
+        const cameraStarting = state.localDevice.cameraEnabled && !localMediaState.cameraStream && localMediaState.cameraRequestInFlight;
+        selfTile.classList.toggle('camera-unavailable', cameraUnavailable);
+        selfTile.classList.toggle('camera-off', cameraOff);
+        selfTile.classList.toggle('camera-starting', cameraStarting);
+
         const placeholder = selfTile.querySelector('.placeholder');
         if (placeholder) {
           placeholder.style.display = 'block';
@@ -4902,7 +4969,13 @@ function meetingUiTemplate(): string {
 
         if (!state.localDevice.cameraAvailable || !state.localDevice.cameraEnabled || !localMediaState.cameraStream) {
           if (placeholder) {
-            placeholder.textContent = state.localDevice.cameraAvailable ? 'You' : 'Camera unavailable';
+            placeholder.textContent = cameraUnavailable
+              ? 'Camera unavailable'
+              : cameraOff
+                ? 'Camera off'
+                : cameraStarting
+                  ? 'Starting camera...'
+                  : 'Camera preview unavailable';
           }
           return;
         }
