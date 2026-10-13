@@ -1030,6 +1030,10 @@ function meetingUiTemplate(): string {
         cursor: pointer;
         transition: transform 0.2s ease, opacity 0.2s ease;
       }
+      button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+        outline: 3px solid #9bb7ff;
+        outline-offset: 3px;
+      }
       button:hover { transform: translateY(-1px); }
       .primary {
         background: linear-gradient(135deg, var(--primary), var(--primary-strong));
@@ -1818,6 +1822,15 @@ function meetingUiTemplate(): string {
       }
       @media (max-width: 720px) {
         .app-shell { padding: 16px; }
+        .meeting-shell { min-height: 0; }
+        .meeting-header { align-items: flex-start; flex-direction: column; }
+        .meeting-header > div:last-child { width: 100%; min-width: 0; }
+        .meeting-id { max-width: 100%; overflow-wrap: anywhere; }
+        .video-stage:not(.presentation-active) {
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+          min-height: 320px;
+        }
+        .video-stage:not(.presentation-active) .tile { min-height: clamp(120px, 32vw, 180px); }
         .registration-shell { display: block; margin-top: 12px; border-radius: 18px; }
         .registration-aside { min-height: auto; padding: 26px 22px; }
         .registration-aside h1 { margin: 42px 0 12px; font-size: 34px; }
@@ -2023,18 +2036,19 @@ function meetingUiTemplate(): string {
         <div class="home-card">
           <div class="kicker">Pre-join</div>
           <h2 id="prejoinTitle">Ready to join</h2>
+          <p id="prejoinStatus" role="status" aria-live="polite"></p>
           <div class="form-grid">
             <div class="input-group">
               <label for="displayNameInput">Display name</label>
               <input id="displayNameInput" type="text" placeholder="Your name" />
             </div>
             <div class="device-status">
-              <button class="secondary" id="toggleMicBtn">Mic: On</button>
-              <button class="secondary" id="toggleCameraBtn">Camera: On</button>
+              <button type="button" class="secondary" id="toggleMicBtn" aria-label="Microphone" aria-pressed="true">Mic: On</button>
+              <button type="button" class="secondary" id="toggleCameraBtn" aria-label="Camera" aria-pressed="true">Camera: On</button>
             </div>
             <div class="actions">
-              <button class="primary" id="joinNowButton">Join Now</button>
-              <button class="secondary" id="backToHomeFromPrejoin">Cancel</button>
+              <button type="button" class="primary" id="joinNowButton">Join Now</button>
+              <button type="button" class="secondary" id="backToHomeFromPrejoin">Cancel</button>
             </div>
           </div>
         </div>
@@ -2046,14 +2060,14 @@ function meetingUiTemplate(): string {
             <div class="meeting-header">
               <div>
                 <div class="kicker" style="margin:0;">Meeting room</div>
-                <strong id="meetingTitleText">Meeting</strong>
+                <strong id="meetingTitleText" tabindex="-1">Meeting</strong>
               </div>
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span class="meeting-id" id="meetingIdBadge">Loading...</span>
                 <span class="meeting-id" id="meetingDurationTimer" role="timer" aria-label="Meeting duration" style="font-variant-numeric: tabular-nums;">00:00:00</span>
                 <span id="mediaStatus" class="media-status" aria-live="polite">Media not connected</span>
                 <button id="enableRemotePlaybackBtn" type="button" class="ghost" style="display:none;">Enable playback</button>
-                <button class="ghost" id="copyMeetingIdBtn">Copy meeting link</button>
+                <button type="button" class="ghost" id="copyMeetingIdBtn">Copy meeting link</button>
               </div>
             </div>
 
@@ -2081,18 +2095,18 @@ function meetingUiTemplate(): string {
             </div>
 
             <div class="controls" id="meetingControls">
-              <button class="control active" id="micControlBtn" title="Microphone">🎙️</button>
-              <button class="control active" id="cameraControlBtn" title="Camera">📷</button>
-              <button class="control" id="shareScreenBtn" title="Screen share">🖥️</button>
+              <button type="button" class="control active" id="micControlBtn" aria-label="Microphone" aria-pressed="true"><span aria-hidden="true">🎙️</span></button>
+              <button type="button" class="control active" id="cameraControlBtn" aria-label="Camera" aria-pressed="true"><span aria-hidden="true">📷</span></button>
+              <button type="button" class="control" id="shareScreenBtn" aria-label="Share screen" aria-pressed="false"><span aria-hidden="true">🖥️</span></button>
               <span id="screenShareUnavailableMessage" class="media-status" role="status" style="display:none;">Screen sharing is not supported by this browser or device.</span>
-              <button class="control" id="participantsBtn" title="Participants">👥</button>
-              <button class="control danger" id="leaveMeetingBtn" title="Leave">✕</button>
-              <button class="control danger" id="endMeetingBtn" title="End meeting">⏹️</button>
+              <button type="button" class="control" id="participantsBtn" aria-label="Participants"><span aria-hidden="true">👥</span></button>
+              <button type="button" class="control danger" id="leaveMeetingBtn" aria-label="Leave meeting"><span aria-hidden="true">✕</span></button>
+              <button type="button" class="control danger" id="endMeetingBtn" aria-label="End meeting"><span aria-hidden="true">⏹️</span></button>
             </div>
           </div>
 
           <aside class="side-panel">
-            <div class="kicker">Participants</div>
+            <div class="kicker" id="participantsHeading" tabindex="-1">Participants</div>
             <ul class="participant-list" id="participantList"></ul>
             <section class="recording-panel" aria-label="Meeting recording">
               <div class="kicker" style="margin:0;">Recording</div>
@@ -2133,7 +2147,7 @@ function meetingUiTemplate(): string {
                 <div class="kicker" style="margin:0;">Chat</div>
                 <span id="chatStatus" class="chat-status" aria-live="polite">No messages</span>
               </div>
-              <ol id="chatMessages" class="chat-messages" aria-live="polite"></ol>
+              <ol id="chatMessages" class="chat-messages" role="log" aria-live="polite" aria-relevant="additions"></ol>
               <form id="chatForm" class="chat-form">
                 <input id="chatInput" type="text" maxlength="2000" placeholder="Write a message" aria-label="Chat message" autocomplete="off" />
                 <button type="submit" class="secondary" aria-label="Send chat message">Send</button>
@@ -2156,7 +2170,7 @@ function meetingUiTemplate(): string {
         </div>
       </section>
 
-      <div id="errorBanner"></div>
+      <div id="errorBanner" role="alert" aria-live="assertive"></div>
     </div>
 
     <script>
@@ -2372,6 +2386,7 @@ function meetingUiTemplate(): string {
 
       let hostActionPending = false;
       let hostActionVersion = 0;
+      let joinRequestPending = false;
       let meetingRefreshTimer = null;
       let meetingRefreshPending = false;
       let chatRefreshPending = false;
@@ -4699,6 +4714,8 @@ function meetingUiTemplate(): string {
         if (name === 'prejoin' && state.admissionStatus !== 'WAITING') {
           document.getElementById('joinNowButton').disabled = false;
           document.getElementById('joinNowButton').textContent = 'Join now';
+          document.getElementById('prejoinStatus').textContent = '';
+          document.getElementById('prejoinScreen').setAttribute('aria-busy', 'false');
         }
         scheduleMeetingRefresh();
         Object.entries(screens).forEach(([key, node]) => {
@@ -4706,6 +4723,12 @@ function meetingUiTemplate(): string {
             node.classList.toggle('visible', key === name);
           }
         });
+        const activeScreen = screens[name];
+        const focusTarget = activeScreen?.querySelector('h1, h2, [tabindex="-1"]');
+        if (focusTarget instanceof HTMLElement) {
+          focusTarget.setAttribute('tabindex', '-1');
+          focusTarget.focus({ preventScroll: true });
+        }
 
         if (statusPill) {
           if (name === 'meeting') {
@@ -4816,17 +4839,23 @@ function meetingUiTemplate(): string {
         if (micControl) {
           micControl.classList.toggle('active', micIsOn);
           micControl.classList.toggle('off', !micIsOn);
-          micControl.innerHTML = '<span class="device-icon">🎙️</span>';
+          micControl.setAttribute('aria-pressed', String(micIsOn));
+          micControl.setAttribute('aria-label', 'Microphone');
+          micControl.innerHTML = '<span class="device-icon" aria-hidden="true">🎙️</span>';
         }
 
         if (cameraControl) {
           cameraControl.classList.toggle('active', cameraIsOn);
           cameraControl.classList.toggle('off', !cameraIsOn);
-          cameraControl.innerHTML = '<span class="device-icon">📷</span>';
+          cameraControl.setAttribute('aria-pressed', String(cameraIsOn));
+          cameraControl.setAttribute('aria-label', 'Camera');
+          cameraControl.innerHTML = '<span class="device-icon" aria-hidden="true">📷</span>';
         }
 
         if (shareControl) {
           shareControl.classList.toggle('active', state.localDevice.screenShareEnabled);
+          shareControl.setAttribute('aria-pressed', String(state.localDevice.screenShareEnabled));
+          shareControl.setAttribute('aria-label', state.localDevice.screenShareEnabled ? 'Stop sharing screen' : 'Share screen');
           shareControl.disabled = !canShareScreen;
           shareControl.setAttribute('aria-disabled', String(!canShareScreen));
           shareControl.title = canShareScreen ? 'Screen share' : 'Screen sharing is not supported by this browser or device.';
@@ -4844,9 +4873,11 @@ function meetingUiTemplate(): string {
 
         if (micBtn) {
           micBtn.textContent = state.localDevice.micAvailable ? 'Mic: ' + (micIsOn ? 'On' : 'Off') : 'Mic: Unavailable';
+          micBtn.setAttribute('aria-pressed', String(micIsOn));
         }
         if (cameraBtn) {
           cameraBtn.textContent = state.localDevice.cameraAvailable ? 'Camera: ' + (cameraIsOn ? 'On' : 'Off') : 'Camera: Unavailable';
+          cameraBtn.setAttribute('aria-pressed', String(cameraIsOn));
         }
 
         syncLocalCameraPreview();
@@ -5799,12 +5830,21 @@ function meetingUiTemplate(): string {
       }
 
       async function joinMeetingNow() {
+        if (joinRequestPending || state.admissionStatus === 'WAITING') return;
         const displayName = document.getElementById('displayNameInput').value.trim();
         if (!displayName) {
           setError('Please enter a display name.');
           return;
         }
 
+        joinRequestPending = true;
+        const joinButton = document.getElementById('joinNowButton');
+        const prejoinScreen = document.getElementById('prejoinScreen');
+        const prejoinStatus = document.getElementById('prejoinStatus');
+        joinButton.disabled = true;
+        joinButton.textContent = 'Joining...';
+        prejoinScreen.setAttribute('aria-busy', 'true');
+        prejoinStatus.textContent = 'Joining meeting...';
         const meetingId = state.meetingId || document.getElementById('meetingIdInput').value.trim();
         const currentUserIsHost = Boolean(state.meeting && state.currentUserId && state.meeting.hostId === state.currentUserId);
         const userId = currentUserIsHost ? state.currentUserId : 'user-' + Date.now();
@@ -5833,11 +5873,11 @@ function meetingUiTemplate(): string {
               ...(state.meeting || { id: meetingId, title: 'Meeting', status: 'active', hostId: '', participants: [], accessRequests: [], accessMode: 'HOST_APPROVAL' }),
               accessRequests: [...((state.meeting && Array.isArray(state.meeting.accessRequests)) ? state.meeting.accessRequests : []), payload.data],
             };
-            const joinButton = document.getElementById('joinNowButton');
             if (joinButton) {
               joinButton.textContent = 'Waiting for host approval';
               joinButton.disabled = true;
             }
+            prejoinStatus.textContent = 'Your request is waiting for host approval.';
             const prejoinTitle = document.getElementById('prejoinTitle');
             if (prejoinTitle) {
               prejoinTitle.textContent = (state.meeting.title || 'Meeting') + ' • ' + meetingId + ' • Waiting for host approval';
@@ -5873,6 +5913,14 @@ function meetingUiTemplate(): string {
           void refreshSfuSubscriptions();
         } catch (error) {
           setError(error instanceof Error ? error.message : 'Unable to join the meeting.');
+        } finally {
+          joinRequestPending = false;
+          prejoinScreen.setAttribute('aria-busy', 'false');
+          if (state.route === 'prejoin' && state.admissionStatus !== 'WAITING') {
+            joinButton.disabled = false;
+            joinButton.textContent = 'Join Now';
+            prejoinStatus.textContent = '';
+          }
         }
       }
 
@@ -6192,6 +6240,9 @@ function meetingUiTemplate(): string {
       });
 
       document.getElementById('shareScreenBtn').addEventListener('click', handleScreenShareToggle);
+      document.getElementById('participantsBtn').addEventListener('click', () => {
+        document.getElementById('participantsHeading').focus();
+      });
       document.addEventListener('fullscreenchange', () => {
         const stage = document.getElementById('videoStage');
         if (stage && document.fullscreenElement !== stage) stage.classList.remove('presentation-focused');

@@ -666,6 +666,58 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("meetingTitleText")?.textContent).toContain("Sprint review");
   });
 
+  it("announces meeting control states and keeps the join request single-flight with visible progress", async () => {
+    const { document, fetchMock } = await loadRenderedPage();
+    document.getElementById("startMeetingBtn")?.click();
+    expect(document.activeElement?.textContent).toContain("Set up a new room");
+    (document.getElementById("meetingTitle") as HTMLInputElement).value = "Keyboard ready";
+    (document.getElementById("hostName") as HTMLInputElement).value = "Alex";
+    document.getElementById("createMeetingButton")?.click();
+    await flush();
+
+    const joinButton = document.getElementById("joinNowButton") as HTMLButtonElement;
+    const prejoin = document.getElementById("prejoinScreen") as HTMLElement;
+    (document.getElementById("displayNameInput") as HTMLInputElement).value = "Alex";
+    expect(document.activeElement?.id).toBe("prejoinTitle");
+
+    const originalFetch = fetchMock.getMockImplementation();
+    let completeJoin!: (response: ReturnType<typeof createResponse>) => void;
+    const pendingJoin = new Promise<ReturnType<typeof createResponse>>((resolve) => { completeJoin = resolve; });
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/join")) return pendingJoin;
+      if (!originalFetch) throw new Error("The browser fetch fixture is unavailable.");
+      return originalFetch(input, init);
+    });
+
+    joinButton.click();
+    expect(joinButton.disabled).toBe(true);
+    expect(joinButton.textContent).toBe("Joining...");
+    expect(prejoin.getAttribute("aria-busy")).toBe("true");
+    expect(document.getElementById("prejoinStatus")?.textContent).toBe("Joining meeting...");
+    joinButton.click();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/join"))).toHaveLength(1);
+
+    completeJoin(createResponse({
+      ok: true,
+      data: { id: "participant-host-123", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED", meetingId: "btm_test_123" },
+    }));
+    await flush();
+
+    expect(prejoin.getAttribute("aria-busy")).toBe("false");
+    expect(document.activeElement?.id).toBe("meetingTitleText");
+    expect(document.getElementById("errorBanner")?.getAttribute("role")).toBe("alert");
+    expect(document.getElementById("micControlBtn")?.getAttribute("aria-label")).toBe("Microphone");
+    expect(document.getElementById("cameraControlBtn")?.getAttribute("aria-label")).toBe("Camera");
+    expect(document.getElementById("shareScreenBtn")?.getAttribute("aria-label")).toBe("Share screen");
+    expect(document.getElementById("leaveMeetingBtn")?.getAttribute("aria-label")).toBe("Leave meeting");
+    expect(document.getElementById("chatMessages")?.getAttribute("role")).toBe("log");
+    document.getElementById("participantsBtn")?.click();
+    expect(document.activeElement?.id).toBe("participantsHeading");
+    expect(document.querySelector("style")?.textContent).toContain("button:focus-visible");
+    expect(document.querySelector("style")?.textContent).toContain("min-height: 320px");
+  });
+
   it("opens a meeting invite URL into the existing prejoin flow", async () => {
     const { document, fetchMock } = await loadRenderedPage("http://localhost/?meeting=btm_test_123");
     await flush();
