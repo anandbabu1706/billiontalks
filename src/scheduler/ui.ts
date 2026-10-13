@@ -451,10 +451,10 @@ export function schedulerPreviewPage(): string {
                   </div>
                   <div class="field">
                     <label for="timezone">Time zone <span class="required">*</span></label>
-                    <select id="timezone" name="timezone">
-                      <option id="deviceTimezone" value="">Use device time zone</option>
+                    <input id="timezoneSearch" type="search" autocomplete="off" aria-label="Search time zones" aria-describedby="timezoneHelp" aria-controls="timezone" placeholder="Search city, country, abbreviation or UTC offset">
+                    <select id="timezone" name="timezone" aria-describedby="timezoneHelp">
                     </select>
-                    <span class="field-help">The original IANA time zone will be retained when the meeting is edited.</span>
+                    <span class="field-help" id="timezoneHelp">Times are shown for the selected meeting date. The original IANA time zone is retained when editing.</span>
                   </div>
                 </div>
               </section>
@@ -537,34 +537,85 @@ export function schedulerPreviewPage(): string {
       const time = document.getElementById('time');
       const duration = document.getElementById('duration');
       const timezoneField = document.getElementById('timezone');
+      const timezoneSearch = document.getElementById('timezoneSearch');
       const accessFields = [...form.querySelectorAll('input[name="guestAccess"]')];
       const error = document.getElementById('schedulerError');
       const scheduleList = document.getElementById('scheduleList');
       const state = { editingId: null, revision: null, link: '', preferences: null };
       const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const deviceOption = document.getElementById('deviceTimezone');
-      deviceOption.value = deviceTimezone;
-      deviceOption.textContent = deviceTimezone + ' (device)';
-      const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
-      for (const zone of zones) {
-        if (zone === deviceTimezone) continue;
-        const option = document.createElement('option');
-        option.value = zone;
-        option.textContent = zone;
-        timezoneField.append(option);
+      const zones = typeof Intl.supportedValuesOf === 'function'
+        ? [...new Set(['UTC', deviceTimezone, ...Intl.supportedValuesOf('timeZone')])]
+        : [...new Set(['UTC', deviceTimezone, 'Asia/Kolkata', 'America/New_York', 'America/Los_Angeles', 'Europe/London'])];
+      const countryByZone = {
+        'Africa/Cairo': 'Egypt', 'Africa/Johannesburg': 'South Africa', 'Africa/Lagos': 'Nigeria',
+        'America/Anchorage': 'United States', 'America/Argentina/Buenos_Aires': 'Argentina',
+        'America/Bogota': 'Colombia', 'America/Chicago': 'United States', 'America/Denver': 'United States',
+        'America/Halifax': 'Canada', 'America/Los_Angeles': 'United States', 'America/Mexico_City': 'Mexico',
+        'America/New_York': 'United States', 'America/Phoenix': 'United States', 'America/Sao_Paulo': 'Brazil',
+        'America/St_Johns': 'Canada', 'America/Toronto': 'Canada', 'America/Vancouver': 'Canada',
+        'Asia/Bangkok': 'Thailand', 'Asia/Dubai': 'United Arab Emirates', 'Asia/Hong_Kong': 'Hong Kong',
+        'Asia/Jakarta': 'Indonesia', 'Asia/Jerusalem': 'Israel', 'Asia/Karachi': 'Pakistan',
+        'Asia/Kolkata': 'India', 'Asia/Kathmandu': 'Nepal', 'Asia/Manila': 'Philippines',
+        'Asia/Seoul': 'South Korea', 'Asia/Shanghai': 'China', 'Asia/Singapore': 'Singapore',
+        'Asia/Taipei': 'Taiwan', 'Asia/Tokyo': 'Japan', 'Asia/Riyadh': 'Saudi Arabia',
+        'Australia/Adelaide': 'Australia', 'Australia/Brisbane': 'Australia', 'Australia/Perth': 'Australia',
+        'Australia/Sydney': 'Australia', 'Europe/Amsterdam': 'Netherlands', 'Europe/Athens': 'Greece',
+        'Europe/Berlin': 'Germany', 'Europe/Brussels': 'Belgium', 'Europe/Bucharest': 'Romania',
+        'Europe/Dublin': 'Ireland', 'Europe/Istanbul': 'Turkey', 'Europe/Lisbon': 'Portugal',
+        'Europe/London': 'United Kingdom', 'Europe/Madrid': 'Spain', 'Europe/Moscow': 'Russia',
+        'Europe/Paris': 'France', 'Europe/Rome': 'Italy', 'Europe/Stockholm': 'Sweden',
+        'Pacific/Auckland': 'New Zealand', 'Pacific/Honolulu': 'United States',
+      };
+      function zoneLabel(zone) {
+        const meetingDate = date.value ? new Date(date.value + 'T12:00:00Z') : new Date();
+        const formatter = (timeZoneName) => new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName }).formatToParts(meetingDate)
+          .find((part) => part.type === 'timeZoneName')?.value || '';
+        const offsetName = formatter('longOffset');
+        const offsetMatch = /^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/.exec(offsetName);
+        const offset = !offsetName || offsetName === 'GMT'
+          ? 'UTC+00:00'
+          : offsetMatch ? 'UTC' + offsetMatch[1] + offsetMatch[2].padStart(2, '0') + ':' + (offsetMatch[3] || '00') : offsetName.replace(/^GMT/, 'UTC');
+        const longName = formatter('long');
+        const city = zone === 'UTC' ? 'UTC' : zone.split('/').pop().replace(/_/g, ' ');
+        const country = countryByZone[zone] || '';
+        const location = [city, country].filter(Boolean).join(', ');
+        const label = '(' + offset + ') ' + longName + ' — ' + location;
+        const shortName = formatter('short');
+        return { label, search: [zone, city, country, longName, shortName, offset, offsetName, zone.replace(/[_/]/g, ' ')].join(' ').toLocaleLowerCase() };
+      }
+      function renderTimeZones() {
+        const selectedZone = timezoneField.value || deviceTimezone;
+        const query = timezoneSearch.value.trim().toLocaleLowerCase();
+        const matches = zones.map((zone) => ({ zone, ...zoneLabel(zone) }))
+          .filter((entry) => !query || entry.search.includes(query) || entry.zone === selectedZone);
+        timezoneField.replaceChildren();
+        for (const entry of matches) {
+          const option = document.createElement('option');
+          option.value = entry.zone;
+          option.textContent = entry.label + (entry.zone === deviceTimezone ? ' (device)' : '');
+          timezoneField.append(option);
+        }
+        if (!matches.some((entry) => entry.zone === selectedZone)) {
+          const selected = { zone: selectedZone, ...zoneLabel(selectedZone) };
+          const option = document.createElement('option');
+          option.value = selected.zone;
+          option.textContent = selected.label;
+          timezoneField.append(option);
+        }
+        timezoneField.value = selectedZone;
+      }
+      function ensureTimeZone(zone) {
+        if (!zones.includes(zone)) zones.push(zone);
+        renderTimeZones();
       }
       function applyPreferences() {
         if (!state.preferences) return;
         duration.value = String(state.preferences.defaultDurationMinutes);
         const guestAccess = form.querySelector('input[name="guestAccess"][value="' + state.preferences.defaultGuestAccess + '"]');
         if (guestAccess) guestAccess.checked = true;
-        if (![...timezoneField.options].some((option) => option.value === state.preferences.timeZone)) {
-          const option = document.createElement('option');
-          option.value = state.preferences.timeZone;
-          option.textContent = state.preferences.timeZone;
-          timezoneField.append(option);
-        }
+        ensureTimeZone(state.preferences.timeZone);
         timezoneField.value = state.preferences.timeZone;
+        renderTimeZones();
       }
       function selectedAccess() { return form.querySelector('input[name="guestAccess"]:checked').value; }
       function accessLabel(value) { return ({ HOST_APPROVAL: 'Host approval', OPEN: 'Open access', LOCKED: 'Locked' })[value] || 'Host approval'; }
@@ -601,15 +652,25 @@ export function schedulerPreviewPage(): string {
         const durationLabel = duration.options[duration.selectedIndex].textContent;
         document.getElementById('summaryTime').textContent = (time.value || 'Choose a start time') + ' · ' + durationLabel;
         const zone = timezoneField.value || deviceTimezone;
-        document.getElementById('summaryTimezone').textContent = zone;
+        document.getElementById('summaryTimezone').textContent = zoneLabel(zone).label;
         document.getElementById('summaryAccess').textContent = accessLabel(selectedAccess());
         for (const option of accessFields) option.closest('.access-option').classList.toggle('selected', option.checked);
       };
       const localNow = new Date();
       date.min = [localNow.getFullYear(), String(localNow.getMonth() + 1).padStart(2, '0'), String(localNow.getDate()).padStart(2, '0')].join('-');
       timezoneField.value = deviceTimezone;
+      renderTimeZones();
       form.addEventListener('input', refresh);
-      form.addEventListener('change', refresh);
+      form.addEventListener('change', (event) => {
+        if (event.target === date) renderTimeZones();
+        refresh();
+      });
+      timezoneSearch.addEventListener('input', renderTimeZones);
+      timezoneField.addEventListener('change', () => {
+        timezoneSearch.value = '';
+        renderTimeZones();
+        refresh();
+      });
       function resetForm() {
         form.reset();
         state.editingId = null;
@@ -690,13 +751,10 @@ export function schedulerPreviewPage(): string {
         date.value = meeting.localDate;
         time.value = meeting.localTime;
         duration.value = String(meeting.durationMinutes);
-        if (![...timezoneField.options].some((option) => option.value === meeting.timeZone)) {
-          const option = document.createElement('option');
-          option.value = meeting.timeZone;
-          option.textContent = meeting.timeZone;
-          timezoneField.append(option);
-        }
+        ensureTimeZone(meeting.timeZone);
         timezoneField.value = meeting.timeZone;
+        timezoneSearch.value = '';
+        renderTimeZones();
         const matchingAccess = accessFields.find((input) => input.value === meeting.guestAccess);
         if (matchingAccess) matchingAccess.checked = true;
         document.getElementById('submitScheduleButton').textContent = 'Save changes';
