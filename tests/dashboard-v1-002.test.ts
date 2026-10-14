@@ -41,6 +41,11 @@ describe("BT-V1-002 signed-in dashboard", () => {
     expect(html).toContain("Calendar");
     expect(html).toContain('class="nav-item" href="/calendar"');
     expect(html).toContain("Contacts");
+    expect(html).toContain('class="quick-item" href="/contacts"');
+    expect(html).toContain('class="nav-item" href="/schedule"');
+    expect(html).toContain('class="nav-item" href="/notifications"');
+    expect(html).toContain("Recording controls and consent are available in meeting rooms. Playback is not available.");
+    expect(html).not.toContain("<strong>Contacts</strong><span>Coming soon</span>");
     expect(html).toContain("Recordings");
     expect(html).not.toContain("Billing");
     expect(html).toContain("sidebarToggle");

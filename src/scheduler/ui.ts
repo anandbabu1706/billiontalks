@@ -117,6 +117,8 @@ export function schedulerPreviewPage(): string {
     }
     .sidebar-footer { margin-top: auto; padding-top: 22px; border-top: 1px solid rgba(255, 255, 255, .16); }
     .main-column { min-width: 0; }
+    .sidebar-toggle { display: none; }
+    .sidebar-toggle:focus-visible { outline: 3px solid #318aff66; outline-offset: 2px; }
     .topbar {
       display: flex;
       align-items: center;
@@ -372,8 +374,11 @@ export function schedulerPreviewPage(): string {
     }
     @media (max-width: 820px) {
       .app-shell { display: block; }
-      .sidebar { display: none; }
-      .topbar { min-height: 70px; padding: 12px 18px; }
+      .sidebar { position: fixed; top: 0; left: 0; z-index: 30; display: flex; width: 224px; visibility: hidden; transform: translateX(-105%); transition: transform .2s ease, visibility 0s linear .2s; box-shadow: 16px 0 40px rgba(22, 44, 79, .16); }
+      .sidebar.open { visibility: visible; transform: translateX(0); transition: transform .2s ease; }
+      .topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 70px; padding: 12px 18px; }
+      .sidebar-toggle { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; color: #52637b; }
+      .sidebar-toggle svg { width: 19px; height: 19px; }
       .mobile-brand { display: inline-flex; width: 145px; padding: 6px 8px; border: 1px solid #e1e7f0; border-radius: 10px; background: #fff; }
       .mobile-brand img { display: block; width: 100%; height: auto; }
       .breadcrumbs { display: none; }
@@ -399,15 +404,17 @@ export function schedulerPreviewPage(): string {
 </head>
 <body>
   <main class="app-shell">
-    <aside class="sidebar" aria-label="Primary navigation">
+    <aside class="sidebar" id="schedulerSidebar" aria-label="Primary navigation">
       <a class="logo-link" href="/dashboard" aria-label="BillionTalks dashboard"><img src="${logoUrl}" alt="BillionTalks"></a>
       <p class="nav-label">Workspace</p>
       <nav class="side-nav">
         <a class="nav-item" href="/dashboard"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>Dashboard</a>
-        <span class="nav-item active" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3z"/></svg>Meetings</span>
-        <span class="nav-item disabled" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Calendar<span class="soon-badge">Soon</span></span>
-        <span class="nav-item disabled" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>Contacts<span class="soon-badge">Soon</span></span>
-        <span class="nav-item disabled" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="3"/><path d="M8 4v3M16 4v3"/></svg>Recordings<span class="soon-badge">Soon</span></span>
+        <a class="nav-item active" href="/schedule" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3z"/></svg>Meetings</a>
+        <a class="nav-item" href="/calendar"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Calendar</a>
+        <a class="nav-item" href="/contacts"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>Contacts &amp; Invitations</a>
+        <span class="nav-item disabled" aria-disabled="true" aria-describedby="recordingsAvailability"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="3"/><path d="M8 4v3M16 4v3"/></svg>Recordings<span class="soon-badge">In meetings</span></span>
+        <span class="sr-only" id="recordingsAvailability">Recording controls and consent are available in meeting rooms. Playback is not available.</span>
+        <a class="nav-item" href="/notifications"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Notifications</a>
         <a class="nav-item" href="/account#preferences"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>Settings</a>
       </nav>
       <div class="sidebar-footer">
@@ -416,6 +423,9 @@ export function schedulerPreviewPage(): string {
     </aside>
     <div class="main-column">
       <header class="topbar">
+        <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-controls="schedulerSidebar" aria-expanded="false" aria-label="Open navigation">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
         <a class="mobile-brand" href="/dashboard" aria-label="BillionTalks dashboard"><img src="${logoUrl}" alt="BillionTalks"></a>
         <nav class="breadcrumbs" aria-label="Breadcrumb">
           <a href="/dashboard">Dashboard</a>
@@ -567,6 +577,33 @@ export function schedulerPreviewPage(): string {
   <script>
     (() => {
       'use strict';
+      const schedulerSidebar = document.getElementById('schedulerSidebar');
+      const sidebarToggle = document.getElementById('sidebarToggle');
+      function setNavigationOpen(open) {
+        schedulerSidebar.classList.toggle('open', open);
+        sidebarToggle.setAttribute('aria-expanded', String(open));
+        sidebarToggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+      }
+      sidebarToggle.addEventListener('click', () => {
+        const open = !schedulerSidebar.classList.contains('open');
+        setNavigationOpen(open);
+        if (open) schedulerSidebar.querySelector('.side-nav a')?.focus();
+      });
+      schedulerSidebar.querySelectorAll('.side-nav a').forEach((link) => {
+        link.addEventListener('click', () => setNavigationOpen(false));
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && schedulerSidebar.classList.contains('open')) {
+          setNavigationOpen(false);
+          sidebarToggle.focus();
+        }
+      });
+      document.addEventListener('click', (event) => {
+        if (schedulerSidebar.classList.contains('open') &&
+          !schedulerSidebar.contains(event.target) && !sidebarToggle.contains(event.target)) {
+          setNavigationOpen(false);
+        }
+      });
       const form = document.getElementById('schedulerForm');
       const title = document.getElementById('title');
       const agenda = document.getElementById('agenda');

@@ -235,5 +235,8 @@ describe("BT-V1-007 settings, notifications, and entitlement foundation", () => 
     expect(dashboardPage()).toContain('href="/notifications"');
     expect(notificationsPage()).toContain('id="readAll"');
     expect(notificationsPage()).toContain("PATCH");
+    expect(notificationsPage()).toContain('href="/schedule">Meetings</a>');
+    expect(notificationsPage()).toContain('href="/contacts">Contacts &amp; Invitations</a>');
+    expect(notificationsPage()).toContain('href="/notifications" aria-current="page"');
   });
 });

@@ -23,6 +23,15 @@ describe("BT-V1-003 scheduler visual preview", () => {
     expect(html).toContain("data-action=\"start\"");
     expect(html).toContain("@media (max-width: 820px)");
     expect(html).toContain("@media (max-width: 580px)");
+    expect(html).toContain('href="/calendar"');
+    expect(html).toContain('href="/contacts"');
+    expect(html).toContain('href="/account#preferences"');
+    expect(html).toContain('href="/notifications"');
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain('id="sidebarToggle"');
+    expect(html).toContain("Recording controls and consent are available in meeting rooms. Playback is not available.");
+    expect(html).not.toContain('Calendar<span class="soon-badge">Soon</span>');
+    expect(html).not.toContain('Contacts<span class="soon-badge">Soon</span>');
     expect(html).not.toContain("/api/calendar");
     expect(html).not.toContain("Google Calendar");
   });
@@ -31,7 +40,7 @@ describe("BT-V1-003 scheduler visual preview", () => {
     const html = dashboardPage();
 
     expect(html).toContain("class=\"action-card schedule-card\"");
-    expect(html).toContain("class=\"disabled-action\" href=\"/schedule\">Schedule a meeting");
+    expect(html).toContain("class=\"meeting-action-link\" href=\"/schedule\">Schedule a meeting");
     expect(html).toContain("Schedule Meeting");
     expect(html).toContain("#7352d1");
     expect(html).toContain("api('/api/schedules?upcoming=1')");

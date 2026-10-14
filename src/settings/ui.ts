@@ -16,7 +16,7 @@ export function notificationsPage(): string {
 :root{color-scheme:light;font-family:Inter,system-ui,"Segoe UI",sans-serif;background:#f4f7fc;color:#17233c}*{box-sizing:border-box}
 body{margin:0;min-width:320px;min-height:100vh;background:linear-gradient(135deg,#f7faff,#edf3fb)}a{color:inherit;text-decoration:none}
 header{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px clamp(18px,5vw,64px);background:#fff;border-bottom:1px solid #dce5f1}
-header img{width:190px;height:auto}.nav{display:flex;gap:18px;color:#315176;font-weight:650;font-size:14px}
+header img{width:190px;height:auto}.nav{display:flex;flex-wrap:wrap;gap:18px;color:#315176;font-weight:650;font-size:14px}.nav a[aria-current="page"]{color:#176fd2;font-weight:800}
 main{width:min(100% - 32px,860px);margin:48px auto}.heading{display:flex;align-items:end;justify-content:space-between;gap:16px}
 h1{margin:0;font-size:clamp(28px,4vw,38px);letter-spacing:-.035em}p{color:#718198}
 button{border:0;border-radius:10px;padding:11px 15px;background:#1f78dd;color:white;font:inherit;font-weight:700;cursor:pointer}
@@ -26,10 +26,10 @@ article.unread{border-left:4px solid #2879eb}.item{display:flex;align-items:star
 article h2{margin:0;font-size:16px}article p{margin:7px 0;color:#596b83;line-height:1.5}time{font-size:12px;color:#8694a7}
 .actions{display:flex;gap:12px;align-items:center;margin-top:10px}.actions button{padding:7px 10px;font-size:12px;background:#eaf2fc;color:#245183}
 .empty{padding:30px;text-align:center;color:#74849a;background:#fff;border:1px dashed #cbd7e6;border-radius:14px}
-@media(max-width:540px){header{align-items:flex-start;flex-direction:column}.nav{flex-wrap:wrap}.heading{align-items:flex-start;flex-direction:column}main{margin-top:30px}}
+@media(max-width:540px){header{align-items:flex-start;flex-direction:column}.nav{gap:12px}.heading{align-items:flex-start;flex-direction:column}main{margin-top:30px}}
 </style></head><body>
 <header><a href="/dashboard" aria-label="BillionTalks dashboard"><img src="${logoUrl}" alt="BillionTalks"></a>
-<nav class="nav" aria-label="Workspace"><a href="/dashboard">Dashboard</a><a href="/calendar">Calendar</a><a href="/account#preferences">Settings</a></nav></header>
+<nav class="nav" aria-label="Workspace"><a href="/dashboard">Dashboard</a><a href="/schedule">Meetings</a><a href="/calendar">Calendar</a><a href="/contacts">Contacts &amp; Invitations</a><a href="/notifications" aria-current="page">Notifications</a><a href="/account#preferences">Settings</a></nav></header>
 <main><div class="heading"><div><h1>Notifications</h1><p>Updates about your scheduled meetings and invitation responses.</p></div><button id="readAll" type="button">Mark all read</button></div>
 <div id="status" class="status" role="status" aria-live="polite"></div><section id="notifications" class="list" aria-label="Your notifications"><div class="empty">Loading notifications…</div></section></main>
 <script>

@@ -81,6 +81,36 @@ async function openScheduler(
 }
 
 describe("BT-V1-003 scheduler time-zone selector", () => {
+  it("keeps workspace navigation reachable and operable on mobile", async () => {
+    const { dom } = await openScheduler();
+    const { document, KeyboardEvent, MouseEvent } = dom.window;
+    const sidebar = document.getElementById("schedulerSidebar");
+    const toggle = document.getElementById("sidebarToggle") as HTMLButtonElement;
+
+    expect(document.querySelector('[aria-current="page"][href="/schedule"]')).not.toBeNull();
+    expect(document.querySelector('.side-nav a[href="/calendar"]')).not.toBeNull();
+    expect(document.querySelector('.side-nav a[href="/contacts"]')).not.toBeNull();
+    expect(document.querySelector('.side-nav a[href="/account#preferences"]')).not.toBeNull();
+    expect(document.querySelector('.side-nav a[href="/notifications"]')).not.toBeNull();
+    expect(document.getElementById("schedulerSidebar")?.textContent).toContain("Playback is not available.");
+    expect(schedulerPreviewPage()).toContain("visibility: hidden");
+
+    toggle.click();
+    expect(sidebar?.classList.contains("open")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-label")).toBe("Close navigation");
+    expect(document.activeElement).toBe(document.querySelector(".side-nav a"));
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(sidebar?.classList.contains("open")).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(toggle);
+
+    toggle.click();
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(sidebar?.classList.contains("open")).toBe(false);
+  });
+
   it("uses the detected device zone for new meetings when the stored time zone is only the default", async () => {
     const { dom } = await openScheduler("UTC", false);
     expect((dom.window.document.getElementById("timezone") as HTMLSelectElement).value).toBe("America/Los_Angeles");

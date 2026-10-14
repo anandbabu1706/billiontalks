@@ -36,6 +36,7 @@ export function calendarPage(): string {
     .side-nav { display: grid; gap: 7px; }
     .nav-item, .sign-out { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 43px; padding: 10px 13px; border: 0; border-radius: 11px; background: transparent; color: #dbeafe; font-size: 13px; font-weight: 700; text-align: left; }
     .nav-item svg, .sign-out svg { width: 18px; height: 18px; flex: 0 0 auto; }
+    .soon-badge { margin-left: auto; padding: 3px 6px; border-radius: 999px; color: #d8eaff; background: rgba(255,255,255,.12); font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
     .nav-item.active, .nav-item:hover, .nav-item:focus-visible, .sign-out:hover, .sign-out:focus-visible { color: #fff; background: linear-gradient(135deg, #176fd2, #318ff0); outline: none; box-shadow: 0 9px 20px rgba(3,21,54,.2); }
     .sidebar-footer { margin-top: auto; border-top: 1px solid rgba(255,255,255,.17); padding-top: 13px; }
     .main-column { min-width: 0; }
@@ -168,7 +169,9 @@ export function calendarPage(): string {
         <a class="nav-item" href="/schedule"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m9 10 5-3v10l-5-3z"/></svg>Meetings</a>
         <a class="nav-item active" href="/calendar" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Calendar</a>
         <a class="nav-item" href="/contacts"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>Contacts</a>
-        <span class="nav-item" aria-disabled="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>Recordings</span>
+        <span class="nav-item" aria-disabled="true" aria-describedby="recordingsAvailability"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>Recordings <span class="soon-badge">In meetings</span></span>
+        <span class="sr-only" id="recordingsAvailability">Recording controls and consent are available in meeting rooms. Playback is not available.</span>
+        <a class="nav-item" href="/notifications"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Notifications</a>
         <a class="nav-item" href="/account#preferences"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Settings</a>
       </nav>
       <div class="sidebar-footer"><button class="sign-out" id="logoutButton" type="button"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M14 8l4 4-4 4M8 12h10"/></svg>Sign out</button></div>

@@ -255,7 +255,7 @@ export function dashboardPage(): string {
     }
     .start-card .action-button { color: #236ddd; }
     .join-card .action-button { color: #13865b; }
-    .disabled-action {
+    .meeting-action-link {
       position: relative;
       z-index: 2;
       display: inline-flex;
@@ -271,7 +271,7 @@ export function dashboardPage(): string {
       letter-spacing: .05em;
       text-transform: uppercase;
     }
-    .disabled-action:hover, .disabled-action:focus-visible { background: rgba(255, 255, 255, .25); outline: 2px solid rgba(255, 255, 255, .55); outline-offset: 2px; }
+    .meeting-action-link:hover, .meeting-action-link:focus-visible { background: rgba(255, 255, 255, .25); outline: 2px solid rgba(255, 255, 255, .55); outline-offset: 2px; }
     .next-meeting-link { display: inline-block; margin-top: 10px; color: #2873df; font-size: 10px; font-weight: 800; }
     .content-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .85fr); gap: 24px; }
     .left-column, .right-column { display: grid; align-content: start; gap: 24px; min-width: 0; }
@@ -435,7 +435,7 @@ export function dashboardPage(): string {
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
           Dashboard
         </a>
-        <a class="nav-item" href="#historyTitle">
+        <a class="nav-item" href="/schedule">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m9 10 5-3v10l-5-3z"/></svg>
           Meetings
         </a>
@@ -447,10 +447,16 @@ export function dashboardPage(): string {
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg>
           Contacts & Invitations
         </a>
-        <span class="nav-item disabled" aria-disabled="true">
+        <span class="nav-item disabled" aria-disabled="true" aria-describedby="recordingsAvailability">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/></svg>
-          Recordings <span class="soon-badge">Soon</span>
+          Recordings <span class="soon-badge">In meetings</span>
+          <span class="sr-only">Recording controls and consent are available in meeting rooms. Playback is not available.</span>
         </span>
+        <span class="sr-only" id="recordingsAvailability">Recording controls and consent are available in meeting rooms. Playback is not available.</span>
+        <a class="nav-item" href="/notifications">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+          Notifications
+        </a>
         <a class="nav-item" href="/account#preferences">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>
           Settings
@@ -542,7 +548,7 @@ export function dashboardPage(): string {
               </div>
             </div>
             <p>Plan future conversations and share a private meeting link.</p>
-            <a class="disabled-action" href="/schedule">Schedule a meeting</a>
+            <a class="meeting-action-link" href="/schedule">Schedule a meeting</a>
           </article>
         </section>
         <div class="content-grid">
@@ -575,10 +581,11 @@ export function dashboardPage(): string {
             <section class="panel" aria-labelledby="quickActionsTitle">
               <div class="panel-heading"><h2 id="quickActionsTitle">Quick Actions</h2></div>
               <div class="quick-list">
-                <div class="quick-item" aria-disabled="true">
+                <a class="quick-item" href="/contacts">
                   <span class="quick-item-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 15a4 4 0 0 1 2.5 4"/></svg></span>
-                  <span><strong>Contacts</strong><span>Coming soon</span></span>
-                </div>
+                  <span><strong>Contacts</strong><span>Manage contacts and invitations</span></span>
+                  <span class="arrow" aria-hidden="true">›</span>
+                </a>
                 <a class="quick-item" href="/account#preferences">
                   <span class="quick-item-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
                   <span><strong>Account Settings</strong><span>Manage your profile</span></span>
