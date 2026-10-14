@@ -294,7 +294,12 @@ const GENERIC_PASSWORD_RESET_RESPONSE = {
   data: { message: "If an account matches this email, password reset instructions will be sent." },
 };
 
-export async function handleForgotPassword(request: Request, database?: D1AccountDatabase, mailer?: AccountEmailSender | null): Promise<Response> {
+export async function handleForgotPassword(
+  request: Request,
+  database?: D1AccountDatabase,
+  mailer?: AccountEmailSender | null,
+  waitUntil?: (promise: Promise<void>) => void,
+): Promise<Response> {
   if (!database) return jsonResponse(GENERIC_PASSWORD_RESET_RESPONSE, 202);
   try {
     if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) {
@@ -311,7 +316,18 @@ export async function handleForgotPassword(request: Request, database?: D1Accoun
     const reset = new PasswordResetService(accounts, new D1PasswordResetRepository(database));
     const email = (value as { email: string }).email;
     const token = mailer ? await reset.requestReset(email, request.headers.get("CF-Connecting-IP") ?? "unknown") : null;
-    if (token) await mailer!.sendPasswordReset(email.trim(), token);
+    if (token) {
+      const delivery = mailer!.sendPasswordReset(email.trim(), token);
+      if (waitUntil) {
+        waitUntil(delivery.catch(() => {
+          console.error("[billiontalks account] password reset email delivery failed", {
+            category: "provider_failure",
+          });
+        }));
+      } else {
+        await delivery;
+      }
+    }
   } catch {
     return jsonResponse(GENERIC_PASSWORD_RESET_RESPONSE, 202);
   }

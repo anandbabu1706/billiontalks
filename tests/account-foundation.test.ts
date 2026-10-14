@@ -1146,6 +1146,35 @@ describe("password reset APIs", () => {
     expect(emailSenderMock.sendPasswordReset).toHaveBeenCalledTimes(1);
   });
 
+  it("schedules reset email delivery after returning the generic response", async () => {
+    const fixture = createAccountDatabaseFixture();
+    const account = seedVerifiedAccount(fixture);
+    let releaseDelivery = () => {};
+    const delivery = new Promise<void>((resolve) => { releaseDelivery = resolve; });
+    emailSenderMock.sendPasswordReset.mockReturnValueOnce(delivery);
+    const scheduled: Promise<void>[] = [];
+    const response = await app.fetch(
+      forgotPasswordRequest(account.email),
+      { ACCOUNT_DB: fixture.database },
+      { waitUntil: (promise: Promise<void>) => scheduled.push(promise) },
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(payload).toEqual({
+      ok: true,
+      data: { message: "If an account matches this email, password reset instructions will be sent." },
+    });
+    expect(scheduled).toHaveLength(1);
+    let deliveryFinished = false;
+    void scheduled[0].then(() => { deliveryFinished = true; });
+    await Promise.resolve();
+    expect(deliveryFinished).toBe(false);
+    releaseDelivery();
+    await scheduled[0];
+    expect(deliveryFinished).toBe(true);
+  });
+
   it("creates an internal reset token for known accounts but returns the same generic response for unknown addresses", async () => {
     const fixture = createAccountDatabaseFixture();
     const account = seedVerifiedAccount(fixture);

@@ -6424,7 +6424,7 @@ function meetingUiTemplate(): string {
 }
 
 const routeHandler = {
-  async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv = {}, waitUntil?: (promise: Promise<void>) => void): Promise<Response> {
     const url = new URL(request.url);
     if (url.hostname.toLowerCase() === "www.billiontalks.com") {
       url.protocol = "https:";
@@ -6486,7 +6486,7 @@ const routeHandler = {
       return handleAccountLogin(request, env.ACCOUNT_DB);
     }
     if (request.method === "POST" && url.pathname === "/api/accounts/forgot-password") {
-      return handleForgotPassword(request, env.ACCOUNT_DB, createAccountEmailSender(env));
+      return handleForgotPassword(request, env.ACCOUNT_DB, createAccountEmailSender(env), waitUntil);
     }
     if (request.method === "POST" && url.pathname === "/api/accounts/reset-password") {
       return handleResetPassword(request, env.ACCOUNT_DB);
@@ -7928,7 +7928,11 @@ const routeHandler = {
 const SFU_MUTATION_ROUTE = /^\/api\/meetings\/([^/]+)\/media\/(?:publish|publish\/ready|subscribe|renegotiate|tracks\/close|recover|close)$/;
 
 export default {
-  async fetch(request: Request, env: WorkerEnv = {}): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: WorkerEnv = {},
+    ctx?: { waitUntil(promise: Promise<void>): void },
+  ): Promise<Response> {
     const route = request.method === "POST" ? SFU_MUTATION_ROUTE.exec(new URL(request.url).pathname) : null;
     const sessionId = route ? getSessionIdFromRequest(request) : null;
     let rpc: MeetingStateDurableObject | undefined;
@@ -7946,7 +7950,7 @@ export default {
       }
     }
     try {
-      return await routeHandler.fetch(request, env);
+      return await routeHandler.fetch(request, env, ctx ? (promise) => ctx.waitUntil(promise) : undefined);
     } finally {
       if (rpc && token && mutationKey) {
         try {
