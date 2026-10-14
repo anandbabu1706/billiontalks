@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JSDOM } from "jsdom";
 import { createAccountEmailSender } from "../src/account/email-delivery";
@@ -8,6 +9,19 @@ const config = { RESEND_API_KEY: "test-key", ACCOUNT_EMAIL_FROM: "BillionTalks <
 afterEach(() => vi.unstubAllGlobals());
 
 describe("BT-V1-001 transactional email", () => {
+  it("declares complete production email configuration", () => {
+    const productionConfig = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8")) as {
+      vars?: Record<string, string>;
+    };
+    expect(productionConfig.vars?.ACCOUNT_EMAIL_FROM).toBe("BillionTalks <no-reply@mail.billiontalks.com>");
+    expect(productionConfig.vars?.ACCOUNT_PUBLIC_ORIGIN).toBe("https://billiontalks.com/");
+    expect(createAccountEmailSender({
+      RESEND_API_KEY: "configured-secret",
+      ACCOUNT_EMAIL_FROM: productionConfig.vars?.ACCOUNT_EMAIL_FROM,
+      ACCOUNT_PUBLIC_ORIGIN: productionConfig.vars?.ACCOUNT_PUBLIC_ORIGIN,
+    })).not.toBeNull();
+  });
+
   it("does not enable email without complete configuration", () => {
     expect(createAccountEmailSender({})).toBeNull();
     expect(createAccountEmailSender({ ...config, ACCOUNT_PUBLIC_ORIGIN: "http://example.com/" })).toBeNull();

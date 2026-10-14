@@ -14,6 +14,8 @@
     }
   ],
   "vars": {
+    "ACCOUNT_EMAIL_FROM": "BillionTalks <no-reply@mail.billiontalks.com>",
+    "ACCOUNT_PUBLIC_ORIGIN": "https://billiontalks.com/",
     "LIMITED_RELEASE_MEDIA_DISABLED": "false"
   },
   "d1_databases": [
