@@ -83,11 +83,9 @@ describe("BT-V1-001 account UI", () => {
     const recoveryBack = dom.window.document.getElementById("accountBackLink");
     expect(recoveryBack?.textContent).toBe("← Back to sign in");
     expect(recoveryBack?.getAttribute("href")).toBe("/account#login");
-    dom.window.history.replaceState(null, "", "#reset");
-    dom.window.location.hash = "reset";
-    expect(activePage()).toEqual([]);
-    expect(recoveryBack?.textContent).toBe("← Back to sign in");
-    expect(recoveryBack?.getAttribute("href")).toBe("/account#login");
+    recoveryBack?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(dom.window.document.querySelector('section[data-panel="login"]')?.hasAttribute("hidden")).toBe(false);
+    expect(recoveryBack?.textContent).toBe("← Back to meetings");
     expect(dom.window.document.querySelectorAll("#publicAccountNavigation [data-page]")).toHaveLength(2);
     expect(dom.window.document.querySelector("#publicAccountNavigation a[href='/notifications']")).toBeNull();
     expect(dom.window.document.querySelector("#workspaceAccountNavigation a[data-page='profile'][href='/account#profile']")).not.toBeNull();
@@ -95,6 +93,17 @@ describe("BT-V1-001 account UI", () => {
     expect(dom.window.document.querySelector('section[data-panel="preferences"] a[data-page="profile"][href="/account#profile"]')?.textContent).toBe("Manage profile");
     expect(accountPage()).toContain("if (initialPage === 'login' || initialPage === 'register') location.replace('/dashboard');");
     dom.window.close();
+
+    const resetDom = new JSDOM(accountPage(), {
+      runScripts: "dangerously",
+      url: `https://example.com/account?token=${"R".repeat(43)}&flow=reset`,
+    });
+    const resetBack = resetDom.window.document.getElementById("accountBackLink");
+    expect(resetDom.window.document.querySelector("main")?.dataset.page).toBe("reset");
+    expect(resetBack?.textContent).toBe("← Back to sign in");
+    resetBack?.dispatchEvent(new resetDom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(resetDom.window.document.querySelector('section[data-panel="login"]')?.hasAttribute("hidden")).toBe(false);
+    resetDom.window.close();
   });
 
   it("uses the premium sign-in treatment with only relevant public navigation", () => {

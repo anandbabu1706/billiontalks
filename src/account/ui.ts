@@ -438,6 +438,12 @@ export function accountPage(): string {
     }
   }
   document.querySelectorAll('[data-page]').forEach((element) => element.addEventListener('click', () => view(element.dataset.page)));
+  document.getElementById('accountBackLink').addEventListener('click', (event) => {
+    if (['forgot', 'reset'].includes(document.querySelector('main').dataset.page)) {
+      event.preventDefault();
+      view('login');
+    }
+  });
   document.querySelectorAll('[data-show]').forEach((element) => element.addEventListener('click', () => {
     const input = element.parentElement.querySelector('input');
     input.type = input.type === 'password' ? 'text' : 'password';
