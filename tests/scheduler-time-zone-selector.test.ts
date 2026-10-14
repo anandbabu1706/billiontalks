@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { JSDOM } from "jsdom";
 
 import { schedulerPreviewPage } from "../src/scheduler/ui";
@@ -98,20 +98,23 @@ describe("BT-V1-003 scheduler time-zone selector", () => {
     const selector = document.getElementById("timezone") as HTMLSelectElement;
 
     expect(selector.value).toBe("Asia/Kolkata");
-    expect([...selector.options].find((option) => option.value === "Asia/Kolkata")?.textContent)
+    expect(selector.type).toBe("hidden");
+    expect(document.getElementById("timezoneSearch")?.getAttribute("role")).toBe("combobox");
+    search.focus();
+    expect([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.dataset.timeZone === "Asia/Kolkata")?.textContent)
       .toContain("UTC+05:30");
-    expect([...selector.options].find((option) => option.value === "Asia/Kolkata")?.textContent)
+    expect([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.dataset.timeZone === "Asia/Kolkata")?.textContent)
       .toContain("India Standard Time (IST) — India (Chennai / Kolkata / Mumbai)");
 
     for (const query of ["India", "IST", "Chennai", "Mumbai", "Kolkata", "Calcutta"]) {
       search.value = query;
       search.dispatchEvent(new Event("input", { bubbles: true }));
-      expect([...selector.options].some((option) => option.value === "Asia/Kolkata"), query).toBe(true);
+      expect([...document.querySelectorAll<HTMLElement>('[role="option"]')].some((option) => option.dataset.timeZone === "Asia/Kolkata"), query).toBe(true);
     }
 
     search.value = "utc";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    const utc = [...selector.options].find((option) => option.value === "UTC");
+    const utc = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.dataset.timeZone === "UTC");
     expect(utc?.textContent).toContain("UTC+00:00");
     expect(utc?.textContent).toContain("Coordinated Universal Time");
   });
@@ -129,12 +132,12 @@ describe("BT-V1-003 scheduler time-zone selector", () => {
     const search = document.getElementById("timezoneSearch") as HTMLInputElement;
     const selector = document.getElementById("timezone") as HTMLSelectElement;
 
+    search.focus();
     search.value = "Ind";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    const indiaOption = [...selector.options].find((option) => option.value === "Asia/Kolkata");
+    const indiaOption = document.querySelector<HTMLElement>('[data-time-zone="Asia/Kolkata"]');
     expect(indiaOption).toBeDefined();
-    selector.value = indiaOption!.value;
-    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    indiaOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(selector.value).toBe("Asia/Kolkata");
     expect(document.getElementById("summaryTimezone")?.textContent)
@@ -150,6 +153,54 @@ describe("BT-V1-003 scheduler time-zone selector", () => {
     expect(selector.value).toBe("Asia/Kolkata");
     expect(document.getElementById("summaryTimezone")?.textContent)
     .toBe("(UTC+05:30) India Standard Time (IST) — India (Chennai / Kolkata / Mumbai)");
+  });
+
+  it("supports combobox keyboard selection, Escape, and outside-click dismissal", async () => {
+    const { dom } = await openScheduler("UTC", true);
+    const { document, Event, MouseEvent, KeyboardEvent } = dom.window;
+    const search = document.getElementById("timezoneSearch") as HTMLInputElement;
+    const selector = document.getElementById("timezone") as HTMLInputElement;
+    const listbox = document.getElementById("timezoneOptions") as HTMLDivElement;
+
+    search.focus();
+    search.value = "Chennai";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    search.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(search.getAttribute("aria-activedescendant")).toBe("timezone-option-Asia-Kolkata");
+    search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(selector.value).toBe("Asia/Kolkata");
+    expect(search.getAttribute("aria-expanded")).toBe("false");
+
+    search.focus();
+    search.value = "Mumbai";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(listbox.hidden).toBe(true);
+    expect(selector.value).toBe("Asia/Kolkata");
+
+    search.focus();
+    search.value = "Sri Lanka";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(listbox.hidden).toBe(true);
+    expect(selector.value).toBe("Asia/Kolkata");
+  });
+
+  it("dismisses the native time picker only after a committed valid time change", async () => {
+    const { dom } = await openScheduler();
+    const { document, Event } = dom.window;
+    const time = document.getElementById("time") as HTMLInputElement;
+    const blur = vi.spyOn(time, "blur");
+
+    time.focus();
+    time.value = "09:30";
+    time.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(time);
+
+    time.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(blur).toHaveBeenCalledOnce();
   });
 
   it("canonicalizes the legacy Calcutta identifier without changing the wall-clock time", async () => {
@@ -173,11 +224,12 @@ describe("BT-V1-003 scheduler time-zone selector", () => {
     const search = document.getElementById("timezoneSearch") as HTMLInputElement;
     const selector = document.getElementById("timezone") as HTMLSelectElement;
 
+    search.focus();
     search.value = "Sri Lanka";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    const sriLanka = [...selector.options].find((option) => option.value === "Asia/Colombo");
+    const sriLanka = document.querySelector<HTMLElement>('[data-time-zone="Asia/Colombo"]');
     expect(sriLanka?.textContent).toContain("Sri Lanka Standard Time (SLST) — Colombo, Sri Lanka");
-    expect(sriLanka?.value).not.toBe("Asia/Kolkata");
+    expect(sriLanka?.dataset.timeZone).not.toBe("Asia/Kolkata");
   });
 
   it("calculates United States daylight-saving offsets for the selected meeting date", async () => {
@@ -187,18 +239,22 @@ describe("BT-V1-003 scheduler time-zone selector", () => {
     const selector = document.getElementById("timezone") as HTMLSelectElement;
     const date = document.getElementById("date") as HTMLInputElement;
 
+    search.focus();
     search.value = "America/New_York";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    selector.value = "America/New_York";
-    selector.dispatchEvent(new Event("change", { bubbles: true }));
+    document.querySelector<HTMLElement>('[data-time-zone="America/New_York"]')?.dispatchEvent(new Event("click", { bubbles: true }));
     date.value = "2026-06-01";
     date.dispatchEvent(new Event("change", { bubbles: true }));
-    expect([...selector.options].find((option) => option.value === "America/New_York")?.textContent)
+    search.value = "New York";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(document.querySelector<HTMLElement>('[data-time-zone="America/New_York"]')?.textContent)
       .toContain("(UTC-04:00) Eastern Daylight Time");
 
     date.value = "2026-11-01";
     date.dispatchEvent(new Event("change", { bubbles: true }));
-    expect([...selector.options].find((option) => option.value === "America/New_York")?.textContent)
+    search.value = "New York";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(document.querySelector<HTMLElement>('[data-time-zone="America/New_York"]')?.textContent)
       .toContain("(UTC-05:00) Eastern Standard Time");
   });
 

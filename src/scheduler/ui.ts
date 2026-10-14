@@ -237,6 +237,40 @@ export function schedulerPreviewPage(): string {
       transition: border-color .15s, box-shadow .15s, background .15s;
     }
     input, select { height: 44px; padding: 0 12px; }
+    .timezone-picker { position: relative; }
+    .timezone-picker input { padding-right: 38px; }
+    .timezone-suggestions {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 5px);
+      right: 0;
+      left: 0;
+      max-height: min(320px, 48vh);
+      overflow-y: auto;
+      padding: 5px;
+      border: 1px solid #dce4ef;
+      border-radius: 11px;
+      background: #fff;
+      box-shadow: 0 14px 34px rgba(23, 43, 77, .18);
+    }
+    .timezone-suggestions[hidden] { display: none; }
+    .timezone-suggestion {
+      display: block;
+      width: 100%;
+      min-height: 42px;
+      padding: 10px 11px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: #344967;
+      font-size: 12px;
+      line-height: 1.4;
+      text-align: left;
+      cursor: pointer;
+    }
+    .timezone-suggestion:hover, .timezone-suggestion[aria-selected="true"] { background: #eef5ff; color: #1559ad; }
+    .timezone-empty { padding: 11px; color: #77869b; font-size: 12px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     textarea { min-height: 92px; padding: 11px 12px; resize: vertical; }
     input::placeholder, textarea::placeholder { color: #abb5c3; }
     input:focus, select:focus, textarea:focus { border-color: #83adf1; background: #fff; box-shadow: 0 0 0 3px rgba(49, 128, 240, .1); }
@@ -451,9 +485,12 @@ export function schedulerPreviewPage(): string {
                   </div>
                   <div class="field">
                     <label for="timezone">Time zone <span class="required">*</span></label>
-                    <input id="timezoneSearch" type="search" autocomplete="off" aria-label="Search time zones" aria-describedby="timezoneHelp" aria-controls="timezone" placeholder="Search city, country, abbreviation or UTC offset">
-                    <select id="timezone" name="timezone" aria-describedby="timezoneHelp">
-                    </select>
+                    <div class="timezone-picker" id="timezonePicker">
+                      <input id="timezoneSearch" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-label="Time zone" aria-describedby="timezoneHelp" aria-controls="timezoneOptions" placeholder="Search city, country, abbreviation or UTC offset">
+                      <input id="timezone" name="timezone" type="hidden">
+                      <div class="timezone-suggestions" id="timezoneOptions" role="listbox" aria-label="Time zone suggestions" hidden></div>
+                    </div>
+                    <span class="sr-only" id="timezoneAnnouncement" role="status" aria-live="polite"></span>
                     <span class="field-help" id="timezoneHelp">Times are shown for the selected meeting date. The original IANA time zone is retained when editing.</span>
                   </div>
                 </div>
@@ -538,6 +575,9 @@ export function schedulerPreviewPage(): string {
       const duration = document.getElementById('duration');
       const timezoneField = document.getElementById('timezone');
       const timezoneSearch = document.getElementById('timezoneSearch');
+      const timezonePicker = document.getElementById('timezonePicker');
+      const timezoneOptions = document.getElementById('timezoneOptions');
+      const timezoneAnnouncement = document.getElementById('timezoneAnnouncement');
       const accessFields = [...form.querySelectorAll('input[name="guestAccess"]')];
       const error = document.getElementById('schedulerError');
       const scheduleList = document.getElementById('scheduleList');
@@ -594,7 +634,7 @@ export function schedulerPreviewPage(): string {
         const formatter = (timeZoneName) => new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName }).formatToParts(meetingDate)
           .find((part) => part.type === 'timeZoneName')?.value || '';
         const offsetName = formatter('longOffset');
-        const offsetMatch = /^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/.exec(offsetName);
+        const offsetMatch = /^GMT([+-])(\\d{1,2})(?::?(\\d{2}))?$/.exec(offsetName);
         const offset = !offsetName || offsetName === 'GMT'
           ? 'UTC+00:00'
           : offsetMatch ? 'UTC' + offsetMatch[1] + offsetMatch[2].padStart(2, '0') + ':' + (offsetMatch[3] || '00') : offsetName.replace(/^GMT/, 'UTC');
@@ -623,22 +663,74 @@ export function schedulerPreviewPage(): string {
         state.selectedTimeZone = selectedZone;
         const query = timezoneSearch.value.trim().toLocaleLowerCase();
         const matches = zones.map((zone) => ({ zone, ...zoneLabel(zone) }))
-          .filter((entry) => !query || entry.search.includes(query) || entry.zone === selectedZone);
-        timezoneField.replaceChildren();
-        for (const entry of matches) {
-          const option = document.createElement('option');
-          option.value = entry.zone;
-          option.textContent = entry.label + (entry.zone === deviceTimezone ? ' (device)' : '');
-          timezoneField.append(option);
-        }
-        if (!matches.some((entry) => entry.zone === selectedZone)) {
-          const selected = { zone: selectedZone, ...zoneLabel(selectedZone) };
-          const option = document.createElement('option');
-          option.value = selected.zone;
-          option.textContent = selected.label;
-          timezoneField.append(option);
-        }
+          .filter((entry) => !query || entry.search.includes(query))
+          .sort((left, right) => {
+            const indianSearch = /^(india|ind|ist|chennai|mumbai|kolkata|calcutta)$/.test(query);
+            if (indianSearch && (left.zone === 'Asia/Kolkata' || right.zone === 'Asia/Kolkata')) {
+              return left.zone === 'Asia/Kolkata' ? -1 : 1;
+            }
+            const leftLabelMatch = left.label.toLocaleLowerCase().includes(query);
+            const rightLabelMatch = right.label.toLocaleLowerCase().includes(query);
+            return Number(rightLabelMatch) - Number(leftLabelMatch) || left.label.localeCompare(right.label);
+          });
         timezoneField.value = selectedZone;
+        if (document.activeElement !== timezoneSearch) timezoneSearch.value = zoneLabel(selectedZone).label;
+        timezoneOptions.replaceChildren();
+        const visibleMatches = matches;
+        if (!visibleMatches.length) {
+          const empty = document.createElement('div');
+          empty.className = 'timezone-empty';
+          empty.textContent = 'No matching time zones.';
+          timezoneOptions.append(empty);
+        }
+        for (const entry of visibleMatches) {
+          const option = document.createElement('div');
+          option.className = 'timezone-suggestion';
+          option.id = 'timezone-option-' + entry.zone.replace(/[^A-Za-z0-9_-]/g, '-');
+          option.setAttribute('role', 'option');
+          option.setAttribute('aria-selected', String(entry.zone === selectedZone));
+          option.dataset.timeZone = entry.zone;
+          option.textContent = entry.label + (entry.zone === deviceTimezone ? ' (device)' : '');
+          timezoneOptions.append(option);
+        }
+        return visibleMatches;
+      }
+      let visibleTimeZones = [];
+      let activeTimeZoneIndex = -1;
+      function showTimeZoneSuggestions() {
+        visibleTimeZones = renderTimeZones();
+        activeTimeZoneIndex = -1;
+        timezoneOptions.hidden = false;
+        timezoneSearch.setAttribute('aria-expanded', 'true');
+        timezoneSearch.removeAttribute('aria-activedescendant');
+        timezoneAnnouncement.textContent = visibleTimeZones.length + ' time zone suggestions.';
+      }
+      function closeTimeZoneSuggestions(restoreSelection = true) {
+        timezoneOptions.hidden = true;
+        timezoneSearch.setAttribute('aria-expanded', 'false');
+        timezoneSearch.removeAttribute('aria-activedescendant');
+        activeTimeZoneIndex = -1;
+        if (restoreSelection) timezoneSearch.value = zoneLabel(state.selectedTimeZone).label;
+      }
+      function setActiveTimeZone(index) {
+        if (!visibleTimeZones.length) return;
+        activeTimeZoneIndex = (index + visibleTimeZones.length) % visibleTimeZones.length;
+        const activeId = 'timezone-option-' + visibleTimeZones[activeTimeZoneIndex].zone.replace(/[^A-Za-z0-9_-]/g, '-');
+        timezoneSearch.setAttribute('aria-activedescendant', activeId);
+        for (const [optionIndex, option] of [...timezoneOptions.querySelectorAll('[role="option"]')].entries()) {
+          option.setAttribute('aria-selected', String(optionIndex === activeTimeZoneIndex));
+        }
+        document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' });
+      }
+      function selectTimeZone(zone) {
+        state.selectedTimeZone = canonicalTimeZone(zone);
+        timezoneField.value = state.selectedTimeZone;
+        timezoneSearch.value = zoneLabel(state.selectedTimeZone).label;
+        closeTimeZoneSuggestions(false);
+        refresh();
+        timezoneSearch.focus();
+        timezoneSearch.select();
+        timezoneAnnouncement.textContent = timezoneSearch.value + ' selected.';
       }
       function ensureTimeZone(zone) {
         zone = canonicalTimeZone(zone);
@@ -706,12 +798,54 @@ export function schedulerPreviewPage(): string {
         if (event.target === date) renderTimeZones();
         refresh();
       });
-      timezoneSearch.addEventListener('input', renderTimeZones);
-      timezoneField.addEventListener('change', () => {
-        state.selectedTimeZone = canonicalTimeZone(timezoneField.value || deviceTimezone);
+      timezoneSearch.addEventListener('focus', () => {
         timezoneSearch.value = '';
-        renderTimeZones();
-        refresh();
+        showTimeZoneSuggestions();
+      });
+      timezoneSearch.addEventListener('input', showTimeZoneSuggestions);
+      timezoneSearch.addEventListener('click', () => {
+        if (!timezoneOptions.hidden) return;
+        if (timezoneSearch.value === zoneLabel(state.selectedTimeZone).label) timezoneSearch.value = '';
+        showTimeZoneSuggestions();
+      });
+      timezoneSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          if (timezoneOptions.hidden) showTimeZoneSuggestions();
+          setActiveTimeZone(activeTimeZoneIndex + 1);
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (timezoneOptions.hidden) showTimeZoneSuggestions();
+          setActiveTimeZone(activeTimeZoneIndex < 0 ? visibleTimeZones.length - 1 : activeTimeZoneIndex - 1);
+        } else if (event.key === 'Enter' && !timezoneOptions.hidden) {
+          event.preventDefault();
+          const entry = visibleTimeZones[activeTimeZoneIndex < 0 ? 0 : activeTimeZoneIndex];
+          if (entry) selectTimeZone(entry.zone);
+        } else if (event.key === 'Escape' && !timezoneOptions.hidden) {
+          event.preventDefault();
+          closeTimeZoneSuggestions();
+        } else if (event.key === 'Tab') {
+          closeTimeZoneSuggestions();
+        }
+      });
+      timezoneOptions.addEventListener('pointerdown', (event) => event.preventDefault());
+      timezoneOptions.addEventListener('click', (event) => {
+        const option = event.target.closest('[data-time-zone]');
+        if (option) selectTimeZone(option.dataset.timeZone);
+      });
+      document.addEventListener('pointerdown', (event) => {
+        if (!timezonePicker.contains(event.target)) closeTimeZoneSuggestions();
+      });
+      timezoneSearch.addEventListener('blur', () => {
+        window.setTimeout(() => {
+          if (!timezonePicker.contains(document.activeElement)) closeTimeZoneSuggestions();
+        }, 0);
+      });
+      time.addEventListener('change', () => {
+        if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(time.value)) return;
+        window.setTimeout(() => {
+          if (document.activeElement === time) time.blur();
+        }, 0);
       });
       function resetForm() {
         form.reset();
