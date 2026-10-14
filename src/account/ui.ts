@@ -86,14 +86,16 @@ export function accountPage(): string {
     button { background: #1f78dd; color: #fff; border: 0; border-radius: 11px; padding: 12px 18px; font: inherit; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .6; cursor: wait; }
     button.secondary { color: #245183; background: #eaf2fc; }
-    nav { display: flex; flex-wrap: nowrap; gap: 8px; margin: 22px 0; }
+    nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
     nav button { font-size: 12px; padding: 9px 12px; }
     nav button[aria-current="page"] { color: #fff; background: linear-gradient(135deg, #176fd2, #318ff0); box-shadow: 0 8px 18px #176fd22e; }
+    nav a.account-nav-link { display: inline-flex; align-items: center; justify-content: center; padding: 9px 12px; border-radius: 11px; color: #245183; background: #eaf2fc; font-size: 12px; font-weight: 700; text-decoration: none; }
+    nav a.account-nav-link[aria-current="page"] { color: #fff; background: linear-gradient(135deg, #176fd2, #318ff0); box-shadow: 0 8px 18px #176fd22e; }
     .brand { display: inline-flex; align-items: center; font-weight: 850; letter-spacing: -.03em; font-size: 23px; color: #1266d2; }
     .logo-surface { position: relative; z-index: 1; display: inline-flex; align-items: center; width: min(100%, 250px); padding: 8px 12px; border-radius: 12px; background: #f9fbff; box-shadow: 0 10px 26px #0315362e; }
     .logo-surface img { display: block; width: 100%; height: auto; }
     .brand-panel .logo-surface { width: min(100%, 250px); }
-    section[hidden], div[hidden] { display: none !important; }
+    section[hidden], div[hidden], nav[hidden] { display: none !important; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
     .form-grid > label, .form-grid > .toggle, .form-grid > .actions { min-width: 0; }
     .wide { grid-column: 1 / -1; }
@@ -148,12 +150,15 @@ export function accountPage(): string {
   </aside>
   <div class="account-content">
   <div class="logo-surface"><img src="${logoUrl}" alt="BillionTalks"></div>
-  <nav aria-label="Account navigation">
+  <nav id="publicAccountNavigation" aria-label="Account navigation">
     <button data-page="login" class="secondary">Sign in</button>
     <button data-page="register" class="secondary">Create account</button>
-    <button data-page="profile" class="secondary">Profile</button>
-    <button data-page="preferences" class="secondary">Settings</button>
-    <a class="back" href="/notifications">Notifications</a>
+  </nav>
+  <nav id="workspaceAccountNavigation" aria-label="Workspace" hidden>
+    <a class="account-nav-link" href="/dashboard">Dashboard</a>
+    <a class="account-nav-link" href="/account#profile" data-account-workspace-page="profile">Profile</a>
+    <a class="account-nav-link" href="/account#preferences" data-account-workspace-page="preferences">Settings</a>
+    <a class="account-nav-link" href="/notifications">Notifications</a>
   </nav>
   <div id="status" class="status" role="status" aria-live="polite"></div>
   <datalist id="countryOptions">${renderCountryOptions(options)}</datalist>
@@ -240,9 +245,10 @@ export function accountPage(): string {
       <p class="hint" id="entitlementSummary">Plan access is loading…</p>
       <div class="actions"><button type="submit">Save settings</button></div>
     </form>
+    <a class="back" href="/account#profile">Manage profile</a>
     <a class="back" href="/notifications">View notifications</a>
   </section>
-  <a class="back" href="/">← Back to meetings</a>
+  <a class="back" id="accountBackLink" href="/">← Back to meetings</a>
   </div>
 </main>
 <script>
@@ -250,6 +256,7 @@ export function accountPage(): string {
   'use strict';
   const panels = [...document.querySelectorAll('[data-panel]')];
   const navigationButtons = [...document.querySelectorAll('nav [data-page]')];
+  const workspaceNavigationLinks = [...document.querySelectorAll('[data-account-workspace-page]')];
   const status = document.getElementById('status');
   const countryDialingCodes = ${JSON.stringify(dialingCodes)};
   const countries = ${JSON.stringify(countryMetadata)};
@@ -260,11 +267,23 @@ export function accountPage(): string {
   function view(page) {
     if (!panels.some((panel) => panel.dataset.panel === page)) page = 'login';
     panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== page; });
+    const backLink = document.getElementById('accountBackLink');
+    if (page === 'forgot' || page === 'reset') {
+      backLink.href = '/account#login';
+      backLink.textContent = '← Back to sign in';
+    } else {
+      backLink.href = '/';
+      backLink.textContent = '← Back to meetings';
+    }
     const activePage = ['login', 'register', 'profile', 'preferences'].includes(page) ? page : null;
     document.querySelector('main').dataset.page = page;
     navigationButtons.forEach((button) => {
       if (button.dataset.page === activePage) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
+    });
+    workspaceNavigationLinks.forEach((link) => {
+      if (link.dataset.accountWorkspacePage === page) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
     });
     history.replaceState(null, '', '#' + page);
     message('');
@@ -336,7 +355,7 @@ export function accountPage(): string {
   }, async () => { view('verify'); message('Account created. Check your email to verify your address.'); });
   submit('verify', 'verify-email', 'POST', (values) => ({ token: values.token }), async () => { view('login'); message('Email verified. You can now sign in.'); });
   submit('resend', 'resend-verification', 'POST', (values) => ({ email: values.email }), async () => message('If an unverified account matches, a new verification email will be sent.'));
-  submit('forgot', 'forgot-password', 'POST', (values) => ({ email: values.email }), async () => message('If an active account matches, reset instructions will be sent.'));
+  submit('forgot', 'forgot-password', 'POST', (values) => ({ email: values.email }), async () => message('If an account matches this email, password reset instructions will be sent.'));
   submit('reset', 'reset-password', 'POST', (values) => ({ token: values.token, newPassword: matching(values, 'newPassword', 'confirmPassword').newPassword }), async () => { view('login'); message('Password changed. Sign in with your new password.'); });
   submit('profile', 'me', 'PATCH', (values, form) => {
     const country = selectedCountry(values.country);
@@ -400,6 +419,24 @@ export function accountPage(): string {
       message('Sign in to access your profile.', true);
     }
   }
+  async function loadWorkspaceNavigation(initialPage) {
+    if (typeof fetch !== 'function') return;
+    try {
+      const response = await fetch('/api/accounts/me', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      if (response.status === 401) return;
+      if (!response.ok) throw Error('Unable to verify your account session.');
+      const payload = await response.json();
+      if (!payload.ok || !payload.data?.account) throw Error('Unable to verify your account session.');
+      document.getElementById('publicAccountNavigation').hidden = true;
+      document.getElementById('workspaceAccountNavigation').hidden = false;
+      workspaceNavigationLinks.forEach((link) => {
+        if (link.dataset.accountWorkspacePage === initialPage) link.setAttribute('aria-current', 'page');
+      });
+      if (initialPage === 'login' || initialPage === 'register') location.replace('/dashboard');
+    } catch {
+      message('Unable to verify your account session. Please reload and try again.', true);
+    }
+  }
   document.querySelectorAll('[data-page]').forEach((element) => element.addEventListener('click', () => view(element.dataset.page)));
   document.querySelectorAll('[data-show]').forEach((element) => element.addEventListener('click', () => {
     const input = element.parentElement.querySelector('input');
@@ -419,6 +456,7 @@ export function accountPage(): string {
   } else {
     view(location.hash.slice(1) || 'login');
   }
+  void loadWorkspaceNavigation(token ? (params.get('flow') === 'reset' ? 'reset' : 'verify') : location.hash.slice(1) || 'login');
 })();
 </script>
 </body>

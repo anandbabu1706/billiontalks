@@ -291,7 +291,7 @@ export async function handleAccountLogout(request: Request, database?: D1Account
 
 const GENERIC_PASSWORD_RESET_RESPONSE = {
   ok: true,
-  data: { message: "If an active account matches that address, password reset instructions will be sent." },
+  data: { message: "If an account matches this email, password reset instructions will be sent." },
 };
 
 export async function handleForgotPassword(request: Request, database?: D1AccountDatabase, mailer?: AccountEmailSender | null): Promise<Response> {

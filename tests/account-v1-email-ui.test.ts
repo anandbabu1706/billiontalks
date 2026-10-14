@@ -80,15 +80,24 @@ describe("BT-V1-001 account UI", () => {
     expect(activePage()).toEqual(["login"]);
     dom.window.document.querySelector('[data-page="forgot"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     expect(activePage()).toEqual([]);
+    const recoveryBack = dom.window.document.getElementById("accountBackLink");
+    expect(recoveryBack?.textContent).toBe("← Back to sign in");
+    expect(recoveryBack?.getAttribute("href")).toBe("/account#login");
     dom.window.history.replaceState(null, "", "#reset");
     dom.window.location.hash = "reset";
     expect(activePage()).toEqual([]);
-    dom.window.document.querySelector('nav [data-page="profile"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-    expect(activePage()).toEqual(["profile"]);
+    expect(recoveryBack?.textContent).toBe("← Back to sign in");
+    expect(recoveryBack?.getAttribute("href")).toBe("/account#login");
+    expect(dom.window.document.querySelectorAll("#publicAccountNavigation [data-page]")).toHaveLength(2);
+    expect(dom.window.document.querySelector("#publicAccountNavigation a[href='/notifications']")).toBeNull();
+    expect(dom.window.document.querySelector("#workspaceAccountNavigation a[href='/account#profile']")).not.toBeNull();
+    expect(dom.window.document.querySelector("#workspaceAccountNavigation a[href='/account#preferences']")).not.toBeNull();
+    expect(dom.window.document.querySelector('section[data-panel="preferences"] a[href="/account#profile"]')?.textContent).toBe("Manage profile");
+    expect(accountPage()).toContain("if (initialPage === 'login' || initialPage === 'register') location.replace('/dashboard');");
     dom.window.close();
   });
 
-  it("uses the premium sign-in treatment with only Sign in active", () => {
+  it("uses the premium sign-in treatment with only relevant public navigation", () => {
     const dom = new JSDOM(accountPage(), {
       runScripts: "dangerously",
       url: "https://example.com/account#login",
@@ -98,7 +107,29 @@ describe("BT-V1-001 account UI", () => {
     expect(main?.querySelectorAll('.logo-surface img[alt="BillionTalks"]').length).toBe(2);
     expect(main?.querySelector('nav [data-page="login"]')?.getAttribute("aria-current")).toBe("page");
     expect(main?.querySelector('nav [data-page="register"]')?.hasAttribute("aria-current")).toBe(false);
-    expect(main?.querySelector('nav [data-page="profile"]')?.hasAttribute("aria-current")).toBe(false);
+    expect(main?.querySelector("#publicAccountNavigation [data-page='profile']")).toBeNull();
+    expect(main?.querySelector("#publicAccountNavigation [data-page='preferences']")).toBeNull();
+    dom.window.close();
+  });
+
+  it("shows session-verified workspace navigation to signed-in users", async () => {
+    const dom = new JSDOM(accountPage(), {
+      runScripts: "dangerously",
+      url: "https://example.com/account#preferences",
+      beforeParse(window) {
+        window.fetch = vi.fn(async (input) => {
+          const path = String(input);
+          if (path === "/api/accounts/me") {
+            return { status: 200, ok: true, json: async () => ({ ok: true, data: { account: { id: "acct_test" } } }) } as Response;
+          }
+          return { status: 200, ok: true, json: async () => ({ ok: true, data: { preferences: {}, entitlement: {} } }) } as Response;
+        });
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dom.window.document.getElementById("publicAccountNavigation")?.hidden).toBe(true);
+    expect(dom.window.document.getElementById("workspaceAccountNavigation")?.hidden).toBe(false);
+    expect(dom.window.document.querySelector('#workspaceAccountNavigation a[data-account-workspace-page="preferences"]')?.getAttribute("aria-current")).toBe("page");
     dom.window.close();
   });
 

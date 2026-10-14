@@ -1139,7 +1139,7 @@ describe("password reset APIs", () => {
     expect(response.status).toBe(202);
     expect(payload).toEqual({
       ok: true,
-      data: { message: "If an active account matches that address, password reset instructions will be sent." },
+      data: { message: "If an account matches this email, password reset instructions will be sent." },
     });
     expect(fixture.resetTokens.size).toBe(1);
     expect(JSON.stringify(payload)).not.toContain("token");
