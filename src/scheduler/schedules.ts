@@ -226,12 +226,12 @@ export class D1ScheduleRepository {
     return result.results.map(mapSchedule);
   }
 
-  async listUpcoming(ownerAccountId: string, now: string): Promise<ScheduledMeeting[]> {
+  async listUpcoming(ownerAccountId: string): Promise<ScheduledMeeting[]> {
     const statement = this.database.prepare(
       `SELECT ${SCHEDULE_COLUMNS} FROM scheduled_meetings
-       WHERE owner_account_id = ? AND status IN ('SCHEDULED', 'STARTING') AND starts_at >= ?
+       WHERE owner_account_id = ? AND status IN ('SCHEDULED', 'STARTING')
        ORDER BY starts_at ASC`,
-    ).bind(ownerAccountId, now);
+    ).bind(ownerAccountId);
     if (!statement.all) throw new Error("The D1 database does not support schedule listing.");
     const result = await statement.all<ScheduleRow>();
     return result.results.map(mapSchedule);
@@ -263,6 +263,7 @@ export class D1ScheduleRepository {
   async claimStart(id: string, ownerAccountId: string, revision: number, now: string): Promise<ScheduledMeeting> {
     const current = await this.getOwned(id, ownerAccountId);
     if (current?.status === "STARTING" && current.revision === revision) return current;
+    if (current?.status === "STARTING" && current.revision === revision + 1) return current;
     const result = await this.database.prepare(
       `UPDATE scheduled_meetings SET status = 'STARTING', revision = revision + 1, updated_at = ?
        WHERE meeting_id = ? AND owner_account_id = ? AND revision = ? AND status = 'SCHEDULED'`,
@@ -302,10 +303,7 @@ export async function ensureScheduledLiveRoom(
   getRoom: (meetingId: string) => Promise<Meeting | undefined>,
 ): Promise<Meeting> {
   const existing = await getRoom(schedule.id);
-  if (existing) {
-    if (existing.hostId !== schedule.ownerAccountId) throw new ScheduleConflictError("The meeting identifier is already in use.");
-    return existing;
-  }
+  if (existing) return validateScheduledLiveRoom(schedule, existing);
   try {
     return await createRoom({
       title: schedule.title,
@@ -315,7 +313,18 @@ export async function ensureScheduledLiveRoom(
     });
   } catch (error) {
     const raced = await getRoom(schedule.id);
-    if (raced?.hostId === schedule.ownerAccountId) return raced;
+    if (raced) return validateScheduledLiveRoom(schedule, raced);
     throw error;
   }
+}
+
+export function validateScheduledLiveRoom(schedule: ScheduledMeeting, room: Meeting): Meeting {
+  if (room.id !== schedule.id || room.hostId !== schedule.ownerAccountId) {
+    throw new ScheduleConflictError("The meeting identifier is already in use.");
+  }
+  if (room.title !== schedule.title || room.accessMode !== schedule.guestAccess) {
+    throw new ScheduleConflictError("The existing room does not match this scheduled meeting.");
+  }
+  if (room.status !== "active") throw new ScheduleConflictError("This meeting room has already ended.");
+  return room;
 }

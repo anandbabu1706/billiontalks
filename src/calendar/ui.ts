@@ -101,6 +101,8 @@ export function calendarPage(): string {
     .status[data-status="ENDED"] { background: #e9f8f2; color: #23765b; }
     .status[data-status="STARTED"], .status[data-status="STARTING"] { background: #f2edff; color: #6848c0; }
     .manage-link { display: inline-block; margin-top: 10px; color: #2873df; font-size: 10px; font-weight: 800; }
+    button.manage-link { padding: 0; border: 0; background: transparent; cursor: pointer; }
+    button.manage-link:focus-visible { outline: 2px solid #2873df; outline-offset: 3px; }
     .week-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid #edf1f6; border-left: 1px solid #edf1f6; }
     .week-day { min-width: 0; min-height: 230px; padding: 10px 8px; border: 0; border-top: 0; border-right: 1px solid #edf1f6; border-bottom: 1px solid #edf1f6; background: #fff; text-align: left; }
     .week-day:hover, .week-day:focus-visible { outline: 2px solid #6aa6f3; outline-offset: -2px; background: #f8fbff; }
@@ -279,6 +281,9 @@ export function calendarPage(): string {
           '<span class="status" data-status="' + escapeHtml(meeting.status) + '">' + escapeHtml(meeting.status.toLowerCase().replace('_', ' ')) + '</span></div>' +
           (meeting.agenda ? '<p>' + escapeHtml(meeting.agenda) + '</p>' : '') +
           invitationStatus +
+          (['SCHEDULED', 'STARTING'].includes(meeting.status)
+            ? '<button class="manage-link" type="button" data-action="start-scheduled" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">' + (meeting.status === 'STARTING' ? 'Continue start' : 'Start meeting') + '</button> · '
+            : '') +
           '<a class="manage-link" href="/schedule?meeting=' + encodeURIComponent(meeting.id) + '">View meeting details and manage</a> · ' +
           '<a class="manage-link" href="/contacts?meeting=' + encodeURIComponent(meeting.id) + '">Manage invitations</a></article>';
       }
@@ -366,6 +371,29 @@ export function calendarPage(): string {
           status.append(' ', retry);
         }
       }
+      async function startScheduledMeeting(button) {
+        button.disabled = true;
+        error.textContent = '';
+        try {
+          const response = await fetch('/api/schedules/' + encodeURIComponent(button.dataset.id) + '/start', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ revision: Number(button.dataset.revision) }),
+          });
+          const payload = await response.json();
+          if (response.status === 401) { window.location.href = '/account#login'; throw new Error('Sign in to start this meeting.'); }
+          if (!response.ok || !payload.ok || !payload.data?.meeting?.id) throw new Error(payload.error || 'Unable to start this scheduled meeting.');
+          window.location.href = '/?meeting=' + encodeURIComponent(payload.data.meeting.id);
+        } catch (failure) {
+          error.textContent = failure instanceof Error ? failure.message : 'Unable to start this scheduled meeting.';
+          button.disabled = false;
+        }
+      }
+      content.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-action="start-scheduled"]');
+        if (button) void startScheduledMeeting(button);
+      });
       function movePeriod(amount) {
         if (state.view === 'month') {
           const [year, month] = state.date.split('-').map(Number);

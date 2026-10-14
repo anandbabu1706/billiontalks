@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { JSDOM } from "jsdom";
 
 import type { AccountEmailSender } from "../src/account/email-delivery";
 import type { D1AccountDatabase, D1AccountStatement } from "../src/account/repository";
@@ -352,6 +353,51 @@ describe("BT-V1-005 contacts, invitations, and RSVP", () => {
       body: JSON.stringify({ token: "A".repeat(43), response: "ACCEPTED" }),
     }), { ACCOUNT_DB: databaseFixture().database });
     expect(csrf.status).toBe(403);
+  });
+
+  it("opens the exact scheduled meeting from an accepted invitation link", async () => {
+    const token = "A".repeat(43);
+    const meetingId = "btm_owner_schedule_01";
+    const dom = new JSDOM(rsvpPage(), {
+      runScripts: "dangerously",
+      url: `https://meet.example/rsvp#token=${token}`,
+      beforeParse(window) {
+        Object.defineProperty(window, "fetch", {
+          value: async (input: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body || "{}")) as { response?: string };
+            const data = {
+              meetingId,
+              meetingTitle: "Private planning",
+              startsAt: "2026-11-15T18:00:00.000Z",
+              timeZone: "America/New_York",
+              durationMinutes: 60,
+              guestAccess: "HOST_APPROVAL",
+              meetingStatus: body.response ? "STARTED" : "SCHEDULED",
+              status: body.response || "PENDING",
+              expiresAt: "2026-11-16T00:00:00.000Z",
+            };
+            return { ok: true, status: 200, json: async () => ({ ok: true, data }) };
+          },
+        });
+      },
+    });
+    try {
+      const { document, MouseEvent } = dom.window;
+      for (let attempt = 0; attempt < 20 && document.getElementById("actions")?.hidden; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(document.getElementById("actions")?.hidden).toBe(false);
+      document.querySelector<HTMLButtonElement>('[data-response="ACCEPTED"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      for (let attempt = 0; attempt < 20 && document.getElementById("meetingLink")?.hidden; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const meetingLink = document.getElementById("meetingLink") as HTMLAnchorElement;
+      expect(meetingLink.hidden).toBe(false);
+      expect(meetingLink.href).toBe(`https://meet.example/?meeting=${meetingId}`);
+      expect(document.getElementById("details")?.textContent).toContain("host approval");
+    } finally {
+      dom.window.close();
+    }
   });
 });
 

@@ -272,7 +272,9 @@ export function dashboardPage(): string {
       text-transform: uppercase;
     }
     .meeting-action-link:hover, .meeting-action-link:focus-visible { background: rgba(255, 255, 255, .25); outline: 2px solid rgba(255, 255, 255, .55); outline-offset: 2px; }
-    .next-meeting-link { display: inline-block; margin-top: 10px; color: #2873df; font-size: 10px; font-weight: 800; }
+    .next-meeting-link, .meeting-start-action { display: inline-block; margin-top: 10px; color: #2873df; font-size: 10px; font-weight: 800; }
+    .meeting-start-action { padding: 0; border: 0; background: transparent; cursor: pointer; }
+    .meeting-start-action:focus-visible { outline: 2px solid #2873df; outline-offset: 3px; }
     .content-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .85fr); gap: 24px; }
     .left-column, .right-column { display: grid; align-content: start; gap: 24px; min-width: 0; }
     .panel {
@@ -326,7 +328,7 @@ export function dashboardPage(): string {
     .history-list { display: grid; gap: 9px; }
     .meeting {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: minmax(0, 1fr) auto auto auto;
       align-items: center;
       gap: 15px;
       padding: 13px 14px;
@@ -337,7 +339,9 @@ export function dashboardPage(): string {
     .meeting strong, .meeting small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .meeting strong { color: #36445b; font-size: 12px; }
     .meeting small { margin-top: 4px; color: #98a4b5; font-size: 10px; }
-    .meeting a { color: #2873df; font-size: 10px; font-weight: 800; white-space: nowrap; }
+    .meeting a, .meeting button { color: #2873df; font-size: 10px; font-weight: 800; white-space: nowrap; }
+    .meeting button { padding: 0; border: 0; background: transparent; cursor: pointer; }
+    .meeting button:focus-visible { outline: 2px solid #2873df; outline-offset: 3px; }
     .status { padding: 4px 7px; border-radius: 999px; color: #23765b; background: #e9f8f2; font-size: 8px; font-weight: 850; letter-spacing: .05em; text-transform: uppercase; }
     .empty { padding: 20px 10px; color: #8c99ac; font-size: 11px; text-align: center; }
     .calendar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
@@ -562,6 +566,7 @@ export function dashboardPage(): string {
             </section>
             <section class="panel" aria-labelledby="upcomingTitle">
               <div class="panel-heading"><h2 id="upcomingTitle">Upcoming Meetings</h2><span class="panel-meta" id="upcomingMeta">Your schedule</span></div>
+              <div class="history-list" id="overdueList" aria-label="Scheduled meetings that still need to start"></div>
               <div class="tabs" id="upcomingFilters" aria-label="Filter upcoming meetings">
                 <button class="tab active" type="button" data-filter="today" aria-pressed="true">Today</button><button class="tab" type="button" data-filter="tomorrow" aria-pressed="false">Tomorrow</button><button class="tab" type="button" data-filter="week" aria-pressed="false">This Week</button><button class="tab" type="button" data-filter="later" aria-pressed="false">Later</button>
               </div>
@@ -629,6 +634,26 @@ export function dashboardPage(): string {
         if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to complete this request.');
         return payload.data;
       }
+      async function startScheduledMeeting(button) {
+        button.disabled = true;
+        showError('');
+        try {
+          const result = await api('/api/schedules/' + encodeURIComponent(button.dataset.id) + '/start', {
+            method: 'POST',
+            body: JSON.stringify({ revision: Number(button.dataset.revision) }),
+          });
+          window.location.href = '/?meeting=' + encodeURIComponent(result.meeting.id);
+        } catch (failure) {
+          showError(failure instanceof Error ? failure.message : 'Unable to start this scheduled meeting.');
+          button.disabled = false;
+        }
+      }
+      function addStartAction(container) {
+        container.addEventListener('click', (event) => {
+          const button = event.target.closest('[data-action="start-scheduled"]');
+          if (button) void startScheduledMeeting(button);
+        });
+      }
       function renderClock(now) {
         document.getElementById('localDate').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(now);
         document.getElementById('localTime').textContent = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(now);
@@ -666,6 +691,10 @@ export function dashboardPage(): string {
       }
       function renderUpcoming() {
         const now = new Date();
+        const startable = upcomingMeetings.filter((meeting) => ['SCHEDULED', 'STARTING'].includes(meeting.status));
+        const overdue = startable.filter((meeting) => Date.parse(meeting.startsAt) <= now.getTime());
+        const overdueList = document.getElementById('overdueList');
+        overdueList.innerHTML = overdue.map((meeting) => '<article class="meeting"><div><strong>' + escapeHtml(meeting.title) + '</strong><small>Scheduled ' + escapeHtml(formatScheduledDate(meeting, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) + ' · ' + escapeHtml(meeting.timeZone) + '</small></div><a href="/schedule?meeting=' + encodeURIComponent(meeting.id) + '">View details</a><span class="status">Needs start</span><button type="button" data-action="start-scheduled" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">' + (meeting.status === 'STARTING' ? 'Continue start' : 'Start meeting') + '</button></article>').join('');
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         const dayAfterTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
@@ -675,7 +704,7 @@ export function dashboardPage(): string {
         const boundary = { today: [startOf(today), startOf(tomorrow)], tomorrow: [startOf(tomorrow), startOf(dayAfterTomorrow)], week: [startOf(dayAfterTomorrow), startOf(nextWeek)], later: [startOf(nextWeek), Infinity] }[activeUpcomingFilter];
         const matches = upcomingMeetings.filter((meeting) => {
           const instant = new Date(meeting.startsAt).getTime();
-          return instant >= boundary[0] && instant < boundary[1];
+          return instant > now.getTime() && instant >= boundary[0] && instant < boundary[1];
         });
         upcomingFilters.querySelectorAll('[data-filter]').forEach((button) => {
           const active = button.dataset.filter === activeUpcomingFilter;
@@ -683,13 +712,13 @@ export function dashboardPage(): string {
           button.setAttribute('aria-pressed', String(active));
         });
         if (!matches.length) {
-          upcomingList.innerHTML = '<div class="empty">' + (upcomingMeetings.length ? 'No meetings scheduled for ' + escapeHtml(activeUpcomingFilter === 'week' ? 'the rest of this week' : activeUpcomingFilter) + '.' : 'No upcoming meetings. Schedule a meeting to see it here.') + '</div>';
+          upcomingList.innerHTML = '<div class="empty">' + (startable.length ? 'No future meetings scheduled for ' + escapeHtml(activeUpcomingFilter === 'week' ? 'the rest of this week' : activeUpcomingFilter) + '.' : 'No upcoming meetings. Schedule a meeting to see it here.') + '</div>';
           return;
         }
-        upcomingList.innerHTML = matches.map((meeting) => '<article class="meeting"><div><strong>' + escapeHtml(meeting.title) + '</strong><small>' + escapeHtml(formatScheduledDate(meeting, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) + ' · ' + escapeHtml(meeting.timeZone) + '</small></div><a href="/schedule?meeting=' + encodeURIComponent(meeting.id) + '">View schedule</a><span class="status">Scheduled</span></article>').join('');
+        upcomingList.innerHTML = matches.map((meeting) => '<article class="meeting"><div><strong>' + escapeHtml(meeting.title) + '</strong><small>' + escapeHtml(formatScheduledDate(meeting, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) + ' · ' + escapeHtml(meeting.timeZone) + '</small></div><a href="/schedule?meeting=' + encodeURIComponent(meeting.id) + '">View schedule</a><span class="status">' + (meeting.status === 'STARTING' ? 'Starting' : 'Scheduled') + '</span><button type="button" data-action="start-scheduled" data-id="' + escapeHtml(meeting.id) + '" data-revision="' + meeting.revision + '">' + (meeting.status === 'STARTING' ? 'Continue start' : 'Start meeting') + '</button></article>').join('');
       }
       function renderNextMeeting() {
-        const next = upcomingMeetings[0];
+        const next = upcomingMeetings.find((meeting) => ['SCHEDULED', 'STARTING'].includes(meeting.status));
         const content = document.getElementById('nextMeetingContent');
         const meta = document.getElementById('nextMeetingMeta');
         if (!next) {
@@ -697,9 +726,13 @@ export function dashboardPage(): string {
           content.innerHTML = '<span class="empty-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></span><div><strong>No upcoming meeting</strong><p>Your scheduled meetings will appear here.</p><a class="next-meeting-link" href="/schedule">Schedule a meeting</a></div>';
           return;
         }
-        meta.textContent = 'Next scheduled';
-        content.innerHTML = '<span class="empty-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></span><div><strong>' + escapeHtml(next.title) + '</strong><p>' + escapeHtml(formatScheduledDate(next, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) + ' · ' + escapeHtml(next.timeZone) + '</p><a class="next-meeting-link" href="/schedule?meeting=' + encodeURIComponent(next.id) + '">View or edit meeting</a></div>';
+        const needsStart = Date.parse(next.startsAt) <= Date.now();
+        meta.textContent = needsStart ? 'Needs start' : 'Next scheduled';
+        content.innerHTML = '<span class="empty-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></span><div><strong>' + escapeHtml(next.title) + '</strong><p>' + escapeHtml(formatScheduledDate(next, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) + ' · ' + escapeHtml(next.timeZone) + '</p><a class="next-meeting-link" href="/schedule?meeting=' + encodeURIComponent(next.id) + '">View meeting details</a><br><button class="meeting-start-action" type="button" data-action="start-scheduled" data-id="' + escapeHtml(next.id) + '" data-revision="' + next.revision + '">' + (next.status === 'STARTING' ? 'Continue start' : 'Start meeting') + '</button></div>';
       }
+      addStartAction(document.getElementById('upcomingList'));
+      addStartAction(document.getElementById('overdueList'));
+      addStartAction(document.getElementById('nextMeetingContent'));
       upcomingFilters.addEventListener('click', (event) => {
         const button = event.target.closest('[data-filter]');
         if (!button) return;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { D1AccountDatabase, D1AccountStatement } from "../src/account/repository";
 import app from "../src/index";
@@ -53,7 +53,8 @@ function scheduleDatabaseFixture() {
           return {
             results: [...rows.values()]
               .filter((row) => row.owner_account_id === owner)
-              .filter((row) => !query.includes("starts_at >= ?") || (row.starts_at >= from! && ["SCHEDULED", "STARTING"].includes(row.status)))
+              .filter((row) => !query.includes("status IN ('SCHEDULED', 'STARTING')") || ["SCHEDULED", "STARTING"].includes(row.status))
+              .filter((row) => !query.includes("starts_at >= ?") || row.starts_at >= from!)
               .sort((left, right) => left.starts_at.localeCompare(right.starts_at))
               .map((row) => ({ ...row }) as T),
           };
@@ -204,22 +205,84 @@ describe("BT-V1-003 scheduled meeting lifecycle", () => {
     expect(rows.get(created.id)?.status).toBe("CANCELLED");
   });
 
-  it("does not create a live room during scheduling and starts the stable room only through the owner action", async () => {
+  it("starts the same stable room early or late, authorizes only its host, and returns that room on retries", async () => {
     const { database } = scheduleDatabaseFixture();
     const repository = new InMemoryMeetingRepository();
     const meetingService = new MeetingService(repository, new NullMediaProvider());
+    const createRoom = vi.spyOn(meetingService, "createMeeting");
     const createdResponse = await handleScheduledMeetingRequest(request("/api/schedules", "POST", validSchedule), "account-1", database, meetingService, now);
     const created = (await createdResponse.json() as { data: { id: string; revision: number } }).data;
     expect(await meetingService.getMeeting(created.id)).toBeUndefined();
 
+    const unauthorized = await handleScheduledMeetingRequest(request(`/api/schedules/${created.id}/start`, "POST", { revision: created.revision }), "account-2", database, meetingService, now);
+    expect(unauthorized.status).toBe(404);
+
     const startResponse = await handleScheduledMeetingRequest(request(`/api/schedules/${created.id}/start`, "POST", { revision: created.revision }), "account-1", database, meetingService, now);
     expect(startResponse.status, await startResponse.clone().text()).toBe(200);
-    const started = (await startResponse.json() as { data: { schedule: { status: string; revision: number }; meeting: { id: string; hostId: string; status: string } } }).data;
+    const started = (await startResponse.json() as { data: { schedule: { status: string; revision: number }; meeting: { id: string; hostId: string; status: string; accessMode: string } } }).data;
     expect(started.schedule).toMatchObject({ status: "STARTED", revision: 3 });
     expect(started.meeting).toMatchObject({ id: created.id, hostId: "account-1", status: "active" });
+    expect(started.meeting.accessMode).toBe("HOST_APPROVAL");
+    expect(createRoom).toHaveBeenCalledTimes(1);
+
+    const retryResponse = await handleScheduledMeetingRequest(request(`/api/schedules/${created.id}/start`, "POST", { revision: created.revision }), "account-1", database, meetingService, now);
+    expect(retryResponse.status).toBe(200);
+    const retry = (await retryResponse.json() as { data: { schedule: { id: string }; meeting: { id: string; hostId: string } } }).data;
+    expect(retry.schedule.id).toBe(created.id);
+    expect(retry.meeting).toMatchObject({ id: created.id, hostId: "account-1" });
+    expect(createRoom).toHaveBeenCalledTimes(1);
+
     expect((await new D1ScheduleRepository(database).getPublicStatus(created.id))).toBe("STARTED");
-    await new D1ScheduleRepository(database).markEnded(created.id, "2026-10-13T00:05:00.000Z");
+    await meetingService.endMeeting(created.id, "account-1");
+    await new D1ScheduleRepository(database).markEnded(created.id, now.toISOString());
     expect((await new D1ScheduleRepository(database).getPublicStatus(created.id))).toBe("ENDED");
+    const endedRetry = await handleScheduledMeetingRequest(request(`/api/schedules/${created.id}/start`, "POST", { revision: created.revision }), "account-1", database, meetingService, now);
+    expect(endedRetry.status).toBe(409);
+    expect(createRoom).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps late scheduled meetings in the host's upcoming/startable list and refuses canceled starts", async () => {
+    const { database } = scheduleDatabaseFixture();
+    const createdResponse = await handleScheduledMeetingRequest(request("/api/schedules", "POST", validSchedule), "account-1", database, undefined, now);
+    const created = (await createdResponse.json() as { data: { id: string; revision: number } }).data;
+
+    const lateNow = new Date("2026-10-15T00:00:00.000Z");
+    const upcoming = await handleScheduledMeetingRequest(request("/api/schedules?upcoming=1", "GET"), "account-1", database, undefined, lateNow);
+    expect((await upcoming.json() as { data: Array<{ id: string }> }).data.map((meeting) => meeting.id)).toContain(created.id);
+
+    const meetingService = new MeetingService(new InMemoryMeetingRepository(), new NullMediaProvider());
+    const lateStart = await handleScheduledMeetingRequest(request(`/api/schedules/${created.id}/start`, "POST", { revision: created.revision }), "account-1", database, meetingService, lateNow);
+    expect(lateStart.status).toBe(200);
+    expect((await lateStart.json() as { data: { meeting: { id: string } } }).data.meeting.id).toBe(created.id);
+
+    const cancelledResponse = await handleScheduledMeetingRequest(request("/api/schedules", "POST", { ...validSchedule, title: "Cancelled review" }), "account-1", database, undefined, now);
+    const cancelledMeeting = (await cancelledResponse.json() as { data: { id: string; revision: number } }).data;
+    const cancelled = await handleScheduledMeetingRequest(request(`/api/schedules/${cancelledMeeting.id}`, "DELETE", { revision: cancelledMeeting.revision }), "account-1", database, undefined, lateNow);
+    expect(cancelled.status).toBe(200);
+    const start = await handleScheduledMeetingRequest(request(`/api/schedules/${cancelledMeeting.id}/start`, "POST", { revision: cancelledMeeting.revision }), "account-1", database, meetingService, lateNow);
+    expect(start.status).toBe(409);
+    expect(await meetingService.getMeeting(cancelledMeeting.id)).toBeUndefined();
+  });
+
+  it("does not activate a same-ID room with a different host, title, or guest policy", async () => {
+    const { database } = scheduleDatabaseFixture();
+    const meetingService = new MeetingService(new InMemoryMeetingRepository(), new NullMediaProvider());
+    const createdResponse = await handleScheduledMeetingRequest(request("/api/schedules", "POST", validSchedule), "account-1", database, undefined, now);
+    const created = (await createdResponse.json() as { data: { id: string; revision: number } }).data;
+    const unrelatedRoom = await meetingService.createMeeting({
+      title: "Instant meeting with a different identity",
+      hostUserId: "account-1",
+      accessMode: "OPEN",
+      meetingId: created.id,
+    });
+
+    const start = await handleScheduledMeetingRequest(request(`/api/schedules/${created.id}/start`, "POST", { revision: created.revision }), "account-1", database, meetingService, now);
+    expect(start.status).toBe(409);
+    expect(await meetingService.getMeeting(created.id)).toMatchObject({
+      title: unrelatedRoom.title,
+      accessMode: "OPEN",
+    });
+    expect((await new D1ScheduleRepository(database).getOwned(created.id, "account-1"))?.status).toBe("SCHEDULED");
   });
 
   it("requires an authenticated account at the Worker boundary and gives pre-start share links a clear status", async () => {

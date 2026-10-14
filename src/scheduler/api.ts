@@ -1,7 +1,7 @@
 import type { D1AccountDatabase } from "../account/repository";
 import type { MeetingService } from "../meeting";
 import { createAccountNotification } from "../settings/api";
-import { D1ScheduleRepository, ensureScheduledLiveRoom, ScheduleConflictError, ScheduleValidationError, validateScheduledMeetingInput } from "./schedules";
+import { D1ScheduleRepository, ensureScheduledLiveRoom, ScheduleConflictError, ScheduleValidationError, validateScheduledLiveRoom, validateScheduledMeetingInput } from "./schedules";
 
 function jsonResponse(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -81,7 +81,7 @@ export async function handleScheduledMeetingRequest(
   try {
     if (collection && request.method === "GET") {
       const meetings = url.searchParams.get("upcoming") === "1"
-        ? await repository.listUpcoming(ownerAccountId, now.toISOString())
+        ? await repository.listUpcoming(ownerAccountId)
         : await repository.listOwned(ownerAccountId);
       return jsonResponse({ ok: true, data: meetings.map((meeting) => ({ ...meeting, shareUrl: shareUrl(request, meeting.id) })) });
     }
@@ -150,13 +150,13 @@ export async function handleScheduledMeetingRequest(
       const current = await repository.getOwned(id, ownerAccountId);
       if (!current) return jsonResponse({ ok: false, error: "Scheduled meeting not found." }, 404);
       if (current.status === "STARTED") {
-        if (revision !== current.revision) throw new ScheduleConflictError("This meeting changed before it could start. Refresh and try again.");
         const existing = await meetingService.getMeeting(id);
-        if (!existing || existing.hostId !== ownerAccountId) {
-          return jsonResponse({ ok: false, error: "The started meeting room is unavailable." }, 409);
-        }
-        return jsonResponse({ ok: true, data: { schedule: current, meeting: existing, shareUrl: shareUrl(request, id) } });
+        if (!existing) return jsonResponse({ ok: false, error: "The started meeting room is unavailable." }, 409);
+        const room = validateScheduledLiveRoom(current, existing);
+        return jsonResponse({ ok: true, data: { schedule: current, meeting: room, shareUrl: shareUrl(request, id) } });
       }
+      const existingRoom = await meetingService.getMeeting(id);
+      if (existingRoom) validateScheduledLiveRoom(current, existingRoom);
       const starting = await repository.claimStart(id, ownerAccountId, revision, now.toISOString());
       const room = await ensureScheduledLiveRoom(
         starting,

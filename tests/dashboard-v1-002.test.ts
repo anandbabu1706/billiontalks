@@ -1,7 +1,41 @@
 import { describe, expect, it } from "vitest";
+import { JSDOM } from "jsdom";
 
 import app from "../src/index";
 import { dashboardPage } from "../src/dashboard/ui";
+
+let startRequest: { url: string; init?: RequestInit } | undefined;
+
+async function openDashboard(): Promise<JSDOM> {
+  startRequest = undefined;
+  const dom = new JSDOM(dashboardPage(), {
+    runScripts: "dangerously",
+    url: "https://dashboard.example/dashboard",
+    beforeParse(window) {
+      Object.defineProperty(window, "fetch", {
+        value: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          if (url.startsWith("/api/schedules/") && url.endsWith("/start")) {
+            startRequest = { url, init };
+            return { ok: false, status: 409, json: async () => ({ ok: false, error: "Refresh to continue." }) };
+          }
+          const data = url === "/api/accounts/me"
+            ? { account: { fullName: "Dashboard Owner", email: "owner@example.test" } }
+            : url === "/api/schedules?upcoming=1"
+              ? [{ id: "btm_dashboard_late01", title: "Late planning", startsAt: "2000-01-01T12:00:00.000Z", timeZone: "UTC", status: "SCHEDULED", revision: 4 }]
+              : url === "/api/notifications?limit=1"
+                ? { unreadCount: 0 }
+                : [];
+          return { ok: true, status: 200, json: async () => ({ ok: true, data }) };
+        },
+      });
+    },
+  });
+  for (let attempt = 0; attempt < 20 && !dom.window.document.querySelector("#overdueList [data-action='start-scheduled']"); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return dom;
+}
 
 function emptyAccountDatabase() {
   const statement = {
@@ -64,6 +98,10 @@ describe("BT-V1-002 signed-in dashboard", () => {
     expect(html).toContain("api('/api/meetings/history')");
     expect(html).toContain("api('/api/accounts/me')");
     expect(html).toContain("api('/api/schedules?upcoming=1')");
+    expect(html).toContain("data-action=\"start-scheduled\"");
+    expect(html).toContain("api('/api/schedules/' + encodeURIComponent(button.dataset.id) + '/start'");
+    expect(html).toContain('id="overdueList"');
+    expect(html).toContain("Needs start");
     expect(html).toContain("api('/api/accounts/logout'");
     expect(html).toContain("Guest joining remains available");
     expect(html).toContain("Monthly view");
@@ -98,5 +136,26 @@ describe("BT-V1-002 signed-in dashboard", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ ok: false, error: "Authentication required." });
+  });
+
+  it("keeps an overdue schedule visible and starts that scheduled ID from the Dashboard", async () => {
+    const dom = await openDashboard();
+    try {
+      const { document, MouseEvent } = dom.window;
+      const startButton = document.querySelector<HTMLButtonElement>("#overdueList [data-action='start-scheduled']");
+      expect(startButton?.textContent).toBe("Start meeting");
+      expect(document.getElementById("overdueList")?.textContent).toContain("Late planning");
+      startButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      for (let attempt = 0; attempt < 20 && !startRequest; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      for (let attempt = 0; attempt < 20 && document.getElementById("error")?.textContent !== "Refresh to continue."; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(startRequest?.url).toBe("/api/schedules/btm_dashboard_late01/start");
+      expect(JSON.parse(String(startRequest?.init?.body))).toEqual({ revision: 4 });
+      expect(document.getElementById("error")?.textContent).toBe("Refresh to continue.");
+      expect(startButton?.disabled).toBe(false);
+    } finally {
+      dom.window.close();
+    }
   });
 });

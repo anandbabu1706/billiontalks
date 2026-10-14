@@ -30,6 +30,7 @@ const calendarMeetings = [
     durationMinutes: 60,
     guestAccess: "HOST_APPROVAL",
     status: "SCHEDULED",
+    revision: 1,
   },
   {
     id: "btm_calendar_002",
@@ -40,23 +41,30 @@ const calendarMeetings = [
     durationMinutes: 30,
     guestAccess: "OPEN",
     status: "CANCELLED",
+    revision: 2,
   },
 ];
 
 const openDoms: JSDOM[] = [];
+let startRequest: { url: string; init?: RequestInit } | undefined;
 
 afterEach(() => {
   openDoms.splice(0).forEach((dom) => dom.window.close());
 });
 
 async function openCalendar(): Promise<JSDOM> {
+  startRequest = undefined;
   const dom = new JSDOM(calendarPage(), {
     runScripts: "dangerously",
     url: "https://calendar.example/calendar",
     beforeParse(window) {
       Object.defineProperty(window, "fetch", {
-        value: async (input: RequestInfo | URL) => {
+        value: async (input: RequestInfo | URL, init?: RequestInit) => {
           const url = String(input);
+          if (url.endsWith("/start")) {
+            startRequest = { url, init };
+            return { ok: false, status: 409, json: async () => ({ ok: false, error: "Refresh to continue." }) };
+          }
           const payload = url === "/api/accounts/me"
             ? { ok: true, data: { account: { fullName: "Calendar Owner", email: "owner@example.test" } } }
             : { ok: true, data: calendarMeetings };
@@ -111,6 +119,18 @@ describe("BT-V1-004 calendar and time zones", () => {
     expect(document.getElementById("selectedDay")?.textContent).toMatch(/Tuesday, (October 13|13 October) 2026/);
     expect(document.getElementById("selectedDay")?.textContent).toContain("scheduled in Asia/Kolkata");
     expect(document.querySelector('#selectedDay a[href="/schedule?meeting=btm_calendar_001"]')).not.toBeNull();
+    const startButton = document.querySelector<HTMLButtonElement>('#selectedDay button[data-action="start-scheduled"][data-id="btm_calendar_001"][data-revision="1"]');
+    expect(startButton?.textContent).toBe("Start meeting");
+    expect(document.querySelector('#selectedDay button[data-id="btm_calendar_002"]')).toBeNull();
+    startButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    for (let attempt = 0; attempt < 20 && !startRequest; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let attempt = 0; attempt < 20 && document.getElementById("calendarError")?.textContent !== "Refresh to continue."; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(startRequest?.url).toBe("/api/schedules/btm_calendar_001/start");
+    expect(JSON.parse(String(startRequest?.init?.body))).toEqual({ revision: 1 });
+    expect(document.getElementById("calendarError")?.textContent).toBe("Refresh to continue.");
+    expect(startButton?.disabled).toBe(false);
 
     click('[data-view="week"]');
     expect(document.getElementById("weekView")?.hidden).toBe(false);
