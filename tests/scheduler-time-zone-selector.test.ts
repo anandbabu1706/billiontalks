@@ -24,8 +24,13 @@ afterEach(() => {
   openDoms.splice(0).forEach((dom) => dom.window.close());
 });
 
-async function openScheduler(preferredTimezone = "Asia/Kolkata", timezoneExplicit = true) {
+async function openScheduler(
+  preferredTimezone = "Asia/Kolkata",
+  timezoneExplicit = true,
+  initialMeeting = existingMeeting,
+) {
   let submitted: Record<string, unknown> | null = null;
+  let persistedMeeting = { ...initialMeeting };
   const dom = new JSDOM(schedulerPreviewPage(), {
     runScripts: "dangerously",
     url: "https://meet.example/schedule",
@@ -52,12 +57,13 @@ async function openScheduler(preferredTimezone = "Asia/Kolkata", timezoneExplici
               },
             };
           } else if (path === "/api/schedules") {
-            data = [existingMeeting];
-          } else if (path === "/api/schedules/" + existingMeeting.id && init?.method === "PUT") {
+            data = [persistedMeeting];
+          } else if (path === "/api/schedules/" + initialMeeting.id && init?.method === "PUT") {
             submitted = JSON.parse(String(init.body)) as Record<string, unknown>;
-            data = existingMeeting;
-          } else if (path === "/api/schedules/" + existingMeeting.id) {
-            data = existingMeeting;
+            persistedMeeting = { ...persistedMeeting, ...submitted };
+            data = persistedMeeting;
+          } else if (path === "/api/schedules/" + initialMeeting.id) {
+            data = persistedMeeting;
           } else {
             data = {};
           }
@@ -95,17 +101,83 @@ describe("BT-V1-003 scheduler time-zone selector", () => {
     expect([...selector.options].find((option) => option.value === "Asia/Kolkata")?.textContent)
       .toContain("UTC+05:30");
     expect([...selector.options].find((option) => option.value === "Asia/Kolkata")?.textContent)
-      .toContain("India Standard Time — Kolkata, India");
+      .toContain("India Standard Time (IST) — India (Chennai / Kolkata / Mumbai)");
 
-    search.value = "india";
-    search.dispatchEvent(new Event("input", { bubbles: true }));
-    expect([...selector.options].some((option) => option.value === "Asia/Kolkata")).toBe(true);
+    for (const query of ["India", "IST", "Chennai", "Mumbai", "Kolkata", "Calcutta"]) {
+      search.value = query;
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      expect([...selector.options].some((option) => option.value === "Asia/Kolkata"), query).toBe(true);
+    }
 
     search.value = "utc";
     search.dispatchEvent(new Event("input", { bubbles: true }));
     const utc = [...selector.options].find((option) => option.value === "UTC");
     expect(utc?.textContent).toContain("UTC+00:00");
     expect(utc?.textContent).toContain("Coordinated Universal Time");
+  });
+
+  it("keeps the chosen zone synchronized through searching, summary, save, and reopening", async () => {
+    const utcMeeting = {
+      ...existingMeeting,
+      timeZone: "UTC",
+      startsAt: "2026-11-10T10:30:00.000Z",
+    };
+    const { dom, getSubmitted } = await openScheduler("UTC", true, utcMeeting);
+    const { document, Event, MouseEvent } = dom.window;
+    document.querySelector<HTMLButtonElement>("[data-action='edit']")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const search = document.getElementById("timezoneSearch") as HTMLInputElement;
+    const selector = document.getElementById("timezone") as HTMLSelectElement;
+
+    search.value = "Ind";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    const indiaOption = [...selector.options].find((option) => option.value === "Asia/Kolkata");
+    expect(indiaOption).toBeDefined();
+    selector.value = indiaOption!.value;
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(selector.value).toBe("Asia/Kolkata");
+    expect(document.getElementById("summaryTimezone")?.textContent)
+    .toBe("(UTC+05:30) India Standard Time (IST) — India (Chennai / Kolkata / Mumbai)");
+
+    const form = document.getElementById("schedulerForm");
+    form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getSubmitted()).toMatchObject({ timeZone: "Asia/Kolkata", date: "2026-11-10", time: "10:30" });
+
+    document.querySelector<HTMLButtonElement>("[data-action='edit']")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(selector.value).toBe("Asia/Kolkata");
+    expect(document.getElementById("summaryTimezone")?.textContent)
+    .toBe("(UTC+05:30) India Standard Time (IST) — India (Chennai / Kolkata / Mumbai)");
+  });
+
+  it("canonicalizes the legacy Calcutta identifier without changing the wall-clock time", async () => {
+    const legacyMeeting = { ...existingMeeting, timeZone: "Asia/Calcutta" };
+    const { dom, getSubmitted } = await openScheduler("Asia/Kolkata", true, legacyMeeting);
+    const { document, Event } = dom.window;
+    document.querySelector<HTMLButtonElement>("[data-action='edit']")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect((document.getElementById("timezone") as HTMLSelectElement).value).toBe("Asia/Kolkata");
+    expect((document.getElementById("date") as HTMLInputElement).value).toBe("2026-11-10");
+    expect((document.getElementById("time") as HTMLInputElement).value).toBe("10:30");
+    document.getElementById("schedulerForm")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getSubmitted()).toMatchObject({ timeZone: "Asia/Kolkata", date: "2026-11-10", time: "10:30" });
+  });
+
+  it("labels Sri Lanka separately from India", async () => {
+    const { dom } = await openScheduler();
+    const { document, Event } = dom.window;
+    const search = document.getElementById("timezoneSearch") as HTMLInputElement;
+    const selector = document.getElementById("timezone") as HTMLSelectElement;
+
+    search.value = "Sri Lanka";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    const sriLanka = [...selector.options].find((option) => option.value === "Asia/Colombo");
+    expect(sriLanka?.textContent).toContain("Sri Lanka Standard Time (SLST) — Colombo, Sri Lanka");
+    expect(sriLanka?.value).not.toBe("Asia/Kolkata");
   });
 
   it("calculates United States daylight-saving offsets for the selected meeting date", async () => {

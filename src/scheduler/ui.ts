@@ -541,11 +541,12 @@ export function schedulerPreviewPage(): string {
       const accessFields = [...form.querySelectorAll('input[name="guestAccess"]')];
       const error = document.getElementById('schedulerError');
       const scheduleList = document.getElementById('scheduleList');
-      const state = { editingId: null, revision: null, link: '', preferences: null };
+      const state = { editingId: null, revision: null, link: '', preferences: null, selectedTimeZone: '' };
       const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      function canonicalTimeZone(zone) { return zone === 'Asia/Calcutta' ? 'Asia/Kolkata' : zone; }
       const zones = typeof Intl.supportedValuesOf === 'function'
-        ? [...new Set(['UTC', deviceTimezone, ...Intl.supportedValuesOf('timeZone')])]
-        : [...new Set(['UTC', deviceTimezone, 'Asia/Kolkata', 'America/New_York', 'America/Los_Angeles', 'Europe/London'])];
+        ? [...new Set(['UTC', deviceTimezone, ...Intl.supportedValuesOf('timeZone')].map(canonicalTimeZone))]
+        : [...new Set(['UTC', deviceTimezone, 'Asia/Kolkata', 'Asia/Colombo', 'America/New_York', 'America/Los_Angeles', 'Europe/London'])];
       const countryByZone = {
         'Africa/Abidjan': 'Ivory Coast', 'Africa/Addis_Ababa': 'Ethiopia', 'Africa/Algiers': 'Algeria',
         'Africa/Cairo': 'Egypt', 'Africa/Casablanca': 'Morocco', 'Africa/Dar_es_Salaam': 'Tanzania',
@@ -566,7 +567,7 @@ export function schedulerPreviewPage(): string {
         'Asia/Beirut': 'Lebanon', 'Asia/Dhaka': 'Bangladesh', 'Asia/Dubai': 'United Arab Emirates',
         'Asia/Hong_Kong': 'Hong Kong', 'Asia/Jakarta': 'Indonesia', 'Asia/Jerusalem': 'Israel',
         'Asia/Kabul': 'Afghanistan', 'Asia/Karachi': 'Pakistan', 'Asia/Kathmandu': 'Nepal',
-        'Asia/Kolkata': 'India', 'Asia/Kuala_Lumpur': 'Malaysia', 'Asia/Manila': 'Philippines',
+        'Asia/Colombo': 'Sri Lanka', 'Asia/Kolkata': 'India', 'Asia/Kuala_Lumpur': 'Malaysia', 'Asia/Manila': 'Philippines',
         'Asia/Muscat': 'Oman', 'Asia/Phnom_Penh': 'Cambodia', 'Asia/Qatar': 'Qatar',
         'Asia/Riyadh': 'Saudi Arabia', 'Asia/Seoul': 'South Korea', 'Asia/Shanghai': 'China',
         'Asia/Singapore': 'Singapore', 'Asia/Taipei': 'Taiwan', 'Asia/Tehran': 'Iran',
@@ -588,6 +589,7 @@ export function schedulerPreviewPage(): string {
         'Pacific/Honolulu': 'United States', 'Pacific/Port_Moresby': 'Papua New Guinea',
       };
       function zoneLabel(zone) {
+        zone = canonicalTimeZone(zone);
         const meetingDate = date.value ? new Date(date.value + 'T12:00:00Z') : new Date();
         const formatter = (timeZoneName) => new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName }).formatToParts(meetingDate)
           .find((part) => part.type === 'timeZoneName')?.value || '';
@@ -600,12 +602,25 @@ export function schedulerPreviewPage(): string {
         const city = zone === 'UTC' ? 'UTC' : zone.split('/').pop().replace(/_/g, ' ');
         const country = countryByZone[zone] || '';
         const location = [city, country].filter(Boolean).join(', ');
-        const label = '(' + offset + ') ' + longName + ' — ' + location;
         const shortName = formatter('short');
+        if (zone === 'Asia/Kolkata') {
+          return {
+            label: '(UTC+05:30) India Standard Time (IST) — India (Chennai / Kolkata / Mumbai)',
+            search: [zone, 'Asia/Calcutta', 'Calcutta', 'India', 'Chennai', 'Kolkata', 'Mumbai', 'IST', longName, shortName, offset, offsetName].join(' ').toLocaleLowerCase(),
+          };
+        }
+        if (zone === 'Asia/Colombo') {
+          return {
+            label: '(UTC+05:30) Sri Lanka Standard Time (SLST) — Colombo, Sri Lanka',
+            search: [zone, 'Sri Lanka', 'Colombo', 'SLST', 'Sri Lanka Standard Time', offset, offsetName].join(' ').toLocaleLowerCase(),
+          };
+        }
+        const label = '(' + offset + ') ' + longName + ' — ' + location;
         return { label, search: [zone, city, country, longName, shortName, offset, offsetName, zone.replace(/[_/]/g, ' ')].join(' ').toLocaleLowerCase() };
       }
       function renderTimeZones() {
-        const selectedZone = timezoneField.value || deviceTimezone;
+        const selectedZone = canonicalTimeZone(state.selectedTimeZone || timezoneField.value || deviceTimezone);
+        state.selectedTimeZone = selectedZone;
         const query = timezoneSearch.value.trim().toLocaleLowerCase();
         const matches = zones.map((zone) => ({ zone, ...zoneLabel(zone) }))
           .filter((entry) => !query || entry.search.includes(query) || entry.zone === selectedZone);
@@ -626,6 +641,7 @@ export function schedulerPreviewPage(): string {
         timezoneField.value = selectedZone;
       }
       function ensureTimeZone(zone) {
+        zone = canonicalTimeZone(zone);
         if (!zones.includes(zone)) zones.push(zone);
         renderTimeZones();
       }
@@ -636,9 +652,9 @@ export function schedulerPreviewPage(): string {
         if (guestAccess) guestAccess.checked = true;
         if (state.preferences.timeZoneExplicit) {
           ensureTimeZone(state.preferences.timeZone);
-          timezoneField.value = state.preferences.timeZone;
+          state.selectedTimeZone = canonicalTimeZone(state.preferences.timeZone);
         } else {
-          timezoneField.value = deviceTimezone;
+          state.selectedTimeZone = deviceTimezone;
         }
         renderTimeZones();
       }
@@ -676,14 +692,14 @@ export function schedulerPreviewPage(): string {
           : 'Choose a date';
         const durationLabel = duration.options[duration.selectedIndex].textContent;
         document.getElementById('summaryTime').textContent = (time.value || 'Choose a start time') + ' · ' + durationLabel;
-        const zone = timezoneField.value || deviceTimezone;
+        const zone = canonicalTimeZone(state.selectedTimeZone || timezoneField.value || deviceTimezone);
         document.getElementById('summaryTimezone').textContent = zoneLabel(zone).label;
         document.getElementById('summaryAccess').textContent = accessLabel(selectedAccess());
         for (const option of accessFields) option.closest('.access-option').classList.toggle('selected', option.checked);
       };
       const localNow = new Date();
       date.min = [localNow.getFullYear(), String(localNow.getMonth() + 1).padStart(2, '0'), String(localNow.getDate()).padStart(2, '0')].join('-');
-      timezoneField.value = deviceTimezone;
+      state.selectedTimeZone = deviceTimezone;
       renderTimeZones();
       form.addEventListener('input', refresh);
       form.addEventListener('change', (event) => {
@@ -692,6 +708,7 @@ export function schedulerPreviewPage(): string {
       });
       timezoneSearch.addEventListener('input', renderTimeZones);
       timezoneField.addEventListener('change', () => {
+        state.selectedTimeZone = canonicalTimeZone(timezoneField.value || deviceTimezone);
         timezoneSearch.value = '';
         renderTimeZones();
         refresh();
@@ -700,7 +717,7 @@ export function schedulerPreviewPage(): string {
         form.reset();
         state.editingId = null;
         state.revision = null;
-        timezoneField.value = deviceTimezone;
+        state.selectedTimeZone = deviceTimezone;
         applyPreferences();
         document.getElementById('submitScheduleButton').textContent = 'Schedule meeting';
         updateSummaryLink('');
@@ -726,7 +743,7 @@ export function schedulerPreviewPage(): string {
           date: date.value,
           time: time.value,
           durationMinutes: Number(duration.value),
-          timeZone: timezoneField.value || deviceTimezone,
+          timeZone: canonicalTimeZone(state.selectedTimeZone || timezoneField.value || deviceTimezone),
           guestAccess: selectedAccess(),
           ...(state.editingId ? { revision: state.revision } : {}),
         };
@@ -777,7 +794,7 @@ export function schedulerPreviewPage(): string {
         time.value = meeting.localTime;
         duration.value = String(meeting.durationMinutes);
         ensureTimeZone(meeting.timeZone);
-        timezoneField.value = meeting.timeZone;
+        state.selectedTimeZone = canonicalTimeZone(meeting.timeZone);
         timezoneSearch.value = '';
         renderTimeZones();
         const matchingAccess = accessFields.find((input) => input.value === meeting.guestAccess);

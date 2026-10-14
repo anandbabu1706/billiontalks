@@ -61,6 +61,10 @@ export class ScheduleConflictError extends Error {
   }
 }
 
+export function canonicalizeTimeZone(timeZone: string): string {
+  return timeZone === "Asia/Calcutta" ? "Asia/Kolkata" : timeZone;
+}
+
 function mapSchedule(row: ScheduleRow): ScheduledMeeting {
   return {
     id: row.meeting_id,
@@ -109,6 +113,7 @@ function dateTimeParts(instant: number, timeZone: string): number[] {
 }
 
 export function resolveLocalStart(date: string, time: string, timeZone: string): string {
+  timeZone = canonicalizeTimeZone(timeZone);
   if (!isDate(date)) throw new ScheduleValidationError("Choose a valid meeting date.");
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
   if (!match) throw new ScheduleValidationError("Choose a valid meeting start time.");
@@ -152,7 +157,8 @@ export function validateScheduledMeetingInput(value: unknown, now = Date.now()):
   const agenda = typeof body.agenda === "string" ? body.agenda.trim() : "";
   const date = typeof body.date === "string" ? body.date : "";
   const time = typeof body.time === "string" ? body.time : "";
-  const timeZone = typeof body.timeZone === "string" ? body.timeZone.trim() : "";
+  const suppliedTimeZone = typeof body.timeZone === "string" ? body.timeZone.trim() : "";
+  const timeZone = canonicalizeTimeZone(suppliedTimeZone);
 
   if (!title || title.length > 120 || /[\u0000-\u001f\u007f]/u.test(title)) {
     throw new ScheduleValidationError("Meeting title must be between 1 and 120 characters.");

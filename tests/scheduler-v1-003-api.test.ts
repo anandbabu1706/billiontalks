@@ -7,6 +7,7 @@ import {
   D1ScheduleRepository,
   resolveLocalStart,
   ScheduleValidationError,
+  validateScheduledMeetingInput,
   type ScheduledMeetingStatus,
 } from "../src/scheduler/schedules";
 import { InMemoryMeetingRepository, MeetingService, NullMediaProvider } from "../src/meeting";
@@ -147,6 +148,10 @@ describe("BT-V1-003 scheduled meeting lifecycle", () => {
   it("converts local times with daylight-saving transitions without inventing nonexistent instants", () => {
     expect(resolveLocalStart("2026-11-01", "01:30", "America/New_York")).toBe("2026-11-01T05:30:00.000Z");
     expect(() => resolveLocalStart("2027-03-14", "02:30", "America/New_York")).toThrow(ScheduleValidationError);
+    expect(resolveLocalStart("2026-11-10", "10:30", "Asia/Calcutta"))
+      .toBe(resolveLocalStart("2026-11-10", "10:30", "Asia/Kolkata"));
+    expect(validateScheduledMeetingInput({ ...validSchedule, timeZone: "Asia/Calcutta" }, now.getTime()))
+      .toMatchObject({ timeZone: "Asia/Kolkata", date: "2026-10-14", time: "11:00", startsAt: "2026-10-14T05:30:00.000Z" });
   });
 
   it("requires an account owner and enforces validation, private reads, revisions, and cancellation", async () => {
