@@ -14,7 +14,7 @@
     }
   ],
   "vars": {
-    "LIMITED_RELEASE_MEDIA_DISABLED": "true"
+    "LIMITED_RELEASE_MEDIA_DISABLED": "false"
   },
   "d1_databases": [
     {
