@@ -90,9 +90,9 @@ describe("BT-V1-001 account UI", () => {
     expect(recoveryBack?.getAttribute("href")).toBe("/account#login");
     expect(dom.window.document.querySelectorAll("#publicAccountNavigation [data-page]")).toHaveLength(2);
     expect(dom.window.document.querySelector("#publicAccountNavigation a[href='/notifications']")).toBeNull();
-    expect(dom.window.document.querySelector("#workspaceAccountNavigation a[href='/account#profile']")).not.toBeNull();
-    expect(dom.window.document.querySelector("#workspaceAccountNavigation a[href='/account#preferences']")).not.toBeNull();
-    expect(dom.window.document.querySelector('section[data-panel="preferences"] a[href="/account#profile"]')?.textContent).toBe("Manage profile");
+    expect(dom.window.document.querySelector("#workspaceAccountNavigation a[data-page='profile'][href='/account#profile']")).not.toBeNull();
+    expect(dom.window.document.querySelector("#workspaceAccountNavigation a[data-page='preferences'][href='/account#preferences']")).not.toBeNull();
+    expect(dom.window.document.querySelector('section[data-panel="preferences"] a[data-page="profile"][href="/account#profile"]')?.textContent).toBe("Manage profile");
     expect(accountPage()).toContain("if (initialPage === 'login' || initialPage === 'register') location.replace('/dashboard');");
     dom.window.close();
   });
@@ -130,6 +130,14 @@ describe("BT-V1-001 account UI", () => {
     expect(dom.window.document.getElementById("publicAccountNavigation")?.hidden).toBe(true);
     expect(dom.window.document.getElementById("workspaceAccountNavigation")?.hidden).toBe(false);
     expect(dom.window.document.querySelector('#workspaceAccountNavigation a[data-account-workspace-page="preferences"]')?.getAttribute("aria-current")).toBe("page");
+    const profileLink = dom.window.document.querySelector('#workspaceAccountNavigation a[data-page="profile"]');
+    profileLink?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(dom.window.document.querySelector('section[data-panel="profile"]')?.hasAttribute("hidden")).toBe(false);
+    expect(profileLink?.getAttribute("aria-current")).toBe("page");
+    const settingsLink = dom.window.document.querySelector('#workspaceAccountNavigation a[data-page="preferences"]');
+    settingsLink?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(dom.window.document.querySelector('section[data-panel="preferences"]')?.hasAttribute("hidden")).toBe(false);
+    expect(settingsLink?.getAttribute("aria-current")).toBe("page");
     dom.window.close();
   });
 

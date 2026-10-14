@@ -156,8 +156,8 @@ export function accountPage(): string {
   </nav>
   <nav id="workspaceAccountNavigation" aria-label="Workspace" hidden>
     <a class="account-nav-link" href="/dashboard">Dashboard</a>
-    <a class="account-nav-link" href="/account#profile" data-account-workspace-page="profile">Profile</a>
-    <a class="account-nav-link" href="/account#preferences" data-account-workspace-page="preferences">Settings</a>
+    <a class="account-nav-link" href="/account#profile" data-page="profile" data-account-workspace-page="profile">Profile</a>
+    <a class="account-nav-link" href="/account#preferences" data-page="preferences" data-account-workspace-page="preferences">Settings</a>
     <a class="account-nav-link" href="/notifications">Notifications</a>
   </nav>
   <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -245,7 +245,7 @@ export function accountPage(): string {
       <p class="hint" id="entitlementSummary">Plan access is loading…</p>
       <div class="actions"><button type="submit">Save settings</button></div>
     </form>
-    <a class="back" href="/account#profile">Manage profile</a>
+    <a class="back" href="/account#profile" data-page="profile">Manage profile</a>
     <a class="back" href="/notifications">View notifications</a>
   </section>
   <a class="back" id="accountBackLink" href="/">← Back to meetings</a>
