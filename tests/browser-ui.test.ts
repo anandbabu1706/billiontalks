@@ -218,7 +218,10 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     }] : []),
     ...(additionalRemoteParticipant ? [additionalRemoteParticipant] : []),
   ];
-  const response = await app.fetch(new Request(pageUrl), {
+  // The public root now redirects to Account; exercise the preserved meeting route.
+  const renderUrl = new URL(pageUrl);
+  if (renderUrl.pathname === "/") renderUrl.pathname = "/ui";
+  const response = await app.fetch(new Request(renderUrl), {
     SESSION_STORE: createSessionNamespace(),
     ...(limitedReleaseMediaDisabled ? { LIMITED_RELEASE_MEDIA_DISABLED: "true" } : {}),
   });
@@ -3250,7 +3253,7 @@ describe("BT-V0-018 production media stabilization", () => {
     const sessionEnv = { SESSION_STORE: createSessionNamespace() };
 
     it("omits the developer panel, its controls, and enabling flag from the production page", async () => {
-      const html = await (await app.fetch(new Request("https://billiontalks.example/"), sessionEnv)).text();
+      const html = await (await app.fetch(new Request("https://billiontalks.example/ui"), sessionEnv)).text();
       expect(html).not.toContain('id="devPanel"');
       expect(html).not.toContain('id="toggleDevPanelBtn"');
       expect(html).not.toContain("data-dev-action=");
@@ -3262,10 +3265,10 @@ describe("BT-V0-018 production media stabilization", () => {
     });
 
     it("keeps the developer panel for local development and the explicit debug flag", async () => {
-      const local = await (await app.fetch(new Request("http://localhost:8787/"), sessionEnv)).text();
+      const local = await (await app.fetch(new Request("http://localhost:8787/ui"), sessionEnv)).text();
       expect(local).toContain('id="devPanel"');
       expect(local).toContain("const DEV_TOOLS_ENABLED = true;");
-      const flagged = await (await app.fetch(new Request("https://staging.example/"), { ...sessionEnv, DEV_TOOLS_ENABLED: "true" })).text();
+      const flagged = await (await app.fetch(new Request("https://staging.example/ui"), { ...sessionEnv, DEV_TOOLS_ENABLED: "true" })).text();
       expect(flagged).toContain('id="toggleDevPanelBtn"');
     });
 

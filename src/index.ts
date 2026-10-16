@@ -1,3 +1,4 @@
+import { meetingAppearance, meetingLogo } from "./meeting-appearance";
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
 import { validateRealtimeEnv, type RealtimeEnv } from "./config";
 import {
@@ -1928,12 +1929,13 @@ function meetingUiTemplate(): string {
         .registration-fields { grid-template-columns: 1fr; gap: 12px; }
         .registration-field-wide { grid-column: auto; }
       }
+      ${meetingAppearance}
     </style>
   </head>
   <body>
     <div class="app-shell" data-limited-release-media-disabled="__LIMITED_RELEASE_MEDIA_DISABLED__">
       <div class="topbar">
-        <div class="brand">BillionTalks</div>
+        <div class="brand"><img src="${meetingLogo()}" alt="BillionTalks" /></div>
         <div style="display:flex; align-items:center; gap:10px;">
           <!--DEV_TOOLS_START--><button class="dev-toggle" id="toggleDevPanelBtn" type="button">Developer tools</button><!--DEV_TOOLS_END-->
           <div class="status-pill" id="statusPill">Meeting</div>
@@ -2087,6 +2089,7 @@ function meetingUiTemplate(): string {
         <div class="home-card">
           <div class="kicker">Create meeting</div>
           <h2>Set up a new room</h2>
+          <p class="muted">Create a private room for your team or guests. Give your meeting a title and choose how you want to be seen in the meeting.</p>
           <div class="form-grid">
             <div class="input-group">
               <label for="meetingTitle">Meeting title</label>
@@ -2108,13 +2111,14 @@ function meetingUiTemplate(): string {
         <div class="home-card">
           <div class="kicker">Join meeting</div>
           <h2>Use a Meeting ID</h2>
+          <p class="muted">Enter the Meeting ID provided by the meeting host to join the conversation.</p>
           <div class="form-grid">
             <div class="input-group">
               <label for="meetingIdInput">Meeting ID</label>
               <input id="meetingIdInput" type="text" placeholder="btm_..." />
             </div>
             <div class="actions">
-              <button class="primary" id="resolveMeetingButton">Resolve Meeting</button>
+              <button class="primary" id="resolveMeetingButton">Join Meeting</button>
               <button class="secondary" id="backToHomeFromJoin">Back</button>
             </div>
           </div>
@@ -2197,8 +2201,10 @@ function meetingUiTemplate(): string {
           </div>
 
           <aside class="side-panel">
+            <section class="participants-card" aria-label="Meeting participants">
             <div class="kicker" id="participantsHeading" tabindex="-1">Participants</div>
             <ul class="participant-list" id="participantList"></ul>
+            </section>
             <section class="recording-panel" aria-label="Meeting recording">
               <div class="kicker" style="margin:0;">Recording</div>
               <p id="recordingStatus" class="recording-copy" aria-live="polite">Not started.</p>
@@ -2250,6 +2256,7 @@ function meetingUiTemplate(): string {
 
       <section id="endedScreen" class="screen">
         <div class="home-card">
+          <div class="ended-symbol" aria-hidden="true">✓</div>
           <div class="kicker">Session ended</div>
           <h2 id="endedTitle">The meeting has ended.</h2>
           <div class="info-box">
