@@ -2172,15 +2172,15 @@ function meetingUiTemplate(): string {
               </div>
             </div>
 
-            <div class="controls" id="meetingControls">
-              <button type="button" class="control active" id="micControlBtn" aria-label="Microphone" aria-pressed="true"><span aria-hidden="true">🎙️</span></button>
-              <button type="button" class="control active" id="cameraControlBtn" aria-label="Camera" aria-pressed="true"><span aria-hidden="true">📷</span></button>
-              <button type="button" class="control" id="shareScreenBtn" aria-label="Share screen" aria-pressed="false"><span aria-hidden="true">🖥️</span></button>
+            <div class="controls" id="meetingControls" role="group" aria-label="Meeting controls">
+              <button type="button" class="control active" id="micControlBtn" aria-label="Microphone" aria-pressed="true"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg></span><span class="control-label">Mic on</span></button>
+              <button type="button" class="control active" id="cameraControlBtn" aria-label="Camera" aria-pressed="true"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2" y="5" width="14" height="14" rx="3"/><path d="m16 9 6-3v12l-6-3"/></svg></span><span class="control-label">Camera on</span></button>
+              <button type="button" class="control" id="shareScreenBtn" aria-label="Share screen" aria-pressed="false"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M12 13V6m-3 3 3-3 3 3M12 17v4M7 21h10"/></svg></span><span class="control-label">Share screen</span></button>
               <span id="limitedReleaseMediaNotice" class="limited-release-notice" role="status">Microphone, camera, screen sharing, and recording are unavailable in this limited release. Chat and participant controls remain available.</span>
               <span id="screenShareUnavailableMessage" class="media-status" role="status" style="display:none;">Screen sharing is not supported by this browser or device.</span>
-              <button type="button" class="control" id="participantsBtn" aria-label="Participants"><span aria-hidden="true">👥</span></button>
-              <button type="button" class="control danger" id="leaveMeetingBtn" aria-label="Leave meeting"><span aria-hidden="true">✕</span></button>
-              <button type="button" class="control danger" id="endMeetingBtn" aria-label="End meeting"><span aria-hidden="true">⏹️</span></button>
+              <button type="button" class="control" id="participantsBtn" aria-label="Participants"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M2 21v-3a7 7 0 0 1 14 0v3M16 4a3 3 0 0 1 0 6M19 14a6 6 0 0 1 3 5v2"/></svg></span><span class="control-label">Participants</span></button>
+              <button type="button" class="control danger" id="leaveMeetingBtn" aria-label="Leave meeting"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4H4v16h5M10 12h12m-4-4 4 4-4 4"/></svg></span><span class="control-label">Leave meeting</span></button>
+              <button type="button" class="control danger" id="endMeetingBtn" aria-label="End meeting" style="display:none;"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg></span><span class="control-label">End meeting</span></button>
             </div>
           </div>
 
@@ -4947,7 +4947,7 @@ function meetingUiTemplate(): string {
           micControl.classList.toggle('off', !micIsOn);
           micControl.setAttribute('aria-pressed', String(micIsOn));
           micControl.setAttribute('aria-label', 'Microphone');
-          micControl.innerHTML = '<span class="device-icon" aria-hidden="true">🎙️</span>';
+          micControl.querySelector('.control-label').textContent = state.localDevice.micAvailable ? (micIsOn ? 'Mic on' : 'Mic off') : 'Mic unavailable';
         }
 
         if (cameraControl) {
@@ -4955,13 +4955,14 @@ function meetingUiTemplate(): string {
           cameraControl.classList.toggle('off', !cameraIsOn);
           cameraControl.setAttribute('aria-pressed', String(cameraIsOn));
           cameraControl.setAttribute('aria-label', 'Camera');
-          cameraControl.innerHTML = '<span class="device-icon" aria-hidden="true">📷</span>';
+          cameraControl.querySelector('.control-label').textContent = state.localDevice.cameraAvailable ? (cameraIsOn ? 'Camera on' : 'Camera off') : 'Camera unavailable';
         }
 
         if (shareControl) {
           shareControl.classList.toggle('active', state.localDevice.screenShareEnabled);
           shareControl.setAttribute('aria-pressed', String(state.localDevice.screenShareEnabled));
           shareControl.setAttribute('aria-label', state.localDevice.screenShareEnabled ? 'Stop sharing screen' : 'Share screen');
+          shareControl.querySelector('.control-label').textContent = state.localDevice.screenShareEnabled ? 'Stop sharing' : 'Share screen';
           shareControl.disabled = !canShareScreen;
           shareControl.setAttribute('aria-disabled', String(!canShareScreen));
           shareControl.title = canShareScreen ? 'Screen share' : 'Screen sharing is not supported by this browser or device.';
@@ -5712,7 +5713,7 @@ function meetingUiTemplate(): string {
         }
 
         pendingList.innerHTML = pending.map((request) => {
-          return '<li><span>' + escapeHtml(request.displayName || request.userId) + '</span><span style="display:flex; gap:6px;"><button type="button" data-admission-action="approve" data-request-id="' + escapeHtml(request.id) + '" style="padding:4px 8px; border-radius:8px; background:rgba(61,220,151,0.16); color:#dfffee; border:1px solid rgba(61,220,151,0.35);">Approve</button><button type="button" data-admission-action="reject" data-request-id="' + escapeHtml(request.id) + '" style="padding:4px 8px; border-radius:8px; background:rgba(248,113,113,0.12); color:#fdd2d2; border:1px solid rgba(248,113,113,0.35);">Reject</button></span></li>';
+          return '<li><span>' + escapeHtml(request.displayName || request.userId) + '</span><span class="admission-actions"><button type="button" class="admission-action" data-admission-action="approve" data-request-id="' + escapeHtml(request.id) + '">Approve</button><button type="button" class="admission-action" data-admission-action="reject" data-request-id="' + escapeHtml(request.id) + '">Reject</button></span></li>';
         }).join('');
 
         pendingList.querySelectorAll('[data-admission-action]').forEach((button) => {
@@ -5821,19 +5822,18 @@ function meetingUiTemplate(): string {
 
         allParticipants.forEach((participant) => {
           const item = document.createElement('li');
-          const participantColor = participant.state === 'JOINED' ? '#9ae6b4' : '#d1d5db';
-          const statusColor = participant.state === 'JOINED' ? '#3ddc97' : '#94a3b8';
           const displayName = participant.displayName === state.displayName ? 'You' : participant.displayName;
           const roleLabel = participant.role === 'HOST' ? 'Host' : 'Guest';
 
           item.innerHTML =
             '<span>' + escapeHtml(displayName) + '</span>' +
-            '<span style="display:flex; align-items:center; gap:8px; color:' + participantColor + ';">' +
-              '<span class="dot" style="background:' + statusColor + '"></span>' +
+            '<span class="participant-role' + (participant.state === 'JOINED' ? ' joined' : '') + '">' +
+              '<span class="dot"></span>' +
               roleLabel +
             '</span>';
           if (state.isHost && state.meeting.status === 'active' && participant.role !== 'HOST' && participant.state === 'JOINED' && participant.userId) {
             const removeButton = document.createElement('button');
+            removeButton.className = 'ghost';
             removeButton.textContent = 'Remove';
             removeButton.type = 'button';
             removeButton.dataset.removeUserId = participant.userId;

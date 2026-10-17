@@ -737,6 +737,79 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("mediaStatus")?.getAttribute("aria-label")).toContain(document.getElementById("mediaStatus")?.textContent ?? "");
   });
 
+  it("keeps readable toolbar labels and vector icons through device state changes", async () => {
+    const { document } = await enterHostRoom();
+    const controls = document.getElementById("meetingControls");
+    expect(controls?.getAttribute("aria-label")).toBe("Meeting controls");
+    for (const id of ["micControlBtn", "cameraControlBtn", "shareScreenBtn", "participantsBtn", "leaveMeetingBtn", "endMeetingBtn"]) {
+      const button = document.getElementById(id);
+      expect(button?.querySelectorAll("svg")).toHaveLength(1);
+      expect(button?.querySelector(".device-icon")?.getAttribute("aria-hidden")).toBe("true");
+      expect(button?.querySelector(".control-label")?.textContent).toBeTruthy();
+    }
+    expect(document.getElementById("endMeetingBtn")?.style.display).toBe("flex");
+    const camera = document.getElementById("cameraControlBtn");
+    camera?.click();
+    await flush();
+    expect(camera?.querySelector(".control-label")?.textContent).toBe("Camera off");
+    expect(camera?.getAttribute("aria-pressed")).toBe("false");
+    camera?.click();
+    await flush();
+    expect(camera?.querySelector(".control-label")?.textContent).toBe("Camera on");
+    expect(camera?.querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("meets WCAG AA text contrast for meeting chips, toolbar states and secondary actions", async () => {
+    const { window, document } = await enterHostRoom();
+    const luminance = (color: string) => {
+      const values = color.match(/^rgb\((\d+), (\d+), (\d+)\)$/);
+      if (!values) throw new Error("Expected an opaque computed color, got " + color);
+      return values.slice(1).reduce((sum, channel, index) => {
+        const value = Number(channel) / 255;
+        return sum + (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][index]!;
+      }, 0);
+    };
+    const expectContrast = (element: Element) => {
+      const style = window.getComputedStyle(element);
+      const text = luminance(style.color);
+      let surface: Element | null = element;
+      while (surface && window.getComputedStyle(surface).backgroundColor === "rgba(0, 0, 0, 0)") surface = surface.parentElement;
+      if (!surface) throw new Error("Expected an opaque meeting surface.");
+      const background = luminance(window.getComputedStyle(surface).backgroundColor);
+      expect((Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05)).toBeGreaterThanOrEqual(4.5);
+    };
+    for (const selector of [".chip.ok", "#micControlBtn", "#cameraControlBtn", "#shareScreenBtn", "#participantsBtn", "#leaveMeetingBtn", "#endMeetingBtn", "#refreshAdmissionsBtn", "#mediaStatus", "#participantList .participant-role", "#recordingStatus", "#transcriptStatus", "#chatStatus", "#admissionModeLabel"]) {
+      expectContrast(document.querySelector(selector)!);
+    }
+    const camera = document.getElementById("cameraControlBtn")!;
+    camera.click();
+    await flush();
+    expectContrast(camera);
+    const share = document.getElementById("shareScreenBtn") as HTMLButtonElement;
+    share.disabled = true;
+    expectContrast(share);
+    for (const action of ["approve", "reject"]) {
+      const button = document.createElement("button");
+      button.className = "admission-action";
+      button.dataset.admissionAction = action;
+      document.getElementById("admissionPanel")!.appendChild(button);
+      expectContrast(button);
+    }
+  });
+
+  it("shows unavailable toolbar states when microphone and camera permissions are denied", async () => {
+    const { window, document, getUserMediaMock } = await loadRenderedPage();
+    getUserMediaMock.mockRejectedValue(new window.DOMException("Permission denied", "NotAllowedError"));
+    await joinHostMeeting(document, "Denied devices");
+    await flush();
+    expect(document.querySelector("#micControlBtn .control-label")?.textContent).toBe("Mic unavailable");
+    expect(document.querySelector("#cameraControlBtn .control-label")?.textContent).toBe("Camera unavailable");
+    expect(document.getElementById("micControlBtn")?.getAttribute("aria-pressed")).toBe("false");
+    expect(document.getElementById("cameraControlBtn")?.getAttribute("aria-pressed")).toBe("false");
+    expect(document.getElementById("errorBanner")?.textContent).toMatch(/unavailable|denied/);
+    expect(document.querySelector("video.local-preview")).toBeNull();
+  });
+
   it("shows media unavailability and suppresses local capture in limited release", async () => {
     const { document, getUserMediaMock } = await loadRenderedPage("http://localhost/", true, true);
     document.getElementById("startMeetingBtn")?.click();
@@ -2378,6 +2451,9 @@ describe("BillionTalks browser UI regression tests", () => {
     expect(document.getElementById("pendingAdmissionsList")?.textContent).toContain("Guest A");
 
     const approveBtn = Array.from(document.querySelectorAll('[data-admission-action="approve"]'))[0] as HTMLButtonElement;
+    expect(approveBtn.classList.contains("admission-action")).toBe(true);
+    expect(approveBtn.hasAttribute("style")).toBe(false);
+    expect(document.querySelector('[data-admission-action="reject"]')?.classList.contains("admission-action")).toBe(true);
     approveBtn.click();
     await flush();
     expect(fetchWithAdmission).toHaveBeenCalledWith(
@@ -3665,12 +3741,15 @@ describe("BT-V0-028 mic mute isolation and independent video health", () => {
     expect(cameraTrack.enabled).not.toBe(false);
     expect(cameraTrack.stop).not.toHaveBeenCalled();
     expect(mic.classList.contains("off")).toBe(true);
+    expect(mic.querySelector(".control-label")?.textContent).toBe("Mic off");
 
     mic.click();
     await flush();
     expect(micTrack.enabled).toBe(true);
     expect(cameraTrack.stop).not.toHaveBeenCalled();
     expect(mic.classList.contains("active")).toBe(true);
+    expect(mic.querySelector(".control-label")?.textContent).toBe("Mic on");
+    expect(mic.querySelectorAll("svg")).toHaveLength(1);
 
     expect(counts()).toEqual(before);
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);

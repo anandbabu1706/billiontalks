@@ -45,7 +45,7 @@ input, select, #meetingAccessMode { background: #fff; color: var(--text); border
 input::placeholder { color: #657797; opacity: 1; }
 input[type=checkbox] { width: auto; accent-color: #175cff; }
 label { font-size: 14px; }
-.chip.ok { background: #e5f8f1; color: #00684f; border-color: #bce8d9; }
+.chip.ok { background: #e5f8f1; color: #005c46; border-color: #39846e; font-weight: 600; }
 .meeting-shell { background: transparent; border: 0; box-shadow: none; overflow: visible; min-height: 0; grid-template-columns: minmax(0,1fr) 350px; gap: 18px; align-items: start; }
 .stage-panel { padding: 0; min-width: 0; gap: 16px; }
 .meeting-header { background: #fff; padding: 20px; box-shadow: var(--shadow); gap: 16px; flex-wrap: wrap; }
@@ -58,12 +58,36 @@ label { font-size: 14px; }
 .tile .placeholder, .tile.self.camera-off .placeholder { color: #284779; background: #ffffffd9; border-color: #cdddf9; box-shadow: none; }
 .error, .media-status.error { color: #a1263e; }
 .tile .meta { background: #152342d9; color: #fff; }
-.controls { background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 18px 12px 34px; gap: 24px; box-shadow: var(--shadow); }
-.control { width: 52px; height: 52px; background: #edf3ff; color: #175cff; flex-shrink: 0; }
-.control::after { content: attr(aria-label); position: absolute; top: calc(100% + 7px); font: 11px/1.2 Inter,"Segoe UI",sans-serif; color: #27416e; white-space: nowrap; }
-.control.active { background: #dff5ed; color: #006c50; border-color: #bce7d7; }
-.control.off { background: #f0f3f9; color: #4d5c78; border-color: #c7d2e6; }
-.control.danger { background: #ffe5e9; border-color: #ffcbd4; color: #b3223c; }
+.controls { background: linear-gradient(180deg,#fff,#f5f8ff); border: 1px solid #a2b3d0; border-radius: 18px; padding: 12px; gap: 10px; box-shadow: 0 6px 20px #284c8c12; flex-wrap: wrap; }
+.control { width: auto; min-width: 88px; min-height: 72px; height: auto; padding: 10px 12px; display: inline-flex; flex-direction: column; gap: 7px; background: #edf3ff; color: #174aa5; border: 1px solid #7388af; border-radius: 13px; flex: 0 1 auto; font-size: 13px; font-weight: 600; line-height: 1.25; transition: background .15s ease, box-shadow .15s ease; }
+.control .device-icon { width: 24px; height: 24px; font-size: inherit; flex: 0 0 24px; }
+.control svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.control.active { background: #e5f8f1; color: #005c46; border-color: #39846e; }
+.control.off { background: #edf1f7; color: #34445e; border-color: #73839c; }
+.control.danger { background: #fff0f2; border-color: #b65366; color: #9e2039; }
+#endMeetingBtn { background: #b4233d; border-color: #b4233d; color: #fff; }
+.control:not(:disabled):hover { transform: none; background: #dce8ff; box-shadow: 0 3px 8px #284c8c24; }
+.control.active:not(:disabled):hover { background: #cceee0; }
+.control.danger:not(:disabled):hover { background: #ffdae1; }
+#endMeetingBtn:not(:disabled):hover { background: #90192f; }
+.control:disabled { opacity: 1; color: #52617b; background: #e8ecf3; border-color: #8795ac; box-shadow: none; }
+.control:focus-visible { outline: 3px solid #175cff; outline-offset: 3px; }
+#meetingControls > [role=status] { flex-basis: 100%; }
+#meetingScreen .ghost, #meetingScreen .secondary, .admission-action { min-height: 44px; font-size: 13px; font-weight: 600; border: 1px solid #7388af; }
+#meetingScreen .ghost:not(:disabled):hover, #meetingScreen .secondary:not(:disabled):hover { background: #e5edfc; transform: none; }
+.admission-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admission-action { padding: 8px 12px; border-radius: 10px; }
+.admission-action[data-admission-action=approve] { color: #005c46; background: #e5f8f1; border-color: #39846e; }
+.admission-action[data-admission-action=reject] { color: #9e2039; background: #fff0f2; border-color: #b65366; }
+.admission-action[data-admission-action=approve]:not(:disabled):hover { background: #cceee0; }
+.admission-action[data-admission-action=reject]:not(:disabled):hover { background: #ffdae1; }
+#meetingScreen button:disabled { opacity: 1; color: #52617b; background: #e8ecf3; border-color: #8795ac; }
+#meetingScreen .muted, #meetingScreen .recording-copy, #meetingScreen .chat-status, #meetingScreen .chat-message-meta, #meetingScreen label { color: #495c7c; }
+#meetingScreen .recording-copy, #meetingScreen .chat-status, #meetingScreen .chat-message-meta, #meetingScreen .media-status, #meetingScreen .participant-list, #meetingScreen .muted, .chip { font-size: 13px; line-height: 1.5; }
+.participant-role { display: inline-flex; align-items: center; gap: 8px; color: #495c7c; }
+.participant-role .dot { background: #52617b; }
+.participant-role.joined { color: #005c46; }
+.participant-role.joined .dot { background: #005c46; }
 .side-panel { padding: 0; background: transparent; border: 0; min-width: 0; display: grid; gap: 16px; }
 .participants-card, .recording-panel, #admissionPanel, .chat-panel { padding: 20px; border: 1px solid var(--border); border-radius: 18px; background: #fff; box-shadow: var(--shadow); margin-top: 0 !important; min-width: 0; }
 .side-panel .kicker { color: #10214e; text-transform: none; letter-spacing: 0; font-size: 16px; font-weight: 700; }
@@ -73,20 +97,21 @@ label { font-size: 14px; }
 #applyAccessModeBtn { margin-bottom: 10px; }
 .chat-form input { background: #f7f9fe; }
 .chat-form button, #startRecordingBtn { background: #175cff; color: #fff; }
+#meetingScreen #startRecordingBtn:not(:disabled):hover, .chat-form button:not(:disabled):hover { background: #174aa5; }
 .limited-release-notice { color: #815000; }
 #endedScreen .home-card { text-align: center; }
 #endedScreen .info-box { background: transparent; border: 0; padding: 0; color: var(--muted); }
 #endedScreen .actions { justify-content: center; }
 #returnHomeBtn { min-width: 220px; }
 .ended-symbol { display: grid; place-items: center; width: 84px; height: 84px; margin: 0 auto 28px; background: #edf3ff; color: #175cff; border-radius: 24px; font-size: 36px; }
-@media (max-width: 1100px) { .meeting-shell { grid-template-columns: minmax(0,1fr) 300px; } .controls { gap: 20px; } }
+@media (max-width: 1100px) { .meeting-shell { grid-template-columns: minmax(0,1fr) 300px; } }
 @media (max-width: 980px) { .hero, .meeting-shell { grid-template-columns: minmax(0,1fr); } .side-panel { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 600px) {
  .app-shell { padding: 0 12px 24px; } .topbar { margin: 0 -12px 18px; padding: 14px 16px; min-height: 72px; } .brand { width: 155px; }
  .home-card { margin-top: 24px; padding: 24px 20px; border-radius: 18px; } .home-card p { font-size: 15px; }
  .side-panel { grid-template-columns: minmax(0,1fr); } .meeting-header { padding: 16px; }
  .hero .info-box { padding: 20px; } #homeScreen .actions { grid-template-columns: minmax(0,1fr); }
- .controls { gap: 32px 24px; padding-bottom: 34px; } .actions button { flex: 1 1 auto; }
+ .controls { gap: 8px; } .control { min-width: 80px; flex-grow: 1; padding: 10px 8px; } .actions button { flex: 1 1 auto; }
 }
 /* Display density: fit V0 screens and the live room at 100% zoom on laptop/desktop; phone rules above are unchanged. */
 @media (min-width: 601px) {
@@ -109,7 +134,6 @@ label { font-size: 14px; }
  .stage-panel, .side-panel { gap: 12px; }
  .meeting-header { padding: 13px 18px; gap: 12px; }
  .video-stage { min-height: clamp(340px, calc(100vh - 330px), 500px); }
- .controls { padding: 12px 12px 30px; gap: 24px 20px; }
  .participants-card, .recording-panel, #admissionPanel, .chat-panel { padding: 16px 18px; }
  .participant-list { margin-top: 12px; gap: 8px; }
  .participant-list li { padding: 8px 11px; }
