@@ -74,3 +74,19 @@ No deployment, migrations, secrets, DNS changes, new Cloudflare resources or app
 - **About page visually APPROVED/LOCKED:** retain the first About mockup composition, premium blue-white theme, meeting scene, globe image, cards and CTA, with the finalized headline **“Connecting People. Building Better Conversations.”** and philosophical, people-first tone.
 - Final implementation MUST replace any generated logo with the repository's exact official approved logo asset, and correct mockup text that overclaims security, unlimited free access, usage or active capabilities.
 - Do not regenerate the About page image or redesign it absent an explicit owner request.
+
+## APPROVED — Central Contact & Feedback system (2026-10-18)
+- One shared, centralized Contact & Feedback workflow accessible from the public Contact page AND authenticated V1 Dashboard/Settings. Do not develop duplicate systems or authentication.
+- Public Contact page uses interactive topic cards leading to ONE focused form, not multiple simultaneous forms. Categories: General Enquiries, Technical Support, Feature Suggestions, Business & Partnerships, Feedback, Report an Issue.
+- Signed-in visitors: securely prefill registered display name and verified email using existing authenticated profile/session; allow editing contact fields for this submission WITHOUT altering account profile. Independently associate submission with authenticated account ID, never trust an editable email as proof of identity.
+- Signed-out visitors: allow manual name/email and enforce appropriate validation, rate limits, abuse/spam mitigations and minimal personal-data collection. Do not disclose private account information.
+- Topic is preselected from card and may be changed. Feedback can include optional 1–5 rating and comment; issue report includes affected feature, problem description and optional diagnostic context, avoiding secrets or sensitive data.
+- Submission: accessible server-backed form, durable existing-infrastructure storage, acknowledgment/reference ID, explicit success/error handling; only authorized administrators can review submissions. Never claim delivered without confirmed backend success.
+- Design: premium, clean approved blue/white card style; avoid clutter and remove redundant Quick Response / Your Feedback Matters / Real People strip and unverified response-time promises.
+- Incorporate privacy/retention and user notice requirements; avoid inventing or advertising operational contact mailboxes. Integrate with the existing V1 Dashboard and Settings without disrupting meeting flows.
+- This is a SCOPE/UX APPROVAL, NOT implementation or production-deployment authorization. Verify existing functionality before building. Focused staging validation and separate production approval required.
+
+## UPDATED — Public navigation and page count
+- Approved navigation: **Home → About → How It Works → Features → Solutions → Contact**.
+- **Remove separate Free Access page**: express free V1 availability accurately on Home and within relevant CTAs; consider Pricing only when V2 paid capabilities are approved and implemented. No repetitive standalone SEO landing page.
+- Signed-in visitors receive direct Dashboard/profile access; signed-out visitors Sign In / Create Free Account.
