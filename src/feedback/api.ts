@@ -171,18 +171,39 @@ function checkResults(results: unknown[]): void {
     (result as { success?: boolean }).success === false)) throw new Error("Database operation failed.");
 }
 
-async function cleanup(database: D1AccountDatabase, now: string): Promise<void> {
-  // Bounded, indexed opportunistic cleanup; visibility never depends on purge catching up.
+async function cleanup(database: D1AccountDatabase, now: string): Promise<number> {
   const results = await database.batch([
     database.prepare(`DELETE FROM feedback_submissions WHERE id IN (
       SELECT id FROM feedback_submissions WHERE expires_at <= ? ORDER BY expires_at LIMIT 100
-    )`).bind(now),
+    ) RETURNING id`).bind(now),
     database.prepare(`DELETE FROM feedback_rate_limits WHERE scope_hash IN (
       SELECT scope_hash FROM feedback_rate_limits WHERE updated_at <= ? ORDER BY updated_at LIMIT 100
-    )`).bind(new Date(Date.parse(now) - DAY).toISOString()),
+    ) RETURNING scope_hash`).bind(new Date(Date.parse(now) - DAY).toISOString()),
   ]);
   if (results.length !== 2) throw new Error("Incomplete cleanup.");
   checkResults(results);
+  return results.reduce<number>((total, result) => {
+    const rows = (result as { results?: unknown[] }).results;
+    if (!Array.isArray(rows)) throw new Error("Unconfirmed cleanup.");
+    return total + rows.length;
+  }, 0);
+}
+
+export async function purgeExpiredFeedback(database: D1AccountDatabase | undefined, scheduledTime: number): Promise<void> {
+  try {
+    if (!database) throw new Error("Database unavailable.");
+    const now = new Date(scheduledTime).toISOString();
+    let deleted = 0;
+    let batch: number;
+    do {
+      batch = await cleanup(database, now);
+      deleted += batch;
+    } while (batch > 0);
+    console.info("[billiontalks feedback] scheduled cleanup completed", { deleted });
+  } catch {
+    console.error("[billiontalks feedback] scheduled cleanup failed", { category: "persistence_failure" });
+    throw new Error("Scheduled feedback cleanup failed.");
+  }
 }
 
 async function rateLimit(database: D1AccountDatabase, request: Request, identity: string, now: string): Promise<void> {

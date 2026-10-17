@@ -3,6 +3,7 @@
   "name": "billiontalks-v1-staging",
   "main": "src/index.ts",
   "compatibility_date": "2025-07-18",
+  "triggers": { "crons": ["*/5 * * * *"] },
   "rules": [
     {
       "type": "Data",

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Account } from "../src/account/domain";
 import type { D1AccountDatabase, D1AccountStatement } from "../src/account/repository";
 import { FEEDBACK_CATEGORIES, handleFeedbackAdminRequest, handleFeedbackRequest } from "../src/feedback/api";
+import app from "../src/index";
 
 // Vite 5 predates node:sqlite; load the Node built-in without Vite resolving it as a package.
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
@@ -403,6 +404,50 @@ describe("safe database failures", () => {
     expect(f.count()).toBe(0);
     expect(JSON.stringify(log.mock.calls)).not.toContain(payload.email);
     expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
+  });
+
+  describe("traffic-independent scheduled retention", () => {
+    it("drains multiple expired batches at the exact deadline without deleting current rows or reviewer grants", async () => {
+      const f = fixture(); f.allow();
+      for (let index = 0; index < 205; index++) {
+        f.sqlite.prepare(`INSERT INTO feedback_submissions
+          (id, category, name, email, message, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          `fb_${crypto.randomUUID()}`, "feedback", "Expired", "expired@example.invalid", "Expired fixture",
+          new Date(Date.parse(NOW) - 90 * DAY).toISOString(), NOW,
+        );
+        f.sqlite.prepare("INSERT INTO feedback_rate_limits VALUES (?, 1, ?, ?)").run(
+          `expired_${index}`, NOW, new Date(Date.parse(NOW) - DAY).toISOString(),
+        );
+      }
+      f.sqlite.prepare(`INSERT INTO feedback_submissions
+        (id, category, name, email, message, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        `fb_${crypto.randomUUID()}`, "feedback", "Current", "current@example.invalid", "Keep this fixture", NOW,
+        new Date(Date.parse(NOW) + 1).toISOString(),
+      );
+      f.sqlite.prepare("INSERT INTO feedback_rate_limits VALUES ('current', 1, ?, ?)").run(NOW, NOW);
+      await app.scheduled({ scheduledTime: Date.parse(NOW) }, { ACCOUNT_DB: f.database });
+      expect(f.count()).toBe(1);
+      expect(f.count("feedback_rate_limits")).toBe(1);
+      expect(f.count("feedback_reviewers")).toBe(1);
+      await app.scheduled({ scheduledTime: Date.parse(NOW) }, { ACCOUNT_DB: f.database });
+      expect(f.count()).toBe(1);
+    });
+
+    it("logs a non-sensitive failure and rejects missing, throwing, incomplete or unconfirmed cleanup", async () => {
+      const f = fixture();
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      for (const database of [
+        undefined,
+        { ...f.database, batch: async () => { throw new Error("secret submitted content"); } },
+        { ...f.database, batch: async () => [] },
+        { ...f.database, batch: async () => [{ success: false }, { success: false }] },
+        { ...f.database, batch: async () => [{ success: true }, { success: true }] },
+      ]) {
+        await expect(app.scheduled({ scheduledTime: Date.parse(NOW) }, { ACCOUNT_DB: database })).rejects.toThrow("Scheduled feedback cleanup failed.");
+      }
+      expect(log).toHaveBeenCalledTimes(5);
+      expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
+    });
   });
 
   it("fails closed on missing counters, failed batches, cleanup errors and reviewer lookup errors", async () => {

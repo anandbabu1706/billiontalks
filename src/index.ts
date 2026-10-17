@@ -28,7 +28,7 @@ import { publicPages } from "./website/content";
 import { robotsResponse, sitemapResponse, websiteResponse } from "./website/ui";
 import { websiteAsset } from "./website/assets";
 import { feedbackReviewPage } from "./website/review";
-import { handleFeedbackRequest, handleFeedbackAdminRequest } from "./feedback/api";
+import { handleFeedbackRequest, handleFeedbackAdminRequest, purgeExpiredFeedback } from "./feedback/api";
 import {
   activateRecordingMetadata,
   applyRecordingConsent,
@@ -7954,6 +7954,9 @@ const routeHandler = {
 const SFU_MUTATION_ROUTE = /^\/api\/meetings\/([^/]+)\/media\/(?:publish|publish\/ready|subscribe|renegotiate|tracks\/close|recover|close)$/;
 
 export default {
+  async scheduled(controller: { scheduledTime: number }, env: WorkerEnv): Promise<void> {
+    await purgeExpiredFeedback(env.ACCOUNT_DB, controller.scheduledTime);
+  },
   async fetch(
     request: Request,
     env: WorkerEnv = {},

@@ -3,6 +3,7 @@
   "name": "billiontalks-realtime-backend",
   "main": "src/index.ts",
   "compatibility_date": "2025-07-18",
+  "triggers": { "crons": ["*/5 * * * *"] },
   "workers_dev": true,
   "rules": [
     {
@@ -15,6 +16,7 @@
     }
   ],
   "vars": {
+    "PUBLIC_WEBSITE_ENABLED": "true",
     "ACCOUNT_EMAIL_FROM": "BillionTalks <no-reply@mail.billiontalks.com>",
     "ACCOUNT_PUBLIC_ORIGIN": "https://billiontalks.com/",
     "LIMITED_RELEASE_MEDIA_DISABLED": "false"
