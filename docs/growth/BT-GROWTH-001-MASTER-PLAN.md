@@ -98,3 +98,8 @@ No deployment, migrations, secrets, DNS changes, new Cloudflare resources or app
 - Focused tests, typecheck, bundle, responsive browser checks, SEO checks, actual guest/authenticated persistence and Dashboard/Settings integration passed. Synthetic staging records were removed. The reviewer allowlist remains empty until the owner authorizes account IDs.
 - Production is unchanged. Marketing homepage activation and migration 0009 require separate owner approval; no sitemap submission or social/analytics launch has occurred.
 - See [implementation and staging evidence](./BT-GROWTH-001-IMPLEMENTATION-SPEC.md#10-completed-staging-qualification-2026-10-18) for validation details, rollback and remaining approval gates.
+
+## VISUAL APPROVAL UPDATE — Solutions and Contact (2026-10-18)
+- Page 6 Contact & Feedback visually APPROVED/LOCKED: latest generated mockup with headline **Your Voice Matters. Every Conversation Counts.**, six interactive category cards, one selected-topic form, name/email authenticated prefill (editable), and secure functional submission. Mockup sample personal details and feature suggestions are illustrative, not real data. No unverified support SLAs.
+- Page 5 Solutions: clicking a title of any of the six audience cards must direct signed-out visitors to the existing V1 Create Account flow, not a new registration service. Prefer whole-card accessible links; for signed-in users route to Dashboard/start meeting rather than repeat signup. Retain six approved audience-card images and layout.
+- Approved images are NOT yet committed as repository files. Before Codex resumes visual edits, place actual references under docs/growth/approved-designs/ and verify access; this written record alone does not constitute a saved visual asset.
