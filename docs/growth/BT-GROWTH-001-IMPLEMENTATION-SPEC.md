@@ -174,3 +174,45 @@ Shared intentional differences: exact official logo and approved six-item naviga
 - Production remains `644e2632-2d38-4135-9785-e8b49b2b06ee` at 100%; no production deployment occurred.
 
 Status: implementation and staging functional/visual checks delivered; **final visual acceptance remains pending owner review of the screenshots and listed fidelity differences**. Passing automated tests alone is not visual acceptance. No production promotion is recommended without that acceptance and separate release authorization.
+
+## 12. Owner-authorized production release (2026-10-18)
+
+This section supersedes the earlier pending visual-approval, activity-driven-cleanup and empty-production-reviewer limitations. Owner acceptance is recorded in commit `20813959`. The final release request authorized production only after the mandatory safety checks; the owner subsequently approved scheduled deletion on the existing Workers and reviewer access for their authenticated, verified existing account only. No designs, images or marketing claims were changed during release.
+
+### Release identity and infrastructure
+
+- Deployed source: `6c7febff118552231b1384f0c05e9add348886f6`, pushed and verified on `bt-growth-001-website-social`.
+- Qualified staging: `51db683b-f726-4197-82d0-b12b5fa72788`, 100%.
+- Production: `billiontalks-realtime-backend`, version `d9102cb2-fbf3-479e-b816-08c38d50e782`, 100%, at https://billiontalks.com/.
+- Immediate code rollback: `644e2632-2d38-4135-9785-e8b49b2b06ee`. It was still serving 100% immediately before promotion; no newer production deployment was displaced.
+- Every existing production binding identity matched the candidate, including D1, Durable Objects, R2, Resend and Realtime secret bindings, email sender, account origin and media flag. The sole binding addition is `PUBLIC_WEBSITE_ENABLED=true`.
+- Both existing custom domains remain attached. `www.billiontalks.com` continues its 308 redirect to the apex, preserving meeting queries. Only the existing Workers' schedule endpoints were updated; no routes, DNS, secrets or resources were replaced.
+- Existing Wrangler OAuth was used with the API-token process variable excluded and an explicit empty environment file. No credentials were requested or created.
+
+### Retention, reviewer authorization and migration safety
+
+- The existing indexed expiry cleanup now also runs from the Worker's `scheduled` handler every five minutes (`*/5 * * * *`), independently of website traffic. Each invocation drains all expired batches, rather than stopping after the first 100 records. Request cleanup remains complementary.
+- Submission expiry remains exactly 90 days; expired records are immediately excluded from review and physically purged on the next successful scheduled run. Abuse counters expire after one day. Failures log only a safe category and reject the scheduled execution, rather than reporting success. The Contact notice describes this cadence and possible failure delay.
+- A real staging cron execution completed successfully, deleting 105 exact synthetic expired submissions and one expired counter without any feedback submission/review request. Read-only D1 verification confirmed both synthetic counts were zero. Staging reviewer grants remain empty.
+- The first observed production scheduled execution also completed successfully at approximately 23:51 UTC on 2026-10-17, reporting zero expired records after the synthetic submission had been removed. The five-minute production cron was verified independently through the schedule API.
+- The owner's authenticated production `/api/accounts/me` identity was matched to the exact active, email-verified D1 account. Only that account was inserted into the reviewer allowlist, using an exact-ID/status/verification condition after migration. No automatic privilege grant, new administrator or other account authorization was introduced.
+- Production migration `0009_contact_feedback.sql` was the sole pending migration and was applied once. It adds feedback tables, indexes and the immutable-account trigger without changing existing V1 tables. Production D1 Time Travel recovery bookmark was recorded before migration in the private operational checkpoint; no account-data export was committed.
+- Production D1 verified one authorized reviewer and migration 0009 applied. Live owner review returned 200 with `Cache-Control: no-store`; unauthenticated review returned 401.
+
+### Focused verification
+
+- 90 distinct relevant regressions passed: 57 feedback/security/retention tests, 20 website/form/SEO tests, four legacy homepage-routing tests and nine selected account/Scheduler tests. Typecheck and the production Wrangler dry-run bundle passed. No full suite or new screenshot cycle was run.
+- Scheduled tests cover more than two batches, exact expiry boundaries, preservation of unexpired submissions/counters and reviewer grants, repeat invocation, missing database and failed/incomplete/unconfirmed persistence.
+- All six live production pages returned 200 with unique titles, descriptions, canonical URLs, social metadata, valid structured data and `index,follow`. No page JavaScript exceptions, broken loaded images or horizontal overflow were observed in the six-route browser sweep.
+- The staging mobile navigation expanded/collapsed at a verified 390-pixel viewport without overflow; the previously accepted responsive/visual evidence is retained. Browser tooling can reset viewport overrides between operations; no new screenshot or pixel-fidelity claim is made.
+- Guest Solutions cards target registration; clicking an actual card opened the visible Create account panel. Sign-in navigation and the existing account panels remain available. All six authenticated Solutions cards target Dashboard. Authenticated Contact name/email prefill matched the account, remained editable and preserved Dashboard/Profile navigation.
+- A single real guest Contact form submission returned 201. D1 confirmed anonymous account association, category/rating and exactly 90 days' retention. Only the owner could review it. The owner deleted that exact reference through the administrative API; a subsequent D1 read confirmed zero synthetic submissions remaining. No synthetic production accounts, meetings or schedules were created.
+- Authenticated Dashboard, Scheduler, Calendar, Contacts/Invitations, Notifications, account Settings (`/account#preferences`), meeting UI and meeting deep-link routes returned 200; existing schedule/contact/invitation/notification/preferences APIs also returned 200. `/settings` is not the application's Settings route and was already 404 before release.
+- Sitemap contains only the six canonical public URLs. Production robots permits public indexing and excludes private/application/API/meeting-query routes. Staging remains noindex with robots disallowed. Private data APIs still require authentication.
+- A final read-only Wrangler D1 check encountered Cloudflare error 7403. `whoami` confirmed the established OAuth/account/D1 scope; the same OAuth successfully performed the final direct D1 read and active-version check. No alternative credentials or reauthorization were used.
+
+### Rollback and operating limits
+
+Use the recorded version with `wrangler versions deploy 644e2632-2d38-4135-9785-e8b49b2b06ee@100 --yes`, the production configuration and the established OAuth/empty-environment method if a critical regression requires code rollback. Do not restore D1 merely to roll back code: migration 0009 is additive and existing V1 data must be preserved. The prior version has no scheduled handler; remove the new cron if reverting to it, keep public feedback disabled and explicitly manage the retention duty for any existing messages until scheduled deletion is restored.
+
+Reviewer access is available at `/admin/feedback` to the explicitly authorized owner account; reviewing and responding remain manual operations, not an email alert service or a promised SLA. Search Console submission and physical-device media qualification remain separate tasks. The existing media implementation and SFU configuration were not changed; this release does not claim a new physical-device audio/video test.
