@@ -99,6 +99,13 @@ No deployment, migrations, secrets, DNS changes, new Cloudflare resources or app
 - Production is unchanged. Marketing homepage activation and migration 0009 require separate owner approval; no sitemap submission or social/analytics launch has occurred.
 - See [implementation and staging evidence](./BT-GROWTH-001-IMPLEMENTATION-SPEC.md#10-completed-staging-qualification-2026-10-18) for validation details, rollback and remaining approval gates.
 
+## UPDATED — Original-reference visual recovery (2026-10-18)
+- The six original approved PNGs are committed and pushed, with every SHA-256 verified against [the approval manifest](./BT-GROWTH-001-VISUAL-APPROVALS.md).
+- The rejected repeated-photograph layout has been replaced with reference-based product/support compositions and distinct page bodies. Working V0/V1 and feedback backend code remains unchanged.
+- Current staging code: `ba6cdb9b32168f2e6bcab23c9503644b0a59dbf4`; active Worker `b131b0eb-cb34-414d-b145-3d5607f96414` at 100%.
+- Six exact-1440px desktop and two exact-390px mobile screenshots are included with the handoff. [Visual comparison, functional qualification and remaining fidelity differences](./BT-GROWTH-001-IMPLEMENTATION-SPEC.md#11-reference-based-visual-recovery-2026-10-18) are recorded explicitly; this is not renewed owner design approval.
+- Production remains untouched. Final visual acceptance and separate production authorization are still required.
+
 ## VISUAL APPROVAL UPDATE — Solutions and Contact (2026-10-18)
 - Page 6 Contact & Feedback visually APPROVED/LOCKED: latest generated mockup with headline **Your Voice Matters. Every Conversation Counts.**, six interactive category cards, one selected-topic form, name/email authenticated prefill (editable), and secure functional submission. Mockup sample personal details and feature suggestions are illustrative, not real data. No unverified support SLAs.
 - Page 5 Solutions: clicking a title of any of the six audience cards must direct signed-out visitors to the existing V1 Create Account flow, not a new registration service. Prefer whole-card accessible links; for signed-in users route to Dashboard/start meeting rather than repeat signup. Retain six approved audience-card images and layout.

@@ -135,3 +135,42 @@ Focused local evidence: 55 feedback backend tests passed against real SQLite, 19
 - A single final staging refresh included the confirmed account-return navigation correction. Its candidate bindings matched the already-qualified staging version; the corrected return link, register/login panels and homepage were then checked live without repeating the full browser sweep.
 
 Ready for owner staging/design review and a separate production decision. Before release, authorize production migration 0009 and homepage activation, identify any reviewer account IDs, and confirm the disclosed activity-driven physical-cleanup policy or approve a scheduled alternative. General legal-policy review and physical-device media qualification remain separate limitations. Submit the sitemap to Search Console only after an approved production launch.
+
+## 11. Reference-based visual recovery (2026-10-18)
+
+The earlier written-specification interpretation was visually rejected. It is superseded by the six original PNGs in [approved-designs](./approved-designs/) and the [visual approval manifest](./BT-GROWTH-001-VISUAL-APPROVALS.md). All six SHA-256 hashes matched before implementation. Commit `4bce0c8` preserves the original images; pushing and fetching the growth branch confirmed identical remote Git blobs for every file.
+
+Current staging implementation: `ba6cdb9b32168f2e6bcab23c9503644b0a59dbf4`.
+Current staging Worker version: `b131b0eb-cb34-414d-b145-3d5607f96414`, confirmed at 100%.
+URL: https://billiontalks-v1-staging.anandjob1706.workers.dev/
+Immediate pre-recovery rollback: `749b7f31-1cc0-4c5c-b5d6-669b2a299f44`.
+
+The correction is confined to marketing rendering/styles/content, the shared Contact presentation, asset serving and focused website tests. No account, meeting, Dashboard, Scheduler, backend feedback, migration or Worker configuration code changed. Six optimized photographic extracts (approximately 54 KB combined) reuse the owner-provided originals; page text, layouts, icons and product previews remain HTML/CSS/SVG. Original PNGs are not shipped as rasterized pages. The real repository logo replaces generated sample branding.
+
+### Visual-reference comparison and remaining differences
+
+These are implemented reference-based compositions, **not a claim of pixel-perfect reproduction or renewed owner visual approval**. All six actual desktop captures and both mobile captures were inspected. Remaining differences are explicit:
+
+| Page | Reference composition reproduced | Differences requiring owner review |
+|---|---|---|
+| Home | Blue-white hero, large two-tone headline, four original sample participants in a dimensional product preview, five elevated cards, lower Why section and device treatment. | Office/set dressing and platform lighting are simplified into CSS gradients/shadows. Preview chrome is illustrative rather than a live call; original approved body copy is retained instead of unsupported mockup claims. |
+| About | First-design headline, laptop rather than Home's freestanding display, four principles, connected globe, Philosophy/Mission/Vision cards, Values and closing CTA. | Globe is a CSS connection illustration, not the detailed reference world map. Mug, plant and desk photography are not reproduced. Values use the approved truthful copy, not free-forever or adoption claims. |
+| How It Works | Four numbered stages, directional progression, stage-specific account/calendar/invitation/collaboration visuals and laptop/phone preview. | Real registration/scheduling/join links replace sample input/copy controls. Illustrative calendar/link panels do not pretend to create meetings. Hero proportions and total page height differ from the static reference. |
+| Features | Product-first laptop/phone hero, six distinct supported feature visuals, lower scheduling/invitation/chat composition. | Six requested supported features use a three-column grid, rather than the reference's eight cards including unavailable/unsupported claims. Decorative cloud/office set dressing is simplified. |
+| Solutions | Original team imagery, floating capability list, six differentiated linked audience cards and blue closing CTA. | Individual portraits are reused from the approved assets rather than reproducing every audience's separate pose. No fictional user counts or security promises. Every card uses existing registration or Dashboard navigation. |
+| Contact | Approved headline and support photograph, six coloured icon topics, selected-topic treatment, exactly one focused form, adjacent feedback-growth panel and responsive stacking. | Guest fields remain empty; no mockup identities are published. Existing backend fields are preserved: no new Subject field, rating only for Feedback. No invented support SLA or response promises. Mobile callout is repositioned so it does not cover the face. |
+
+Shared intentional differences: exact official logo and approved six-item navigation order take precedence over generated logos, Free Access links or alternate mockup menu order. System-font typography, truthful copy, privacy notices, accessible controls and a working footer change line breaks/page heights. CTA bands are darker to retain white-text contrast.
+
+### Qualification evidence
+
+- 31 distinct focused regressions passed: 20 website/form/SEO tests, four legacy homepage-routing tests, and seven selected account-session/Dashboard/Scheduler tests. Existing 55-test feedback persistence/security evidence is reused because that backend is unchanged. Typecheck, staging dry-run build and final uploaded bundle passed. No full suite was repeated.
+- Browser screenshots saved outside the repository: six full-page desktop PNGs with **verified 1440-pixel image width**, plus Home and Contact mobile PNGs with **verified 390-pixel width**. Contact captures show Feature Suggestions selected and blank guest fields. The screenshot ZIP is provided with the handoff.
+- All six final staging pages passed 320/390/768/1440-pixel layout checks, with no horizontal overflow. Desktop checks found no broken images, incorrect canonicals, hidden closing CTAs or page JavaScript exceptions. Mobile menu expansion/collapse passed. The first screenshot pass exposed an About CTA selector-scope bug and a face-obscuring support callout; both were corrected before the final set.
+- All six Contact topics were verified with real browser pointer events to reveal the same form. A single Feedback submission was durably stored with rating 4, then the exact synthetic record was deleted and zero remaining records confirmed. No account or meeting fixtures were created. Reviewer allowlist remains empty.
+- Public Sign In and Solutions registration navigation open existing account panels; Back to meetings remains `/ui`. Meeting deep links, account, Dashboard, Scheduler, Calendar, Contacts and Notifications return 200 with noindex. Six-URL sitemap parses; staging robots remains disallowed. Unauthenticated administrative review remains 401.
+- Existing authenticated prefill/profile-isolation and Dashboard/Settings integration evidence from section 10 is retained, supplemented by passing current website/session regressions. This pass does not claim a new live authenticated-user or physical media qualification.
+- Final staging bindings exactly match the pre-recovery version, including D1, Durable Objects, R2, Resend/Realtime secrets and account configuration. No migrations, resources, triggers, DNS or secret rotations occurred. Existing Wrangler authorization sufficed without an interactive login flow.
+- Production remains `644e2632-2d38-4135-9785-e8b49b2b06ee` at 100%; no production deployment occurred.
+
+Status: implementation and staging functional/visual checks delivered; **final visual acceptance remains pending owner review of the screenshots and listed fidelity differences**. Passing automated tests alone is not visual acceptance. No production promotion is recommended without that acceptance and separate release authorization.
