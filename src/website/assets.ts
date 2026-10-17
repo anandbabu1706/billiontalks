@@ -2,12 +2,24 @@ import logo from "../assets/brand/billiontalks-logo.png";
 import teamSmall from "../assets/website/team-640.webp";
 import teamLarge from "../assets/website/team-1200.webp";
 import earth from "../assets/website/earth-800.webp";
+import priya from "../assets/website/portrait-priya.webp";
+import arun from "../assets/website/portrait-arun.webp";
+import karthik from "../assets/website/portrait-karthik.webp";
+import sneha from "../assets/website/portrait-sneha.webp";
+import support from "../assets/website/support.webp";
+import solutionsTeam from "../assets/website/solutions-team.webp";
 
 const assets: Record<string, { source: string | ArrayBuffer; type: string }> = {
   "/assets/website/logo.png": { source: logo, type: "image/png" },
   "/assets/website/team-640.webp": { source: teamSmall, type: "image/webp" },
   "/assets/website/team-1200.webp": { source: teamLarge, type: "image/webp" },
   "/assets/website/earth-800.webp": { source: earth, type: "image/webp" },
+  "/assets/website/portrait-priya.webp": { source: priya, type: "image/webp" },
+  "/assets/website/portrait-arun.webp": { source: arun, type: "image/webp" },
+  "/assets/website/portrait-karthik.webp": { source: karthik, type: "image/webp" },
+  "/assets/website/portrait-sneha.webp": { source: sneha, type: "image/webp" },
+  "/assets/website/support.webp": { source: support, type: "image/webp" },
+  "/assets/website/solutions-team.webp": { source: solutionsTeam, type: "image/webp" },
 };
 
 export async function websiteAsset(path: string): Promise<Response | null> {

@@ -1,6 +1,7 @@
 import type { Account } from "../account/domain";
 import { FEEDBACK_CATEGORIES } from "../feedback/api";
 import { escapeHtml } from "./html";
+import { icon, iconBadge } from "./visuals";
 
 const topicDescriptions = [
   "Ask a question about BillionTalks.",
@@ -14,9 +15,9 @@ const topicDescriptions = [
 export function contactForm(account: Account | null): string {
   const categories = Object.entries(FEEDBACK_CATEGORIES);
   return `<section class="section wrap"><noscript><p class="legal-notice">Please enable JavaScript to choose a topic and submit the contact form. Your message is not sent until the service confirms receipt.</p></noscript><div class="cards" id="contactTopics" aria-label="Choose a contact topic">${categories.map(([value, label], index) =>
-    `<button class="card topic-card" type="button" data-topic="${escapeHtml(value)}" aria-controls="feedbackPanel" aria-pressed="false"><span class="icon-box" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(label)}</strong><span>${topicDescriptions[index]}</span></button>`,
+    `<button class="card topic-card" type="button" data-topic="${escapeHtml(value)}" aria-controls="feedbackPanel" aria-pressed="false">${iconBadge(["chat", "headset", "bulb", "building", "heart", "alert"][index]!)}<strong>${escapeHtml(label)}</strong><span>${topicDescriptions[index]}</span></button>`,
   ).join("")}</div>
-  <section id="feedbackPanel" class="card feedback-panel" aria-labelledby="feedbackHeading" hidden><header><h2 id="feedbackHeading" tabindex="-1">Let's hear from you</h2><p>${account ? "Your registered name and verified email are prefilled. You can edit them for this message without changing your account." : "Share the details below. You do not need an account to contact us."}</p></header>
+  <div class="contact-workspace"><section id="feedbackPanel" class="card feedback-panel" aria-labelledby="feedbackHeading" hidden><header><h2 id="feedbackHeading" tabindex="-1">Let's hear from you</h2><p>${account ? "Your registered name and verified email are prefilled. You can edit them for this message without changing your account." : "Share the details below. You do not need an account to contact us."}</p></header>
   <form id="contactForm"><div class="form-grid">
   <label class="field wide" for="contactCategory">Topic<select id="contactCategory" name="category" required>${categories.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join("")}</select></label>
   <label class="field" for="contactName">Name<input id="contactName" name="name" autocomplete="name" maxlength="100" value="${escapeHtml(account?.fullName ?? "")}" required></label>
@@ -28,7 +29,7 @@ export function contactForm(account: Account | null): string {
   </div><div class="honey" aria-hidden="true"><label>Leave this field empty<input name="website" tabindex="-1" autocomplete="off" maxlength="200"></label></div>
   <p class="privacy-copy">We use your name, email and message to review and respond to your request. Signed-in submissions are associated with your account, even if you edit the contact email. ${account ? "" : "Abuse protection uses a short-lived hashed IP/session identifier. "}No private meeting content is automatically collected. <a href="#privacy">Read the contact privacy notice</a>.</p>
   <div class="form-buttons"><button id="contactSubmit" class="button" type="submit">Send Message</button><button id="changeTopic" class="button secondary" type="button">Choose another topic</button></div>
-  <p id="contactStatus" class="form-status" role="status" aria-live="polite" tabindex="-1"></p></form></section>
+  <p id="contactStatus" class="form-status" role="status" aria-live="polite" tabindex="-1"></p></form></section><aside class="card feedback-aside"><span class="eyebrow">Thank you</span><div class="message-illustration" aria-hidden="true">${icon("mail")}<span>${icon("chat")}</span></div><h2>Your Feedback<br>Helps Us <em>Grow.</em></h2><p>Your ideas, questions and feedback help us understand what matters and improve BillionTalks.</p><div class="support-point">${iconBadge("people")}<div><h3>A human connection</h3><p>Give us the context to understand your experience.</p></div></div><div class="support-point">${iconBadge("bulb")}<div><h3>A better BillionTalks</h3><p>Your suggestions help shape what comes next.</p></div></div><p class="hint">This form is not a live support chat. No response time is guaranteed.</p></aside></div>
   <aside id="privacy" class="text-section section" aria-labelledby="contactPrivacyHeading"><h2 id="contactPrivacyHeading">Your message. Your information.</h2><p class="privacy-copy">Only authorized reviewers can access submissions. Contact details and message content are available for up to 90 days, after which they expire from review and are deleted during service cleanup. Abuse-protection hashes expire after one day. Cleanup runs when the service handles requests; deletion from inactive storage can occur later. Avoid sharing confidential information. To request earlier removal, choose General Enquiries and include your message reference; we may need to verify the request.</p><p class="privacy-copy">You can submit without creating an account. This notice covers Contact &amp; Feedback only; it does not make additional claims about meeting-data retention or response times.</p></aside></section>`;
 }
 
@@ -44,6 +45,7 @@ const contactStatus = document.getElementById('contactStatus');
 function syncTopic() {
   const feedback = category.value === 'feedback';
   const report = category.value === 'report-issue';
+  document.getElementById('feedbackHeading').textContent = category.options[category.selectedIndex].textContent;
   rating.hidden = !feedback;
   rating.disabled = !feedback;
   issue.hidden = !report;

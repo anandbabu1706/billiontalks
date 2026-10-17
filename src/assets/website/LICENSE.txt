@@ -22,3 +22,22 @@ must not be presented as endorsements.
 
 The official BillionTalks logo remains the unchanged asset in
 ../brand/billiontalks-logo.png; it is not covered by this photography license.
+
+Owner-approved visual-reference derivatives (2026-10-18)
+
+Source PNGs were supplied and approved by the owner. Their original SHA-256
+hashes are recorded in docs/growth/BT-GROWTH-001-VISUAL-APPROVALS.md.
+These derivatives are isolated photographic areas only, not page screenshots,
+text, or rasterized application controls. Layout, type, icons and product
+preview UI are implemented in HTML/CSS/SVG.
+
+portrait-priya.webp, portrait-arun.webp, portrait-karthik.webp,
+portrait-sneha.webp: photographic tiles from 01-home.png, excluding labels.
+support.webp: support photograph from 06-contact-feedback.png; the generated
+laptop branding is covered and replaced with the real repository logo.
+solutions-team.webp: people photograph from 05-solutions.png, excluding cards.
+
+All derivatives are optimized WebP (combined approximately 54 KB). The source
+images remain unchanged. People are illustrative, not customers, employees,
+or endorsements. Meeting names are samples. These owner-provided derivatives
+are not attributed to Unsplash and are not covered by the Unsplash licence.

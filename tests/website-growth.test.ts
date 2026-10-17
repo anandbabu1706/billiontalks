@@ -155,6 +155,28 @@ describe("BT-GROWTH-001 public website", () => {
     expect(parse(accountPage()).querySelector('[data-panel="preferences"] a[href="/contact"]')?.textContent).toBe("Contact & Feedback");
   });
 
+  it("recreates distinct reference compositions without screenshot content or inert controls", async () => {
+    const pages = await Promise.all(publicPages.map(async (page) => parse(await websiteResponse(page, null, false).text())));
+    expect(pages[0]!.querySelectorAll(".preview-tile")).toHaveLength(4);
+    expect(pages[0]!.querySelectorAll(".home-cards .card")).toHaveLength(5);
+    expect(pages[0]!.querySelector(".why-section")).not.toBeNull();
+    expect(pages[1]!.querySelectorAll(".philosophy-grid .card")).toHaveLength(3);
+    expect(pages[1]!.querySelector(".connection-globe")).not.toBeNull();
+    expect(pages[2]!.querySelectorAll(".step-list li")).toHaveLength(4);
+    expect(pages[3]!.querySelectorAll(".feature-card")).toHaveLength(6);
+    expect(pages[4]!.querySelectorAll('.audience-card[href="/account#register"]')).toHaveLength(6);
+    expect([...pages[4]!.querySelectorAll(".audience-card h2")].map((node) => node.textContent)).toEqual(["Startups", "Small businesses", "Entrepreneurs", "Freelancers", "Professionals", "Individuals"]);
+    const signedIn = parse(await websiteResponse(publicPages[4], account, false).text());
+    expect(signedIn.querySelectorAll('.audience-card[href="/dashboard"]')).toHaveLength(6);
+    expect(pages[5]!.querySelector("h1")?.textContent).toBe("Your Voice Matters. Every Conversation Counts.");
+    expect(pages[5]!.querySelectorAll(".topic-card .icon")).toHaveLength(6);
+    for (const document of pages) {
+      expect(document.querySelectorAll('img[src*="approved-designs"]')).toHaveLength(0);
+      expect(document.querySelectorAll(".meeting-preview button")).toHaveLength(0);
+      expect(document.querySelectorAll(".hero img[src*=team]")).toHaveLength(document === pages[4] ? 1 : 0);
+    }
+  });
+
   it("keeps account return navigation on the meeting interface when marketing owns root", async () => {
     const response = await app.fetch(new Request("https://staging.example/account"), enabled);
     const dom = new JSDOM(await response.text(), { url: "https://staging.example/account#register", runScripts: "dangerously" });
