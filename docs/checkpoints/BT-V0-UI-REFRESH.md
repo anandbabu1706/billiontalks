@@ -31,3 +31,11 @@ All existing element IDs and inline meeting controller code are retained. No API
 ## Remaining gate
 
 In an authorized environment, verify staging bindings and deploy only this development branch to the existing V1 staging Worker. Check all five screens at 1440, 768, 390 and 320 pixels, keyboard focus, long meeting IDs/names, host/guest admission, scheduled entry, chat, recording consent, sharing and termination. Confirm physical media separately. Owner review and staging approval must precede any production request. No production resources, original release tags, secrets or migrations were modified.
+
+## Joined-participant grid correction (2026-10-17)
+
+On `bt-ui-display-density`, the initial meeting markup no longer fabricates guest tiles. The room renderer derives camera tiles strictly from `JOINED` participants, without a synthetic fallback. The participant sidebar and admission workflow are unchanged. Existing snapshot updates rebuild the grid on admission, join, leave, removal and reconnection; camera-off participants retain their placeholder tiles.
+
+The non-presentation grid uses one full-area tile for one participant, two balanced columns for two, three columns for three on wide screens (two rows on narrower screens), and two columns/two rows for four. Larger groups retain the responsive auto-fit layout. Presentation, full-screen, camera-strip and media handling remain unchanged.
+
+Focused verification: 12 browser-UI regression tests passed, including zero/one through six joined participants, excluded waiting/pending/rejected/denied/disconnected/left/removed states, admission/leave/removal/reconnection transitions, camera-off retention, host removal, remote video attachment and presentation/screen-sharing regressions. Typecheck, Worker dry-run build and diff check passed. Prior density validation is reused; no complete suite was repeated. Staging rollback reference before this correction: `f911639c-7daa-4cd0-8280-289efa70b7b9`. Physical multi-participant media qualification is not claimed.

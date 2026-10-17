@@ -2170,22 +2170,6 @@ function meetingUiTemplate(): string {
                 <video id="presentationVideo" class="presentation-video" autoplay playsinline></video>
                 <button type="button" class="presentation-focus-btn" id="presentationFocusBtn" aria-pressed="false">Focus / Full Screen</button>
               </div>
-              <div class="tile self">
-                <div class="placeholder" id="localTileLabel">You</div>
-                <div class="meta"><span class="dot"></span><span id="localStatusLabel">Mic on</span></div>
-              </div>
-              <div class="tile">
-                <div class="placeholder">Guest</div>
-                <div class="meta"><span class="dot"></span><span>Waiting</span></div>
-              </div>
-              <div class="tile">
-                <div class="placeholder">Guest</div>
-                <div class="meta"><span class="dot"></span><span>Waiting</span></div>
-              </div>
-              <div class="tile">
-                <div class="placeholder">Guest</div>
-                <div class="meta"><span class="dot"></span><span>Waiting</span></div>
-              </div>
             </div>
 
             <div class="controls" id="meetingControls">
@@ -5863,7 +5847,7 @@ function meetingUiTemplate(): string {
           participantList.appendChild(item);
         });
 
-        const orderedParticipants = [...allParticipants];
+        const orderedParticipants = state.meeting.participants.filter((participant) => participant.state === 'JOINED');
         const localIndex = orderedParticipants.findIndex((participant) => isLocalParticipant(participant));
 
         if (localIndex > 0) {
@@ -5871,15 +5855,8 @@ function meetingUiTemplate(): string {
           orderedParticipants.unshift(localParticipant);
         }
 
-        const stageParticipants = orderedParticipants.length ? orderedParticipants : [{
-          id: 'local-user',
-          userId: 'local-user',
-          displayName: state.displayName || 'You',
-          role: 'PARTICIPANT',
-          state: 'JOINED',
-        }];
-
-        stageParticipants.forEach((participant) => {
+        stage.dataset.participantCount = String(orderedParticipants.length);
+        orderedParticipants.forEach((participant) => {
           const tile = document.createElement('div');
           tile.className = 'tile';
           if (participant.userId) tile.dataset.userId = participant.userId;
@@ -5888,12 +5865,11 @@ function meetingUiTemplate(): string {
           }
 
           const tileLabel = isLocalParticipant(participant) ? 'You' : participant.displayName;
-          const tileStatus = participant.state === 'JOINED' ? 'Joined' : 'Waiting';
           const isLocalTile = isLocalParticipant(participant);
 
           tile.innerHTML =
-            '<div class="placeholder">' + escapeHtml(tileLabel) + '</div>' +
-            '<div class="meta"><span class="dot"></span><span' + (isLocalTile ? ' id="localStatusLabel"' : '') + '>' + tileStatus + '</span></div>';
+            '<div class="placeholder"' + (isLocalTile ? ' id="localTileLabel"' : '') + '>' + escapeHtml(tileLabel) + '</div>' +
+            '<div class="meta"><span class="dot"></span><span' + (isLocalTile ? ' id="localStatusLabel"' : '') + '>Joined</span></div>';
           cameraStrip.appendChild(tile);
         });
 

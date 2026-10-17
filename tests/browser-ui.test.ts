@@ -2532,7 +2532,8 @@ describe("BillionTalks browser UI regression tests", () => {
     const listCount = getParticipantNames(document).length;
     const stageTiles = document.querySelectorAll("#videoStage .tile").length;
     expect(stageTiles).toBeGreaterThan(0);
-    expect(stageTiles).toBeGreaterThanOrEqual(listCount);
+    expect(stageTiles).toBeLessThanOrEqual(listCount);
+    expect(document.getElementById("videoStage")?.dataset.participantCount).toBe(String(stageTiles));
   });
 });
 
@@ -2563,6 +2564,60 @@ function hostSnapshot() {
     ],
   };
 }
+
+describe("joined participant video grid", () => {
+  it("has no fabricated tiles before a meeting is joined", async () => {
+    const { document } = await loadRenderedPage();
+    expect(document.querySelectorAll("#videoStage .tile")).toHaveLength(0);
+  });
+
+  it("tracks counts, admission, leave, removal and reconnection without including inactive participants", async () => {
+    const { window, document } = await enterHostRoom();
+    const meeting = hostSnapshot();
+    const host = meeting.participants[0];
+    const guest = (index: number, state = "JOINED") => ({
+      id: `grid-${index}`, userId: `grid-user-${index}`, displayName: `Guest ${index}`,
+      role: "PARTICIPANT", state,
+    });
+    installFetch(window, vi.fn(async () => createResponse({ ok: true, data: meeting })));
+    const tiles = () => [...document.querySelectorAll<HTMLElement>("#videoStage .tile")];
+    const refresh = async () => {
+      document.getElementById("refreshAdmissionsBtn")?.click();
+      await flush();
+      expect(tiles().map((tile) => tile.dataset.userId)).toEqual(
+        meeting.participants.filter((participant) => participant.state === "JOINED").map((participant) => participant.userId),
+      );
+      expect(document.getElementById("videoStage")?.dataset.participantCount).toBe(String(tiles().length));
+    };
+
+    for (const count of [1, 2, 3, 4, 5, 6]) {
+      meeting.participants = [
+        host, ...Array.from({ length: count - 1 }, (_, index) => guest(index)),
+        ...["WAITING", "PENDING", "REJECTED", "DENIED", "DISCONNECTED", "LEFT", "REMOVED"].map((state, index) => guest(10 + index, state)),
+      ];
+      await refresh();
+      expect(tiles()).toHaveLength(count);
+    }
+    meeting.participants = [host, guest(0, "WAITING")];
+    await refresh();
+    expect(tiles()).toHaveLength(1);
+    meeting.participants[1].state = "JOINED";
+    await refresh();
+    expect(tiles()).toHaveLength(2);
+    for (const state of ["LEFT", "JOINED", "REMOVED", "JOINED", "DISCONNECTED", "JOINED"]) {
+      meeting.participants[1].state = state;
+      await refresh();
+      expect(tiles()).toHaveLength(state === "JOINED" ? 2 : 1);
+    }
+    document.getElementById("toggleCameraBtn")?.click();
+    await flush();
+    expect(tiles()).toHaveLength(2);
+    expect(document.querySelector(".tile.self .placeholder")?.textContent).toBe("Camera off");
+    meeting.participants = [];
+    await refresh();
+    expect(tiles()).toHaveLength(0);
+  });
+});
 
 describe("BT-V0-009 rendered host controls", () => {
   it("confirms removal, sends only the selected user, and preserves the rest of the room", async () => {
