@@ -1,6 +1,6 @@
 # BT-GROWTH-001 — Consolidated Website Implementation Specification
 
-Status: IMPLEMENTED ON GROWTH BRANCH; staging qualification in progress. Production not authorized.
+Status: IMPLEMENTED AND STAGING-QUALIFIED; awaiting owner review and separate production approval.
 Source of truth: [BT-GROWTH-001-MASTER-PLAN.md](./BT-GROWTH-001-MASTER-PLAN.md)
 Branch: `bt-growth-001-website-social`
 Baseline application commit: `f4bb52a7bbf56fbe1ba1a5fa2986a03d156b37c9` (verify active production code and branch before changes)
@@ -117,4 +117,21 @@ The owner authorized implementation and existing-staging qualification in chat, 
 - Six canonical marketing URLs only are listed in XML sitemap. Staging is `noindex,nofollow` and robots-disallowed; application/meeting HTML receives `X-Robots-Tag: noindex, nofollow`. Search Console submission remains a post-production task; DNS ownership records are untouched.
 - Existing account Terms/Privacy wording predates this work. No unapproved general legal policy or fictional support mailbox has been published; the footer links to the factual Contact privacy notice.
 
-Focused local evidence: 55 feedback backend tests passed against real SQLite, 18 new website/form/SEO tests plus four legacy homepage tests passed, and nine selected existing login/session, Dashboard scheduled-start and Scheduler lifecycle regressions passed. Typecheck and staging-config dry-run bundle passed. Unrelated suites and physical media qualification were not repeated.
+Focused local evidence: 55 feedback backend tests passed against real SQLite, 19 new website/form/SEO tests plus four legacy homepage tests passed, nine selected existing login/session, Dashboard scheduled-start and Scheduler lifecycle regressions passed, and one existing account-navigation UI regression passed (88 focused tests total). The final account-return correction was checked with two targeted tests, not another full suite. Typecheck and staging-config dry-run bundle passed. Unrelated suites and physical media qualification were not repeated.
+
+## 10. Completed staging qualification (2026-10-18)
+
+- URL: https://billiontalks-v1-staging.anandjob1706.workers.dev/
+- Deployed implementation SHA: `de78769b51258f74eda6dbfb629ea1acb75d9842`.
+- Active staging Worker version: `749b7f31-1cc0-4c5c-b5d6-669b2a299f44`, confirmed at 100% traffic.
+- Pre-growth staging rollback: `fb44e1fe-cafb-4988-af76-12ba0641b635`, confirmed available. Migration 0009 is additive and can remain when rolling back the code.
+- Production remains `644e2632-2d38-4135-9785-e8b49b2b06ee` at 100%. No production migration, activation or deployment occurred. Existing D1, Durable Objects, R2, account configuration and secret bindings match the pre-growth checkpoint; both production custom domains are unchanged.
+- All six pages were checked in a real browser at 320, 390, 768, 1366 and 1440 pixels: no horizontal overflow, broken images, missing image alt attributes or page JavaScript errors in the public-page sweep. Mobile navigation opens/closes. Desktop Home and mobile Contact screenshots were captured during review; no screenshot files were added to the repository.
+- Titles, H1s and canonicals match the approved six-page content. Sitemap XML parses and contains exactly six canonical URLs. Staging robots disallows crawling; app/account/meeting routes retain noindex response headers. The served logo hash matches the official repository asset.
+- Guest Feedback was actually persisted with its selected rating and 90-day expiry. An authenticated Report an Issue was actually persisted with the verified account ID despite editing contact name/email; the account profile remained unchanged. Optional empty context was omitted correctly.
+- Authenticated Dashboard and Settings links both open the same Contact form with prefilled identity. Sign Out restores guest navigation. Existing register/login panels open correctly. When marketing owns `/`, account Back to meetings now returns to `/ui`; legacy root navigation remains unchanged when the website flag is off.
+- The public review method is rejected, guests receive 401 from the admin API, and an authenticated non-reviewer receives 403. Authorized-review success is covered by backend tests, not claimed as a live staging reviewer test: the allowlist remains empty as requested.
+- Both exact QA feedback records and the synthetic staging account, session, preferences and entitlement were removed; zero fixture accounts/submissions and zero reviewers were confirmed. Normal short-lived abuse counters were not broadly deleted.
+- A single final staging refresh included the confirmed account-return navigation correction. Its candidate bindings matched the already-qualified staging version; the corrected return link, register/login panels and homepage were then checked live without repeating the full browser sweep.
+
+Ready for owner staging/design review and a separate production decision. Before release, authorize production migration 0009 and homepage activation, identify any reviewer account IDs, and confirm the disclosed activity-driven physical-cleanup policy or approve a scheduled alternative. General legal-policy review and physical-device media qualification remain separate limitations. Submit the sitemap to Search Console only after an approved production launch.

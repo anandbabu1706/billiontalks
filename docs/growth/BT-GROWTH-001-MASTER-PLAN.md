@@ -1,6 +1,6 @@
 # BT-GROWTH-001 — Website, SEO and Social Launch Master Plan
 
-Status: PLANNING — not implemented or deployed
+Status: IMPLEMENTED AND STAGING-QUALIFIED — owner review and separate production approval pending
 Working branch: `bt-growth-001-website-social`
 Starting application checkpoint: `f4bb52a7bbf56fbe1ba1a5fa2986a03d156b37c9`
 Repository: `anandbabu1706/billiontalks`
@@ -90,3 +90,11 @@ No deployment, migrations, secrets, DNS changes, new Cloudflare resources or app
 - Approved navigation: **Home → About → How It Works → Features → Solutions → Contact**.
 - **Remove separate Free Access page**: express free V1 availability accurately on Home and within relevant CTAs; consider Pricing only when V2 paid capabilities are approved and implemented. No repetitive standalone SEO landing page.
 - Signed-in visitors receive direct Dashboard/profile access; signed-out visitors Sign In / Create Free Account.
+
+## IMPLEMENTED — Staging checkpoint (2026-10-18)
+- All six public pages and the centralized Contact & Feedback workflow are implemented on this growth branch, using existing account sessions and infrastructure.
+- Staging: https://billiontalks-v1-staging.anandjob1706.workers.dev/
+- Deployed code: `de78769b51258f74eda6dbfb629ea1acb75d9842`; Worker version `749b7f31-1cc0-4c5c-b5d6-669b2a299f44` at 100%.
+- Focused tests, typecheck, bundle, responsive browser checks, SEO checks, actual guest/authenticated persistence and Dashboard/Settings integration passed. Synthetic staging records were removed. The reviewer allowlist remains empty until the owner authorizes account IDs.
+- Production is unchanged. Marketing homepage activation and migration 0009 require separate owner approval; no sitemap submission or social/analytics launch has occurred.
+- See [implementation and staging evidence](./BT-GROWTH-001-IMPLEMENTATION-SPEC.md#10-completed-staging-qualification-2026-10-18) for validation details, rollback and remaining approval gates.
