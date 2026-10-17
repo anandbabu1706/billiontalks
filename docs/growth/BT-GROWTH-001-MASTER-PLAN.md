@@ -59,3 +59,11 @@ Repository: `anandbabu1706/billiontalks`
 6. Establish official social profiles, collect feedback and proceed with free-user outreach.
 
 No deployment, migrations, secrets, DNS changes, new Cloudflare resources or application edits are authorized by this planning document.
+
+## Approved global positioning and navigation (2026-10-18)
+- Global, free-first meeting platform for everyone, initially targeting startups and small businesses; retain individuals, professionals and teams as eligible users.
+- Public navigation: Home, Features, How It Works, Solutions, About, Free Access, Contact.
+- Signed-out prominent actions: **Sign In** and **Create Free Account**, linked to existing V1 account flows. Signed-in actions: **Dashboard** and profile menu with Sign Out, using existing authentication and session state.
+- Preserve direct V1 access at `/dashboard` and existing Scheduler, Calendar and meeting routes; public site must never displace authenticated workspace or scheduled-meeting deep links.
+- Verify actual supported account tab/hash routes in code and browser before publishing links; do not assume an unverified registration fragment is supported.
+- Do not create separate website accounts or another authentication system.
