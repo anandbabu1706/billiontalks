@@ -67,3 +67,10 @@ No deployment, migrations, secrets, DNS changes, new Cloudflare resources or app
 - Preserve direct V1 access at `/dashboard` and existing Scheduler, Calendar and meeting routes; public site must never displace authenticated workspace or scheduled-meeting deep links.
 - Verify actual supported account tab/hash routes in code and browser before publishing links; do not assume an unverified registration fragment is supported.
 - Do not create separate website accounts or another authentication system.
+
+## Approved navigation and About design — 2026-10-18
+- FINAL public navigation order: **Home → About → How It Works → Features → Solutions → Free Access → Contact**.
+- Keep Sign In and Create Free Account as separate right-side actions for signed-out visitors; show Dashboard/profile access for signed-in users, preserving V1 authentication.
+- **About page visually APPROVED/LOCKED:** retain the first About mockup composition, premium blue-white theme, meeting scene, globe image, cards and CTA, with the finalized headline **“Connecting People. Building Better Conversations.”** and philosophical, people-first tone.
+- Final implementation MUST replace any generated logo with the repository's exact official approved logo asset, and correct mockup text that overclaims security, unlimited free access, usage or active capabilities.
+- Do not regenerate the About page image or redesign it absent an explicit owner request.
