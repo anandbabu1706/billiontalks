@@ -6534,7 +6534,7 @@ const routeHandler = {
     }
 
     if (request.method === "GET" && url.pathname === "/account") {
-      return new Response(accountPage(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+      return new Response(accountPage(websiteEnabled), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
     }
 
     if (request.method === "GET" && url.pathname === "/notifications") {

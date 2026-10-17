@@ -52,7 +52,7 @@ function renderCountryOptions(options: CountryOption[]): string {
 }
 
 /** Standalone V1 account surface, deliberately independent of V0 media scripts. */
-export function accountPage(): string {
+export function accountPage(publicWebsiteEnabled = false): string {
   const logoUrl = logoDataUrl(logoSource);
   const options = countryOptions();
   const dialingCodes = Object.fromEntries(options.map(({ code, dialingCode }) => [code, dialingCode]));
@@ -274,7 +274,7 @@ export function accountPage(): string {
     <a class="back" href="/notifications">View notifications</a>
     <a class="back" href="/contact">Contact &amp; Feedback</a>
   </section>
-  <a class="back" id="accountBackLink" href="/">← Back to meetings</a>
+  <a class="back" id="accountBackLink" href="${publicWebsiteEnabled ? "/ui" : "/"}">← Back to meetings</a>
   </div>
 </main>
 <script>
@@ -298,7 +298,7 @@ export function accountPage(): string {
       backLink.href = '/account#login';
       backLink.textContent = '← Back to sign in';
     } else {
-      backLink.href = '/';
+      backLink.href = '${publicWebsiteEnabled ? "/ui" : "/"}';
       backLink.textContent = '← Back to meetings';
     }
     const activePage = ['login', 'register', 'profile', 'preferences'].includes(page) ? page : null;

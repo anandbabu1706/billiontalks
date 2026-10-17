@@ -155,6 +155,16 @@ describe("BT-GROWTH-001 public website", () => {
     expect(parse(accountPage()).querySelector('[data-panel="preferences"] a[href="/contact"]')?.textContent).toBe("Contact & Feedback");
   });
 
+  it("keeps account return navigation on the meeting interface when marketing owns root", async () => {
+    const response = await app.fetch(new Request("https://staging.example/account"), enabled);
+    const dom = new JSDOM(await response.text(), { url: "https://staging.example/account#register", runScripts: "dangerously" });
+    doms.push(dom);
+    expect(dom.window.document.getElementById("accountBackLink")?.getAttribute("href")).toBe("/ui");
+    expect(dom.window.document.querySelector('[data-panel="register"]')?.hasAttribute("hidden")).toBe(false);
+    dom.window.document.querySelector<HTMLButtonElement>('[data-page="forgot"]')?.click();
+    expect(dom.window.document.getElementById("accountBackLink")?.getAttribute("href")).toBe("/account#login");
+  });
+
   it("keeps review data behind API authorization and explicitly handles unavailable persistence", async () => {
     expect((await app.fetch(new Request("https://staging.example/api/admin/feedback"), enabled)).status).toBe(401);
     const response = await app.fetch(new Request("https://staging.example/admin/feedback"), enabled);
