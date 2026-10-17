@@ -27,6 +27,7 @@ article h2{margin:0;font-size:16px}article p{margin:7px 0;color:#596b83;line-hei
 .actions{display:flex;gap:12px;align-items:center;margin-top:10px}.actions button{padding:7px 10px;font-size:12px;background:#eaf2fc;color:#245183}
 .empty{padding:30px;text-align:center;color:#74849a;background:#fff;border:1px dashed #cbd7e6;border-radius:14px}
 @media(max-width:540px){header{align-items:flex-start;flex-direction:column}.nav{gap:12px}.heading{align-items:flex-start;flex-direction:column}main{margin-top:30px}}
+@media(min-width:541px){header{padding:12px clamp(18px,4vw,48px)}main{margin:28px auto 36px}.heading p{margin:8px 0 14px}.list{gap:10px}article{padding:14px 18px}article p{margin:5px 0}.actions{margin-top:8px}.empty{padding:22px}}
 </style></head><body>
 <header><a href="/dashboard" aria-label="BillionTalks dashboard"><img src="${logoUrl}" alt="BillionTalks"></a>
 <nav class="nav" aria-label="Workspace"><a href="/dashboard">Dashboard</a><a href="/schedule">Meetings</a><a href="/calendar">Calendar</a><a href="/contacts">Contacts &amp; Invitations</a><a href="/notifications" aria-current="page">Notifications</a><a href="/account#preferences">Settings</a></nav></header>

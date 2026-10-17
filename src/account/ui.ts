@@ -139,6 +139,31 @@ export function accountPage(): string {
       nav button { flex: 1 1 0; min-width: 0; padding-inline: 8px; }
       nav button { font-size: 11px; }
     }
+    /* Display density: fit account pages at 100% zoom on laptop screens; mobile rules above are unchanged. */
+    @media (min-width: 821px) {
+      body { padding: 16px; }
+      main { min-height: min(600px, calc(100vh - 32px)); }
+      .brand-panel { padding: clamp(28px, 3.6vw, 48px); }
+      .brand-panel h2 { margin: clamp(44px, 7vh, 84px) 0 14px; font-size: clamp(30px, 3.4vw, 42px); }
+      .account-content { padding: clamp(22px, 3.4vw, 42px); }
+      h1 { margin: 16px 0 6px; }
+      label { margin: 11px 0 6px; }
+      input, select { min-height: 42px; padding: 9px 12px; }
+      button { padding: 10px 16px; }
+      nav { margin: 16px 0; }
+      nav button { padding: 8px 12px; }
+      nav a.account-nav-link { padding: 8px 12px; }
+      .actions { margin-top: 18px; }
+      .toggle { margin-top: 10px; }
+      .status { margin-top: 14px; padding: 10px 12px; }
+      a.back { margin-top: 14px; }
+      main[data-page="login"] section[data-panel="login"] { padding-top: 12px; }
+      main[data-page="login"] section[data-panel="login"] > p { margin-bottom: 20px; }
+      main[data-page="login"] section[data-panel="login"] form { padding: 22px; }
+      main[data-page="login"] section[data-panel="login"] input { min-height: 46px; }
+      main[data-page="login"] section[data-panel="login"] .actions button:first-child { min-height: 46px; }
+      main[data-page="login"] .back { margin-top: 18px; }
+    }
   </style>
 </head>
 <body>

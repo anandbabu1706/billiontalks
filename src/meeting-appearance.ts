@@ -88,5 +88,38 @@ label { font-size: 14px; }
  .hero .info-box { padding: 20px; } #homeScreen .actions { grid-template-columns: minmax(0,1fr); }
  .controls { gap: 32px 24px; padding-bottom: 34px; } .actions button { flex: 1 1 auto; }
 }
+/* Display density: fit V0 screens and the live room at 100% zoom on laptop/desktop; phone rules above are unchanged. */
+@media (min-width: 601px) {
+ .app-shell { padding: 0 24px 24px; }
+ .topbar { min-height: 66px; margin: 0 -24px 18px; padding: 10px 24px; }
+ .brand { width: 172px; }
+ .home-card { margin-top: clamp(12px,4vh,48px); padding: clamp(22px,3vw,40px); }
+ h1, h2 { font-size: clamp(26px,2.6vw,38px); margin-bottom: 14px; }
+ h3 { font-size: 20px; margin-bottom: 10px; }
+ .home-card p { font-size: 16px; line-height: 1.6; }
+ .hero { gap: 24px; }
+ .hero .info-box { padding: 22px; }
+ .actions { margin-top: 18px; }
+ #homeScreen .actions { gap: 12px; margin-top: 22px; }
+ .actions button, .actions a { min-height: 44px; }
+ .input-group { margin-top: 16px; }
+ .device-status { margin-top: 12px; }
+ .history-section { margin-top: 20px; padding-top: 14px; }
+ .meeting-shell { gap: 16px; }
+ .stage-panel, .side-panel { gap: 12px; }
+ .meeting-header { padding: 13px 18px; gap: 12px; }
+ .video-stage { min-height: clamp(340px, calc(100vh - 330px), 500px); }
+ .controls { padding: 12px 12px 30px; gap: 24px 20px; }
+ .participants-card, .recording-panel, #admissionPanel, .chat-panel { padding: 16px 18px; }
+ .participant-list { margin-top: 12px; gap: 8px; }
+ .participant-list li { padding: 8px 11px; }
+ .ended-symbol { width: 72px; height: 72px; margin-bottom: 20px; font-size: 32px; }
+ .registration-shell { margin-top: 16px; }
+ .registration-aside { min-height: 560px; padding: 32px 30px; }
+ .registration-aside h1 { margin: 48px 0 14px; }
+ .registration-form-panel { padding: 30px 36px; }
+ .registration-subtitle { margin-bottom: 18px; }
+ .registration-form, .registration-fields { gap: 12px; }
+}
 @media (prefers-reduced-motion: reduce) { button { transition: none; } button:hover { transform: none; } }
 `;

@@ -159,6 +159,32 @@ export function calendarPage(): string {
       .view-switch button { padding-inline: 6px; }
       .month-day { min-height: 62px; }
     }
+    /* Display density: tighter desktop spacing at 100% zoom; mobile rules above are unchanged. */
+    @media (min-width: 821px) {
+      .sidebar { padding: 18px 14px 16px; }
+      .logo-link { margin-bottom: 22px; }
+      .side-nav { gap: 4px; }
+      .nav-item, .sign-out { min-height: 39px; padding: 8px 12px; }
+      .topbar { min-height: 64px; padding: 10px clamp(20px, 2.6vw, 40px); }
+      .workspace { padding: 22px clamp(20px, 2.6vw, 40px) 32px; }
+      .heading { margin-bottom: 16px; }
+      .eyebrow { margin-bottom: 6px; }
+      h1 { font-size: clamp(26px, 2.4vw, 32px); }
+      .heading p { margin-top: 6px; }
+      .panel { padding: 18px 20px; }
+      .toolbar { margin-bottom: 14px; }
+      .timezone-control { margin-bottom: 14px; }
+      .loading, .empty { padding: 20px 14px; }
+      .weekday { padding: 8px 6px; }
+      .selected-day { margin-top: 16px; padding-top: 14px; }
+      .selected-day h2, .day-heading { margin-bottom: 10px; }
+      .event-list, .day-view { gap: 8px; }
+      .event-card { padding: 11px 13px; }
+    }
+    @media (min-width: 981px) {
+      .month-day { min-height: 96px; padding: 7px; }
+      .week-day { min-height: 196px; }
+    }
   </style>
 </head>
 <body>

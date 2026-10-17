@@ -400,6 +400,44 @@ export function schedulerPreviewPage(): string {
       .button-row { display: grid; grid-template-columns: 1fr 1fr; }
       .button { padding: 0 11px; }
     }
+    /* Display density: tighter desktop spacing at 100% zoom; mobile rules above are unchanged. */
+    @media (min-width: 821px) {
+      .sidebar { padding: 18px 14px 16px; }
+      .logo-link { margin-bottom: 22px; }
+      .side-nav { gap: 4px; }
+      .nav-item, .sign-out { min-height: 39px; padding: 8px 12px; }
+      .sidebar-footer { padding-top: 14px; }
+      .topbar { min-height: 64px; padding: 10px clamp(20px, 2.6vw, 40px); }
+      .workspace { padding: 22px clamp(20px, 2.6vw, 40px) 32px; }
+      .page-heading { margin-bottom: 16px; }
+      .eyebrow { margin-bottom: 6px; }
+      h1 { font-size: clamp(26px, 2.4vw, 32px); }
+      .page-heading p { margin-top: 6px; line-height: 1.55; }
+      .scheduler-error { margin-bottom: 14px; }
+      .notice { margin-bottom: 16px; padding: 10px 14px; }
+      .layout { gap: 18px; }
+      .card-heading { padding: 15px 20px; }
+      .form-body { padding: 18px 20px; }
+      .form-section + .form-section { margin-top: 18px; padding-top: 18px; }
+      .section-title { margin-bottom: 12px; }
+      .field-grid { gap: 14px; }
+      .field { gap: 6px; }
+      input, select { height: 42px; }
+      textarea { min-height: 80px; }
+      .access-option { padding: 11px 12px; }
+      .form-footer { padding: 14px 20px; }
+      .schedule-list-card { margin-top: 18px; }
+      .schedule-list { gap: 8px; padding: 14px 18px 18px; }
+      .schedule-entry summary { padding: 11px 14px; }
+      .schedule-details { padding: 0 14px 13px; }
+      .side-stack { gap: 16px; }
+      .summary-top { padding: 17px 18px; }
+      .summary-body { padding: 12px 18px 16px; }
+      .summary-row { padding: 10px 0; }
+      .meeting-link { margin-top: 12px; padding: 11px 12px; }
+      .scope-card { padding: 16px 18px; }
+      .scope-card ul { gap: 8px; margin-top: 11px; }
+    }
   </style>
 </head>
 <body>

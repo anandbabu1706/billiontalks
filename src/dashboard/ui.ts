@@ -427,6 +427,43 @@ export function dashboardPage(): string {
       .avatar { width: 37px; height: 37px; }
       .stats-grid { grid-template-columns: 1fr; }
     }
+    /* Display density: tighter desktop spacing at 100% zoom; mobile rules above are unchanged. */
+    @media (min-width: 821px) {
+      .sidebar { padding: 18px 14px 16px; }
+      .sidebar .logo-link { margin-bottom: 22px; }
+      .side-nav { gap: 4px; }
+      .nav-item, .sign-out { min-height: 39px; padding: 8px 12px; }
+      .sidebar-footer { padding-top: 14px; }
+      .topbar { min-height: 64px; padding: 10px clamp(20px, 2.6vw, 40px); }
+      .dashboard { padding: 24px clamp(20px, 2.6vw, 40px) 32px; }
+      .welcome { margin-bottom: 18px; }
+      .welcome h1 { font-size: clamp(26px, 2.4vw, 32px); }
+      .welcome p { margin-top: 6px; }
+      .meeting-actions { gap: 16px; margin-bottom: 18px; }
+      .action-card { min-height: 166px; padding: 19px 20px; }
+      .action-card h2 { margin: 13px 0 5px; }
+      .action-control, .meeting-action-link { margin-top: 13px; }
+      .content-grid, .left-column, .right-column { gap: 18px; }
+      .panel { padding: 18px 20px; }
+      .panel-heading { margin-bottom: 14px; }
+      .next-empty { min-height: 84px; padding: 14px 16px; }
+      .tabs { margin-bottom: 12px; }
+      .unavailable { min-height: 72px; padding: 14px; }
+      .history-list { gap: 7px; }
+      .meeting { padding: 10px 13px; }
+      .empty { padding: 14px 10px; }
+      .calendar-top { margin-bottom: 11px; }
+      .calendar-grid { gap: 4px; }
+      .calendar-grid span { aspect-ratio: 1.3; }
+      .quick-list { gap: 8px; }
+      .quick-item { min-height: 50px; padding: 9px 12px; }
+      .stats-grid { gap: 14px; margin-top: 18px; }
+      .stat-card { min-height: 92px; padding: 14px 15px; }
+      .stat-card strong { margin-top: 8px; }
+    }
+    @media (min-width: 821px) and (max-width: 1080px) {
+      .schedule-card { min-height: 140px; }
+    }
   </style>
 </head>
 <body>
