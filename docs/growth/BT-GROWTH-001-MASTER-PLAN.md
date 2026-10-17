@@ -113,3 +113,9 @@ No deployment, migrations, secrets, DNS changes, new Cloudflare resources or app
 
 ## FINAL OWNER APPROVAL — ALL SIX PUBLIC WEBSITE DESIGNS
 Owner explicitly approved ALL SIX (Home, About, How It Works, Features, Solutions, Contact & Feedback). The authoritative page-by-page image manifest, hash values, page exceptions, and mandatory image-upload prerequisite are recorded at [`BT-GROWTH-001-VISUAL-APPROVALS.md`](./BT-GROWTH-001-VISUAL-APPROVALS.md). **PNG assets are not yet committed to GitHub; do not claim otherwise.** Upload/verify `docs/growth/approved-designs/01-home.png` through `06-contact-feedback.png` before launching any visual recovery implementation. Keep current staging/production unchanged until that gate passes; production approval separately required.
+
+## FINAL STAGING VISUAL ACCEPTANCE — 2026-10-18
+- Owner reviewed actual staging screenshots of **all six pages** (Home, About, How It Works, Features, Solutions, Contact) and **accepts the current staging appearance as suitable to continue** even though it differs from the original aspirational mockups.
+- **No more visual corrections are requested.** Do not reopen design fidelity issues or initiate further visual redesigns, image generation, or visual-recovery tasks without a new explicit owner request.
+- This decision supersedes prior unresolved visual-difference acceptance gates, **not** the security, retention, feedback reviewer-access, functional regression, migration or production-approval gates.
+- Preserve the current accepted page layouts, public copy and brand, V1 integrations and tested behaviors. Continue with technical production-readiness checks only. **This is staging visual acceptance, not authorization to deploy production.**
