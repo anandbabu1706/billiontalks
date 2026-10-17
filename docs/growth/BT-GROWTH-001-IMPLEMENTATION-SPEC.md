@@ -1,6 +1,6 @@
 # BT-GROWTH-001 — Consolidated Website Implementation Specification
 
-Status: READY FOR IMPLEMENTATION REVIEW (documentation only; no coding/deployment approved by this file)
+Status: IMPLEMENTED ON GROWTH BRANCH; staging qualification in progress. Production not authorized.
 Source of truth: [BT-GROWTH-001-MASTER-PLAN.md](./BT-GROWTH-001-MASTER-PLAN.md)
 Branch: `bt-growth-001-website-social`
 Baseline application commit: `f4bb52a7bbf56fbe1ba1a5fa2986a03d156b37c9` (verify active production code and branch before changes)
@@ -102,3 +102,19 @@ No fabricated email addresses, support SLAs, team sizes, testimonial quotations 
 - One actually functioning, secure Contact & Feedback system in public and V1 interfaces.
 - Valid, accessible, crawlable, indexable public pages, correct sitemap/robots/meta and working Search Console submission AFTER release.
 - Staging owner signoff and separately approved production release with rollback.
+
+## 9. Implementation and owner decisions (2026-10-18)
+
+The owner authorized implementation and existing-staging qualification in chat, accepted the written blue/white composition specification in place of unavailable mockup assets, approved a fail-closed database reviewer allowlist using existing account sessions, and selected 90-day submission expiry with short-lived rate-limit hashes.
+
+- Six server-rendered pages follow the final navigation/copy document, with the exact repository logo, locally hosted responsive WebP photographs, lightweight decorative SVGs, shared navigation/footer and one Contact form. Photography provenance is recorded in `src/assets/website/LICENSE.txt`; no image is presented as a product screenshot, employee or customer endorsement.
+- `PUBLIC_WEBSITE_ENABLED=true` enables marketing routes and feedback on **staging only**. Without the flag the existing account-first root redirect is preserved. Root `?meeting=` links always retain the meeting UI. Production activation requires separate explicit approval, migration review and a deliberate flag change; there is no production deployment in this work.
+- Existing account session resolution supplies navigation, contact-field prefill and immutable submission identity. Editing contact fields never edits the account. Dashboard and Account Settings link to the same `/contact` workflow.
+- Additive migration `0009_contact_feedback.sql` uses the existing account D1. It adds submissions, atomic rate-limit counters and an empty reviewer allowlist. The public API permits writes only; authorized review uses `/admin/feedback` and `/api/admin/feedback`. No HTTP endpoint grants reviewer privileges.
+- An operator must authorize existing verified account IDs explicitly before adding them to `feedback_reviewers`. The list remains empty in staging pending that authorization. The review shell contains no submission data; its API denies guests and non-reviewers.
+- Contact details expire from authorized review after 90 days. Indexed cleanup deletes up to 100 expired submissions and counters per request; inactive storage is not guaranteed to be physically purged at exactly 90 days. This is disclosed in the contact privacy notice. A scheduled cleanup/retention-policy decision is a production approval consideration; no new cron trigger or resource has been created.
+- No email delivery promise is made: confirmation means the record was durably accepted, not emailed or answered. Ratings and issue context are optional/conditional, and private meeting content is not collected automatically.
+- Six canonical marketing URLs only are listed in XML sitemap. Staging is `noindex,nofollow` and robots-disallowed; application/meeting HTML receives `X-Robots-Tag: noindex, nofollow`. Search Console submission remains a post-production task; DNS ownership records are untouched.
+- Existing account Terms/Privacy wording predates this work. No unapproved general legal policy or fictional support mailbox has been published; the footer links to the factual Contact privacy notice.
+
+Focused local evidence: 55 feedback backend tests passed against real SQLite, 18 new website/form/SEO tests plus four legacy homepage tests passed, and nine selected existing login/session, Dashboard scheduled-start and Scheduler lifecycle regressions passed. Typecheck and staging-config dry-run bundle passed. Unrelated suites and physical media qualification were not repeated.

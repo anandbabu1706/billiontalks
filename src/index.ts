@@ -24,6 +24,11 @@ import { createAccountEmailSender, type AccountEmailConfig } from "./account/ema
 import { accountPage } from "./account/ui";
 import { handleNotificationsRequest, handlePreferencesRequest, createAccountNotification } from "./settings/api";
 import { notificationsPage } from "./settings/ui";
+import { publicPages } from "./website/content";
+import { robotsResponse, sitemapResponse, websiteResponse } from "./website/ui";
+import { websiteAsset } from "./website/assets";
+import { feedbackReviewPage } from "./website/review";
+import { handleFeedbackRequest, handleFeedbackAdminRequest } from "./feedback/api";
 import {
   activateRecordingMetadata,
   applyRecordingConsent,
@@ -78,6 +83,7 @@ type WorkerEnv = Partial<RealtimeEnv> & AccountEmailConfig & {
   ACCOUNT_DB?: D1AccountDatabase;
   DEV_TOOLS_ENABLED?: string;
   LIMITED_RELEASE_MEDIA_DISABLED?: string;
+  PUBLIC_WEBSITE_ENABLED?: string;
 };
 
 const LIMITED_RELEASE_UNAVAILABLE_MESSAGE = "Realtime media and recording are unavailable in this limited release.";
@@ -6415,6 +6421,43 @@ const routeHandler = {
       url.port = "";
       return Response.redirect(url.toString(), 308);
     }
+    const websiteEnabled = env.PUBLIC_WEBSITE_ENABLED === "true";
+    const isProductionWebsite = url.hostname === "billiontalks.com";
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/assets/website/")) {
+      const response = await websiteAsset(url.pathname);
+      if (response) {
+        if (request.headers.get("If-None-Match") === response.headers.get("ETag")) return new Response(null, { status: 304, headers: response.headers });
+        return request.method === "HEAD" ? new Response(null, { headers: response.headers }) : response;
+      }
+    }
+    if (websiteEnabled) {
+      if (request.method === "GET" && url.pathname === "/sitemap.xml") return sitemapResponse();
+      if (request.method === "GET" && url.pathname === "/robots.txt") return robotsResponse(isProductionWebsite);
+      if (url.pathname === "/api/feedback" || url.pathname.startsWith("/api/feedback/") ||
+        url.pathname === "/api/admin/feedback" || url.pathname.startsWith("/api/admin/feedback/")) {
+        try {
+          const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+          return url.pathname.startsWith("/api/admin/")
+            ? handleFeedbackAdminRequest(request, account, env.ACCOUNT_DB)
+            : handleFeedbackRequest(request, account, env.ACCOUNT_DB);
+        } catch (error) {
+          console.error("[billiontalks feedback] Account resolution failed.", error instanceof Error ? error.name : "unknown");
+          return Response.json({ error: "Contact & Feedback is temporarily unavailable." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+        }
+      }
+      if (request.method === "GET" && (publicPages.some((page) => page.path === url.pathname) || url.pathname === "/admin/feedback") &&
+        !(url.pathname === "/" && url.searchParams.has("meeting"))) {
+        try {
+          const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
+          if (url.pathname === "/admin/feedback") return feedbackReviewPage(account);
+          const page = publicPages.find((entry) => entry.path === url.pathname)!;
+          return websiteResponse(page, account, isProductionWebsite);
+        } catch (error) {
+          console.error("[billiontalks website] Account resolution failed.", error instanceof Error ? error.name : "unknown");
+          return new Response("The website is temporarily unavailable. Please try again.", { status: 503, headers: { "Cache-Control": "no-store", "Content-Type": "text/plain; charset=utf-8" } });
+        }
+      }
+    }
     if (isLimitedReleaseMediaDisabled(env) && isLimitedReleaseMediaPath(url.pathname)) {
       return Response.json(
         { ok: false, error: LIMITED_RELEASE_UNAVAILABLE_MESSAGE },
@@ -7933,7 +7976,14 @@ export default {
       }
     }
     try {
-      return await routeHandler.fetch(request, env, ctx ? (promise) => ctx.waitUntil(promise) : undefined);
+      const response = await routeHandler.fetch(request, env, ctx ? (promise) => ctx.waitUntil(promise) : undefined);
+      const url = new URL(request.url);
+      if (response.headers.get("Content-Type")?.includes("text/html") &&
+        !(env.PUBLIC_WEBSITE_ENABLED === "true" && publicPages.some((page) => page.path === url.pathname) &&
+          !(url.pathname === "/" && url.searchParams.has("meeting")))) {
+        response.headers.set("X-Robots-Tag", "noindex, nofollow");
+      }
+      return response;
     } finally {
       if (rpc && token && mutationKey) {
         try {

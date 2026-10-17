@@ -504,6 +504,7 @@ export function dashboardPage(): string {
         </a>
       </nav>
       <div class="sidebar-footer">
+        <a class="nav-item" href="/contact">Contact &amp; Feedback</a>
         <button class="sign-out" id="logoutButton" type="button">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M14 8l4 4-4 4M8 12h10"/></svg>
           Sign out

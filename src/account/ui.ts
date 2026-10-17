@@ -272,6 +272,7 @@ export function accountPage(): string {
     </form>
     <a class="back" href="/account#profile" data-page="profile">Manage profile</a>
     <a class="back" href="/notifications">View notifications</a>
+    <a class="back" href="/contact">Contact &amp; Feedback</a>
   </section>
   <a class="back" id="accountBackLink" href="/">← Back to meetings</a>
   </div>

@@ -1,0 +1,24 @@
+BillionTalks website photography
+
+Team photograph: Annie Spratt / Unsplash
+Source: https://images.unsplash.com/photo-1522071820081-009f0129c71c
+Photographer: https://unsplash.com/@anniespratt
+Local derivatives: team-640.webp and team-1200.webp (resized/cropped WebP).
+
+Earth photograph: NASA / Unsplash
+Source: https://images.unsplash.com/photo-1451187580459-43490279c0fa
+Contributor: https://unsplash.com/@nasa
+Local derivative: earth-800.webp (resized/cropped WebP).
+
+Downloaded 2026-10-17 under the Unsplash License:
+https://unsplash.com/license
+https://help.unsplash.com/en/articles/2612315-can-i-use-unsplash-images-for-personal-or-commercial-projects
+
+The Unsplash License permits free commercial/non-commercial use, downloading,
+copying, modification and distribution. Attribution is appreciated and is
+provided in the website footer. These photographs illustrate collaboration
+and geography; they do not depict BillionTalks employees or customers and
+must not be presented as endorsements.
+
+The official BillionTalks logo remains the unchanged asset in
+../brand/billiontalks-logo.png; it is not covered by this photography license.
