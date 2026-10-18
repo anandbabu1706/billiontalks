@@ -120,6 +120,38 @@ describe("BT-V0-009 host management", () => {
     expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
   });
 
+  it("requires explicit host readmission, persists approval, and reuses the same participant after restart", async () => {
+    const fixture = durableFixture();
+    const service = fixture.service();
+    const meeting = await service.createMeeting({ title: "Readmission", hostUserId: "host" });
+    const input = { userId: "guest", displayName: "Guest" };
+    const request = await service.requestAdmission(meeting.id, input);
+    await service.approveAdmission(meeting.id, "host", request.id);
+    const participantId = (await service.getMeeting(meeting.id))!.participants.find(p => p.userId === "guest")!.id;
+    await service.removeParticipant(meeting.id, "host", "guest");
+    await expect(service.readmitParticipant(meeting.id, "guest", "guest")).rejects.toThrow("Only the host");
+    await expect(service.joinMeeting(meeting.id, input)).rejects.toThrow("removed");
+    await service.changeAccessMode(meeting.id, "host", "LOCKED");
+    await expect(service.readmitParticipant(meeting.id, "host", "guest")).rejects.toThrow("locked");
+    await service.changeAccessMode(meeting.id, "host", "HOST_APPROVAL");
+    await service.readmitParticipant(meeting.id, "host", "guest");
+    fixture.restart();
+    const restored = fixture.service();
+    const before = (await restored.getMeeting(meeting.id))!;
+    expect(before.participants.find(p => p.userId === "guest")?.state).toBe("LEFT");
+    expect(before.accessRequests.filter(r => r.userId === "guest")).toEqual([expect.objectContaining({
+      status: "APPROVED", reviewedByUserId: "host",
+    })]);
+    expect((await restored.requestAdmission(meeting.id, input)).status).toBe("APPROVED");
+    const joined = await restored.joinMeeting(meeting.id, input);
+    expect(joined.id).toBe(participantId);
+    expect((await restored.getMeeting(meeting.id))!.participants.filter(p => p.userId === "guest")).toHaveLength(1);
+    await restored.removeParticipant(meeting.id, "host", "guest");
+    await expect(restored.joinMeeting(meeting.id, input)).rejects.toThrow("removed");
+    await restored.endMeeting(meeting.id, "host");
+    await expect(restored.readmitParticipant(meeting.id, "host", "guest")).rejects.toThrow("Only the host");
+  });
+
   it("exposes the removal API with validation and host-role checks", async () => {
     const fixture = durableFixture();
     const env = { MEETING_STORE: fixture.namespace } as any;
@@ -151,5 +183,26 @@ describe("BT-V0-009 host management", () => {
     expect(result.status).toBe(200);
     const payload = await result.json() as { data: Meeting };
     expect(payload.data.participants.find(p => p.userId === guest.userId)?.state).toBe("REMOVED");
+    const originalLink = `/ui?meeting=${meeting.id}`;
+    expect((await request(originalLink, "GET", guest.cookie)).status).toBe(200);
+    expect((await request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, { displayName: "Guest" })).status).toBe(400);
+    expect((await request(`/api/meetings/${meeting.id}/readmit`, "POST", undefined, { actorUserId: host.userId, targetUserId: guest.userId })).status).toBe(403);
+    expect((await request(`/api/meetings/${meeting.id}/readmit`, "POST", guest.cookie, { actorUserId: host.userId, targetUserId: guest.userId })).status).toBe(403);
+    expect((await request(`/api/meetings/${meeting.id}/readmit`, "POST", host.cookie, {})).status).toBe(400);
+    expect((await request(`/api/meetings/${meeting.id}/readmit`, "POST", host.cookie, { targetUserId: host.userId })).status).toBe(403);
+    expect((await request(`/api/meetings/${meeting.id}/readmit`, "POST", host.cookie, { targetUserId: guest.userId })).status).toBe(200);
+    fixture.restart();
+    expect((await request(originalLink, "GET", guest.cookie)).status).toBe(200);
+    const snapshot = await (await request(`/api/meetings/${meeting.id}`, "GET", guest.cookie)).json();
+    expect(snapshot.viewer.userId).toBe(guest.userId);
+    expect(snapshot.data.participants[0].state).toBe("LEFT");
+    const rejoined = await request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, { userId: host.userId, displayName: "Guest" });
+    expect(rejoined.status).toBe(200);
+    expect((await rejoined.json()).data.id).toBe((await joined.json()).data.id);
+    expect((await fixture.service().getMeeting(meeting.id))!.participants.filter(p => p.userId === guest.userId)).toHaveLength(1);
+    expect((await request(`/api/meetings/${meeting.id}/leave`, "POST", guest.cookie)).status).toBe(200);
+    const voluntaryRejoin = await request(`/api/meetings/${meeting.id}/join`, "POST", guest.cookie, { displayName: "Guest" });
+    expect(voluntaryRejoin.status).toBe(200);
+    expect((await voluntaryRejoin.json()).data.id).toBe((await fixture.service().getMeeting(meeting.id))!.participants.find(p => p.userId === guest.userId)!.id);
   });
 });

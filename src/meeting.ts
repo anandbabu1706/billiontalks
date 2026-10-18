@@ -1502,6 +1502,35 @@ export class MeetingService {
     return meeting;
   }
 
+  async readmitParticipant(meetingId: string, actorUserId: string, targetUserId: string): Promise<Meeting> {
+    const meeting = await this.getRequiredMeeting(meetingId);
+    if (!MeetingPermissions.canManageAdmission(meeting, actorUserId)) {
+      throw new Error("Only the host may readmit a removed participant.");
+    }
+    if (meeting.accessMode === MeetingAccessMode.LOCKED) {
+      throw new Error("Meeting admission is locked.");
+    }
+    const participant = meeting.participants.find((entry) =>
+      entry.userId === targetUserId && entry.role === ParticipantRole.PARTICIPANT && entry.state === ParticipantState.REMOVED,
+    );
+    if (!participant) throw new Error("Removed participant not found.");
+    const now = new Date().toISOString();
+    participant.state = ParticipantState.LEFT;
+    meeting.accessRequests = meeting.accessRequests.filter((entry) => entry.userId !== targetUserId);
+    meeting.accessRequests.push({
+      id: `admission-${meetingId}-${targetUserId}-${crypto.randomUUID().slice(0, 8)}`,
+      meetingId,
+      userId: targetUserId,
+      displayName: participant.displayName,
+      status: MeetingAdmissionStatus.APPROVED,
+      requestedAt: now,
+      resolvedAt: now,
+      reviewedByUserId: actorUserId,
+    });
+    await this.repository.saveMeeting(meeting);
+    return meeting;
+  }
+
   async endMeeting(meetingId: string, actorUserId: string): Promise<Meeting> {
     const meeting = await this.getRequiredMeeting(meetingId);
 

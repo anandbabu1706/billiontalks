@@ -205,6 +205,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
     data: { account: { email: "jane@example.com" }, emailVerificationRequired: true },
   }, true, 201);
   let includeRemoteParticipant = false;
+  let hostJoined = false;
   const meetingCreatedAt = new Date(Date.now() - 3_723_000).toISOString();
   let meetingEndedAt = "";
   let additionalRemoteParticipant: { id: string; userId: string; displayName: string; role: string; state: string } | null = null;
@@ -489,6 +490,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
 
     if (url.endsWith("/join") && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.userId === "host-123") hostJoined = true;
       return createResponse({
         ok: true,
         data: {
@@ -512,7 +514,7 @@ async function loadRenderedPage(pageUrl = "http://localhost/", supportsScreenSha
           createdAt: meetingCreatedAt,
           ...(meetingEndedAt ? { endedAt: meetingEndedAt } : {}),
           hostId: "host-123",
-          participants: includeRemoteParticipant || additionalRemoteParticipant
+          participants: hostJoined || includeRemoteParticipant || additionalRemoteParticipant
             ? [{ id: "host-123", userId: "host-123", displayName: "Alex", role: "HOST", state: "JOINED" }, ...remoteParticipants()]
             : [],
         },
@@ -592,6 +594,176 @@ async function joinHostMeeting(document: Document, title: string): Promise<void>
   document.getElementById("joinNowButton")?.click();
   await flush();
 }
+
+describe("BT-V1 participant rejoin and interruption regressions", () => {
+  const publisher = () => FakePeerConnection.instances.filter(peer => peer.getTransceivers().some(t => t.direction === "sendonly")).at(-1)!;
+  const recoveries = (fetcher: ReturnType<typeof vi.fn>) => fetcher.mock.calls.filter(([url]) => String(url).endsWith("/media/recover"));
+  const visibility = (page: Awaited<ReturnType<typeof loadRenderedPage>>, value: "hidden" | "visible") => {
+    Object.defineProperty(page.document, "visibilityState", { configurable: true, value });
+    page.document.dispatchEvent(new page.window.Event("visibilitychange"));
+  };
+
+  it.each(["visibilitychange", "pagehide", "offline"])("preserves a recovery episode across a long %s interruption", async (trigger) => {
+    const page = await loadRenderedPage();
+    const { window, document, fetchMock } = page;
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Interruption");
+    publisher().setConnectionStates("failed", "failed");
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(recoveries(fetchMock)).toHaveLength(1);
+    const before = recoveries(fetchMock).length;
+    const realNow = window.Date.now();
+    const clock = vi.spyOn(window.Date, "now").mockReturnValue(realNow);
+    if (trigger === "visibilitychange") visibility(page, "hidden");
+    else if (trigger === "offline") {
+      Object.defineProperty(window.navigator, "onLine", { configurable: true, value: false });
+      window.dispatchEvent(new window.Event("offline"));
+    } else window.dispatchEvent(new window.PageTransitionEvent("pagehide", { persisted: true }));
+    clock.mockReturnValue(realNow + 120_000);
+    publisher().setConnectionStates("failed", "failed");
+    await flush();
+    expect(recoveries(fetchMock)).toHaveLength(before);
+    if (trigger === "visibilitychange") visibility(page, "visible");
+    else if (trigger === "offline") {
+      Object.defineProperty(window.navigator, "onLine", { configurable: true, value: true });
+      window.dispatchEvent(new window.Event("online"));
+    } else window.dispatchEvent(new window.PageTransitionEvent("pageshow", { persisted: true }));
+    window.dispatchEvent(new window.Event("focus"));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(recoveries(fetchMock)).toHaveLength(before + 1);
+    expect((window as any).btMediaDiagnostics().resumeRecoveryResult).toBe("ready");
+    expect(document.querySelectorAll("#videoStage .tile.self")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => /\/(?:join|admission\/request|leave)$/.test(String(url)))).toHaveLength(1);
+    clock.mockRestore();
+  });
+
+  it("does not replenish exhausted retries on repeated focus, foreground, or online events", async () => {
+    const page = await loadRenderedPage();
+    const { window, document, fetchMock } = page;
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "No infinite recovery");
+    for (let i = 0; i < 7; i++) {
+      publisher().setConnectionStates("failed", "failed");
+      await new Promise(resolve => setTimeout(resolve, 60));
+    }
+    expect(recoveries(fetchMock)).toHaveLength(6);
+    for (let i = 0; i < 3; i++) {
+      visibility(page, "hidden");
+      visibility(page, "visible");
+      window.dispatchEvent(new window.Event("online"));
+      window.dispatchEvent(new window.Event("focus"));
+      await flush();
+    }
+    expect(recoveries(fetchMock)).toHaveLength(6);
+    expect(document.getElementById("mediaStatus")?.textContent).toContain("could not connect");
+  });
+
+  it.each(["JOINED", "LEFT", "REMOVED", "WAITING"])("restores server identity and %s state through the original link", async (participantState) => {
+    const { window, document, fetchMock, getUserMediaMock } = await loadRenderedPage("http://localhost/ui?meeting=btm_test_123");
+    window.sessionStorage.setItem("bt-meeting-devices:btm_test_123", JSON.stringify({ micEnabled: true, micMuted: false, cameraEnabled: true }));
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    const originalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === "/api/meetings/btm_test_123" && !init?.method) {
+        return createResponse({
+          ok: true,
+          viewer: { userId: "original-guest", displayName: "Original guest" },
+          data: {
+            id: "btm_test_123", title: "Original link", status: "active", hostId: "host-123", accessMode: "HOST_APPROVAL",
+            participants: participantState === "WAITING" ? [] : [
+              { id: "original-participant", userId: "original-guest", displayName: "Original guest", role: "PARTICIPANT", state: participantState },
+            ],
+            accessRequests: [{ id: "original-request", userId: "original-guest", status: participantState === "WAITING" ? "WAITING" : participantState === "REMOVED" ? "REJECTED" : "APPROVED" }],
+          },
+        });
+      }
+      return originalFetch(input, init);
+    });
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect((document.getElementById("displayNameInput") as HTMLInputElement).value).toBe("Original guest");
+    expect(fetchMock.mock.calls.filter(([url]) => /\/(?:join|admission\/request)$/.test(String(url)))).toHaveLength(0);
+    if (participantState === "JOINED") {
+      expect(getVisibleScreen(document, "meetingScreen")).toBe(true);
+      expect(document.querySelectorAll('#videoStage [data-user-id="original-guest"]')).toHaveLength(1);
+      expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    } else {
+      expect(getVisibleScreen(document, "prejoinScreen")).toBe(true);
+      expect(getUserMediaMock).not.toHaveBeenCalled();
+      expect((document.getElementById("joinNowButton") as HTMLButtonElement).disabled).toBe(participantState === "WAITING");
+    }
+  });
+
+  it.each([null, { micEnabled: true, micMuted: true, cameraEnabled: false }])("never enables capture contrary to saved preferences when reopening a joined link (%j)", async (devices) => {
+    const { window, document, getUserMediaMock, micStreams } = await loadRenderedPage("http://localhost/ui?meeting=btm_test_123");
+    if (devices) window.sessionStorage.setItem("bt-meeting-devices:btm_test_123", JSON.stringify(devices));
+    installFetch(window, vi.fn(async (url: string) => createResponse({ ok: true, data: url === "/api/meetings/btm_test_123" ? {
+      id: "btm_test_123", title: "Saved devices", status: "active", hostId: "host", accessMode: "HOST_APPROVAL",
+      participants: [{ id: "original", userId: "guest", displayName: "Guest", role: "PARTICIPANT", state: "JOINED" }],
+      accessRequests: [],
+    } : [], viewer: { userId: "guest", displayName: "Guest" } })));
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(getVisibleScreen(document, devices ? "meetingScreen" : "prejoinScreen")).toBe(true);
+    expect(getUserMediaMock).toHaveBeenCalledTimes(devices ? 1 : 0);
+    if (devices) {
+      expect(micStreams[0].getAudioTracks()[0].enabled).toBe(false);
+      expect(document.querySelector("#cameraControlBtn .control-label")?.textContent).toBe("Camera off");
+    }
+  });
+
+  it("requires confirmation for host re-entry, serializes the action, and keeps the removed guest out of the stage", async () => {
+    const { window, document } = await enterHostRoom();
+    const meeting = hostSnapshot();
+    meeting.participants[1].state = "REMOVED";
+    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => createResponse({ ok: true, data: meeting }));
+    installFetch(window, fetcher);
+    document.getElementById("refreshAdmissionsBtn")?.click();
+    await flush();
+    const confirm = vi.fn().mockReturnValue(false);
+    Object.defineProperty(window, "confirm", { value: confirm });
+    const button = document.querySelector('[data-readmit-user-id="guest-1"]') as HTMLButtonElement;
+    button.click();
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    confirm.mockReturnValue(true);
+    fetcher.mockImplementation(async () => {
+      meeting.participants[1].state = "LEFT";
+      return createResponse({ ok: true, data: meeting });
+    });
+    button.click(); button.click();
+    await flush();
+    expect(fetcher).toHaveBeenCalledWith("/api/meetings/btm_test_123/readmit", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ targetUserId: "guest-1" }),
+    }));
+    expect(fetcher.mock.calls.filter(([url]) => url === "/api/meetings/btm_test_123/readmit")).toHaveLength(1);
+    expect(document.querySelector('#videoStage [data-user-id="guest-1"]')).toBeNull();
+    expect(document.querySelector('[data-readmit-user-id="guest-1"]')).toBeNull();
+  });
+
+  it("observes host removal on foreground and does not restore the removed media", async () => {
+    const page = await loadRenderedPage();
+    const { window, document, fetchMock, micStreams, cameraStreams } = page;
+    Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection, configurable: true });
+    await joinHostMeeting(document, "Removed in background");
+    visibility(page, "hidden");
+    const originalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === "/api/meetings/btm_test_123" && !init?.method) {
+        const meeting = hostSnapshot();
+        meeting.hostId = "other-host";
+        meeting.participants[0].role = "PARTICIPANT";
+        meeting.participants[0].state = "REMOVED";
+        return createResponse({ ok: true, data: meeting });
+      }
+      return originalFetch(input, init);
+    });
+    visibility(page, "visible");
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(getVisibleScreen(document, "endedScreen")).toBe(true);
+    expect(document.getElementById("endedMessage")?.textContent).toContain("removed by the host");
+    expect(micStreams[0].getAudioTracks()[0].stop).toHaveBeenCalled();
+    expect(cameraStreams[0].getVideoTracks()[0].stop).toHaveBeenCalled();
+    expect(recoveries(fetchMock)).toHaveLength(0);
+  });
+});
 
 afterEach(() => {
   openWindows.splice(0).forEach((window) => window.close());
@@ -2483,6 +2655,8 @@ describe("BillionTalks browser UI regression tests", () => {
     await flush();
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
     expect((document.getElementById("toggleCameraBtn") as HTMLButtonElement).textContent).toContain("On");
+    expect(document.querySelector("#videoStage .tile")).toBeNull();
+    await joinHostMeeting(document, "Camera cycles");
     expect(document.querySelector("video.local-preview")).not.toBeNull();
   });
 
@@ -2716,7 +2890,9 @@ describe("BT-V0-009 rendered host controls", () => {
     expect(fetcher).toHaveBeenCalledWith("/api/meetings/btm_test_123/remove", expect.objectContaining({
       body: JSON.stringify({ actorUserId: "host-123", targetUserId: "guest-1" }),
     }));
-    expect(document.getElementById("participantList")?.textContent).not.toContain("Guest A");
+    expect(document.querySelector('[data-remove-user-id="guest-1"]')).toBeNull();
+    expect(document.querySelector('[data-readmit-user-id="guest-1"]')?.textContent).toBe("Allow re-entry");
+    expect(document.querySelector('#videoStage [data-user-id="guest-1"]')).toBeNull();
     expect(document.getElementById("participantList")?.textContent).toContain("Guest B");
     expect(document.querySelector('[data-remove-user-id="host-123"]')).toBeNull();
   });

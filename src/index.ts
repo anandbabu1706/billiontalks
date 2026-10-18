@@ -40,6 +40,7 @@ import {
   MeetingAccessMode,
   MeetingRecordingStatus,
   MeetingStatus,
+  MeetingPermissions,
   MeetingService,
   NullMediaProvider,
   ParticipantState,
@@ -190,6 +191,7 @@ function buildSessionCookieHeader(sessionId: string, request: Request): string {
 function withSessionCookie(response: Response, request: Request, session: V0Session): Response {
   const headers = new Headers(response.headers);
   headers.set("Set-Cookie", buildSessionCookieHeader(session.sessionId, request));
+  headers.set("Cache-Control", "no-store");
 
   return new Response(response.body, {
     status: response.status,
@@ -2514,6 +2516,8 @@ function meetingUiTemplate(): string {
       let remotePlaybackAuthorized = false;
       let fastPollUntil = 0;
       let hiddenSinceMs = 0;
+      let mediaPausedAt = 0;
+      let startupPausedMs = 0;
       let remoteRetryCount = 0;
       let remoteRetryTimer = null;
       const recoveryRetryTimers = new Map();
@@ -2820,9 +2824,10 @@ function meetingUiTemplate(): string {
 
       // Returns true when recovery must not continue because the startup budget is spent; records one terminal diagnostic.
       function startupBudgetSpent(reason) {
+        if (mediaLifecyclePaused()) return false;
         if (!startupTimings.joined || startupTransaction.completed) return false;
         const budget = typeof window.btStartupBudgetMs === 'number' ? window.btStartupBudgetMs : MEDIA_TIMING.startupBudgetMs;
-        const elapsed = Date.now() - startupTimings.joined;
+        const elapsed = Date.now() - startupTimings.joined - startupPausedMs;
         if (!startupTransaction.exhausted && elapsed <= budget) return false;
         if (!startupTransaction.exhausted) {
           startupTransaction.exhausted = true;
@@ -2837,6 +2842,10 @@ function meetingUiTemplate(): string {
 
       function mediaRecoveryTerminal() {
         return startupTransaction.exhausted || recoveryEpisode.exhausted;
+      }
+
+      function mediaLifecyclePaused() {
+        return document.visibilityState === 'hidden' || navigator.onLine === false || mediaPausedAt !== 0;
       }
 
       function markMediaTiming(name) {
@@ -3020,7 +3029,7 @@ function meetingUiTemplate(): string {
 
       function scheduleMediaRecoveryReset() {
         const stabilizationMs = typeof window.btRecoveryStabilizationMs === 'number' ? window.btRecoveryStabilizationMs : 30000;
-        if (!isMediaPeerHealthy('publisher') || !isMediaPeerHealthy('subscriber')) {
+        if (mediaLifecyclePaused() || !isMediaPeerHealthy('publisher') || subscriberPeerConnection && !isMediaPeerHealthy('subscriber')) {
           clearMediaRecoveryResetTimer();
           return;
         }
@@ -3028,7 +3037,7 @@ function meetingUiTemplate(): string {
         if (mediaRecoveryResetTimer !== null) window.clearTimeout(mediaRecoveryResetTimer);
         mediaRecoveryResetTimer = window.setTimeout(() => {
           mediaRecoveryResetTimer = null;
-          if (!isMediaPeerHealthy('publisher') || !isMediaPeerHealthy('subscriber')) {
+          if (!isMediaPeerHealthy('publisher') || subscriberPeerConnection && !isMediaPeerHealthy('subscriber')) {
             mediaRecoveryHealthySince = 0;
             return;
           }
@@ -3114,6 +3123,7 @@ function meetingUiTemplate(): string {
       }
 
       function requestMediaRecovery(direction, reason, options = {}) {
+        if (mediaLifecyclePaused()) return Promise.resolve(false);
         if (direction === 'publisher' && options.republishAfterRecovery === true) {
           publisherRecoveryRepublishRequired = true;
           publisherRecoveryStartedAt = new Date().toISOString();
@@ -3181,7 +3191,7 @@ function meetingUiTemplate(): string {
             direction === 'publisher' ? publisherOperationQueue : subscriberOperationQueue,
             new Promise((resolve) => setTimeout(resolve, MEDIA_TIMING.recoveryQueueDrainMs)),
           ]);
-          if (meetingId !== state.meetingId || userId !== state.currentUserId || state.route !== 'meeting' || mediaTransportClosing) return false;
+          if (meetingId !== state.meetingId || userId !== state.currentUserId || state.route !== 'meeting' || mediaTransportClosing || mediaLifecyclePaused()) return false;
           if (reason === 'connection remained disconnected') {
             const peer = activePeerConnection(direction);
             if (peer && (peer.connectionState === 'connected' || peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed')) return false;
@@ -3289,6 +3299,7 @@ function meetingUiTemplate(): string {
             resultingPublishedTrackNames = readyPublishedPublications.map((entry) => entry.trackName);
           }
           console.warn('[billiontalks media] recovery failed:', direction, error instanceof Error ? error.message : error);
+          if (mediaLifecyclePaused()) return false;
           const attempts = recoveryEpisode.attempts;
           if (!mediaRecoveryTerminal() && attempts < MAX_MEDIA_RECOVERY_ATTEMPTS && state.route === 'meeting' && !mediaTransportClosing && !startupBudgetSpent(direction + ' retry: ' + (error instanceof Error ? error.message : error))) {
             updateMediaStatus(RECONNECTING_STATUS);
@@ -3316,6 +3327,7 @@ function meetingUiTemplate(): string {
             const shouldReconcile = mediaRecoveryNeedsReconcile;
             mediaRecoveryNeedsReconcile = false;
             if (shouldReconcile) window.setTimeout(() => reconcileMediaAfterRecovery(meetingId, userId), 0);
+            if (recovered) scheduleMediaRecoveryReset();
           }
           if (recovered && direction === 'publisher' && republished) {
             // Rediscover right away instead of waiting for the next poll tick.
@@ -3408,7 +3420,7 @@ function meetingUiTemplate(): string {
       function publishCurrentLocalTracks(options = {}) {
         const duringRecovery = options.duringRecovery === true;
         const requireReady = options.requireReady === true;
-        if ((publisherRecoveryPending && !duringRecovery) || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve(false);
+        if (mediaLifecyclePaused() || mediaRecoveryTerminal() || (publisherRecoveryPending && !duringRecovery) || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return Promise.resolve(false);
         return enqueueMediaOperation('publisher', async () => {
           if (publisherRecoveryPending && !duringRecovery) return false;
           // Snapshot inside the queue so a queued publish never uses a stale view of what is being captured.
@@ -3926,6 +3938,7 @@ function meetingUiTemplate(): string {
       }
 
       function refreshSfuSubscriptions() {
+        if (mediaLifecyclePaused()) return Promise.resolve();
         if (LIMITED_RELEASE_MEDIA_DISABLED || mediaRecoveryTerminal() || subscriberRecoveryPending || isSimulatedMeeting() || state.route !== 'meeting' || !state.meetingId || !state.currentUserId || !state.mediaConnectionId && typeof window.RTCPeerConnection !== 'function') return Promise.resolve();
         if (queuedSubscriberRefresh) return queuedSubscriberRefresh;
         queuedSubscriberRefresh = enqueueMediaOperation('subscriber', async () => {
@@ -4083,6 +4096,11 @@ function meetingUiTemplate(): string {
         recoveryEpisode.startedAt = 0;
         recoveryEpisode.attempts = 0;
         recoveryEpisode.exhausted = false;
+        mediaPausedAt = 0;
+        startupPausedMs = 0;
+        hiddenSinceMs = 0;
+        lastBackgroundAt = '';
+        lastProcessedBackgroundAt = '';
         Object.keys(startupTimings).forEach((key) => { startupTimings[key] = 0; });
         startupTransaction.attempts = 0;
         startupTransaction.completed = false;
@@ -4179,8 +4197,8 @@ function meetingUiTemplate(): string {
       }
 
       function syncHostActionButtons() {
-        document.querySelectorAll('#applyAccessModeBtn, #meetingAccessMode, #endMeetingBtn, [data-admission-action], [data-remove-user-id]').forEach((button) => {
-          button.disabled = hostActionPending || button.dataset.admissionAction === 'approve' && state.meeting && state.meeting.accessMode === 'LOCKED';
+        document.querySelectorAll('#applyAccessModeBtn, #meetingAccessMode, #endMeetingBtn, [data-admission-action], [data-remove-user-id], [data-readmit-user-id]').forEach((button) => {
+          button.disabled = hostActionPending || (button.dataset.admissionAction === 'approve' || button.dataset.readmitUserId) && state.meeting && state.meeting.accessMode === 'LOCKED';
         });
       }
 
@@ -4750,9 +4768,11 @@ function meetingUiTemplate(): string {
         const meetingId = state.meetingId;
         const userId = state.currentUserId;
         const actionVersion = hostActionVersion;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), MEDIA_TIMING.mediaRequestTimeoutMs);
         meetingRefreshPending = true;
         try {
-          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId));
+          const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId), { signal: controller.signal });
           const payload = await response.json();
           if (!response.ok || !payload.ok || !payload.data) throw new Error(payload.error || 'Unable to refresh meeting.');
           const serverDate = response.headers && typeof response.headers.get === 'function' ? Date.parse(response.headers.get('Date') || '') : NaN;
@@ -4760,14 +4780,15 @@ function meetingUiTemplate(): string {
           if (meetingId === state.meetingId && userId === state.currentUserId && actionVersion === hostActionVersion && !hostActionPending && ['meeting', 'prejoin'].includes(state.route)) {
             applyMeetingSnapshot(payload.data);
             if (state.route === 'meeting') {
-              await refreshMeetingChat();
-              await refreshRecordingStatus();
+              void refreshMeetingChat();
+              void refreshRecordingStatus();
               await refreshSfuSubscriptions();
             }
           }
         } catch (error) {
           if (meetingId === state.meetingId && ['meeting', 'prejoin'].includes(state.route)) setError('Unable to refresh meeting. Retrying automatically.');
         } finally {
+          window.clearTimeout(timeout);
           meetingRefreshPending = false;
         }
       }
@@ -4796,7 +4817,7 @@ function meetingUiTemplate(): string {
           const payload = await response.json();
           if (!response.ok || !payload.ok) throw new Error(payload.error || 'Unable to update meeting.');
           if (meetingId !== state.meetingId || userId !== state.currentUserId || state.route !== 'meeting') return;
-          if (path === '/end' || path === '/remove') {
+          if (path === '/end' || path === '/remove' || path === '/readmit') {
             applyMeetingSnapshot(payload.data);
           } else {
             const refreshed = await fetch('/api/meetings/' + encodeURIComponent(meetingId));
@@ -4816,6 +4837,10 @@ function meetingUiTemplate(): string {
         state.route = name;
         // V1: meeting history is account-only and belongs in the signed-in dashboard.
         if (name === 'meeting') {
+          const meetingUrl = new URL(window.location.href);
+          meetingUrl.searchParams.set('meeting', state.meetingId);
+          window.history.replaceState(null, '', meetingUrl);
+          saveMeetingDevicePreferences();
           markStartupTiming('joined'); // Every route into the meeting (direct join, host approval, rejoin) must capture and publish the devices shown as ON.
           acquireDesiredLocalMedia();
           void publishCurrentLocalTracks();
@@ -4935,7 +4960,41 @@ function meetingUiTemplate(): string {
 
       const localMediaState = createLocalMediaState();
 
+      function saveMeetingDevicePreferences() {
+        if (state.route !== 'meeting' || !state.meetingId) return;
+        try {
+          sessionStorage.setItem('bt-meeting-devices:' + state.meetingId, JSON.stringify({
+            micEnabled: state.localDevice.micEnabled,
+            micMuted: state.localDevice.micMuted,
+            cameraEnabled: state.localDevice.cameraEnabled,
+          }));
+        } catch (error) {
+          console.warn('Unable to save meeting device preferences; automatic reload resume will be unavailable.', error.name);
+        }
+      }
+
+      function restoreMeetingDevicePreferences() {
+        try {
+          const saved = sessionStorage.getItem('bt-meeting-devices:' + state.meetingId);
+          if (!saved) return false;
+          const devices = JSON.parse(saved);
+          if (!devices || !['micEnabled', 'micMuted', 'cameraEnabled'].every((key) => typeof devices[key] === 'boolean')) {
+            throw new Error('Invalid meeting device preferences.');
+          }
+          if (!LIMITED_RELEASE_MEDIA_DISABLED) {
+            state.localDevice.micEnabled = devices.micEnabled;
+            state.localDevice.micMuted = devices.micMuted;
+            state.localDevice.cameraEnabled = devices.cameraEnabled;
+          }
+          return true;
+        } catch (error) {
+          console.warn('Unable to restore meeting device preferences; use prejoin to select devices.', error.name);
+          return false;
+        }
+      }
+
       function renderLocalState() {
+        saveMeetingDevicePreferences();
         const micBtn = document.getElementById('toggleMicBtn');
         const cameraBtn = document.getElementById('toggleCameraBtn');
         const micControl = document.getElementById('micControlBtn');
@@ -5454,6 +5513,7 @@ function meetingUiTemplate(): string {
         const recovery = validatePublisherOnResume(trigger).catch(() => false).then((healthy) => {
           if (healthy) {
             resumeRecoveryResult = 'ready';
+            scheduleMediaRecoveryReset();
             lastSubscriberPublicationSet = null;
             void refreshSfuSubscriptions();
             return true;
@@ -5469,7 +5529,15 @@ function meetingUiTemplate(): string {
 
       function handleMediaResume(trigger) {
         if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId || isSimulatedMeeting()) return Promise.resolve(false);
+        if (document.visibilityState === 'hidden' || navigator.onLine === false) return Promise.resolve(false);
+        if (mediaPausedAt) {
+          const pausedFor = Math.max(0, Date.now() - mediaPausedAt);
+          if (recoveryEpisode.startedAt) recoveryEpisode.startedAt += pausedFor;
+          if (startupTimings.joined && !startupTransaction.completed) startupPausedMs += pausedFor;
+          mediaPausedAt = 0;
+        }
         const unprocessed = Boolean(lastBackgroundAt) && lastProcessedBackgroundAt !== lastBackgroundAt;
+        if (unprocessed) void refreshMeetingState();
         if (unprocessed) beginMediaTimingEpoch('resumeDetected', trigger);
         const hiddenFor = hiddenSinceMs ? Date.now() - hiddenSinceMs : 0;
         hiddenSinceMs = 0;
@@ -5477,7 +5545,7 @@ function meetingUiTemplate(): string {
         const subscriberUnhealthy = Boolean(subscriberPeerConnection) && ['failed', 'closed', 'disconnected'].includes(subscriberState);
         if (subscriberUnhealthy) {
           void requestMediaRecovery('subscriber', 'page resumed with unhealthy subscriber');
-        } else if (unprocessed && subscriberPeerConnection && hiddenFor >= (Number.isFinite(window.btHiddenSubscriberRebuildMs) ? window.btHiddenSubscriberRebuildMs : MEDIA_TIMING.hiddenSubscriberRebuildMs)) {
+        } else if (unprocessed && subscriberPeerConnection && remoteTrackByMid.size && hiddenFor >= (Number.isFinite(window.btHiddenSubscriberRebuildMs) ? window.btHiddenSubscriberRebuildMs : MEDIA_TIMING.hiddenSubscriberRebuildMs)) {
           void validateSubscriberOnResume(trigger).catch(() => false).then((healthy) => {
             if (healthy) {
               lastSubscriberPublicationSet = null;
@@ -5500,11 +5568,19 @@ function meetingUiTemplate(): string {
 
       function recordBackgroundTransition() {
         if (state.route !== 'meeting' || !state.meetingId || !state.currentUserId) return;
+        if (mediaPausedAt) return;
+        mediaPausedAt = Date.now();
         lastBackgroundAt = new Date().toISOString();
         hiddenSinceMs = hiddenSinceMs || Date.now();
         resumeTrackStates = resumeTrackStateSnapshot();
+        clearMediaRecoveryResetTimer();
+        for (const timer of recoveryRetryTimers.values()) clearTimeout(timer);
+        recoveryRetryTimers.clear();
+        abortInFlightMedia('publisher');
+        abortInFlightMedia('subscriber');
       }
 
+      window.addEventListener('pagehide', recordBackgroundTransition);
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') {
           recordBackgroundTransition();
@@ -5521,8 +5597,8 @@ function meetingUiTemplate(): string {
       });
       window.addEventListener('offline', () => {
         if (state.route === 'meeting') {
+          recordBackgroundTransition();
           lastOfflineAt = new Date().toISOString();
-          lastBackgroundAt = lastOfflineAt;
         }
       });
       window.addEventListener('online', () => {
@@ -5852,6 +5928,26 @@ function meetingUiTemplate(): string {
           }
           participantList.appendChild(item);
         });
+        if (state.isHost && state.meeting.status === 'active') {
+          state.meeting.participants.filter((participant) => participant.state === 'REMOVED').forEach((participant) => {
+            const item = document.createElement('li');
+            const label = document.createElement('span');
+            label.textContent = participant.displayName + ' (removed)';
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'ghost';
+            button.textContent = 'Allow re-entry';
+            button.dataset.readmitUserId = participant.userId;
+            button.setAttribute('aria-label', 'Allow re-entry for ' + participant.displayName);
+            button.addEventListener('click', () => {
+              if (hostActionPending || !window.confirm('Allow ' + participant.displayName + ' to rejoin using the original meeting link?')) return;
+              void runHostAction('/readmit', { targetUserId: participant.userId });
+            });
+            item.append(label, button);
+            participantList.appendChild(item);
+          });
+        }
+        syncHostActionButtons();
 
         const orderedParticipants = state.meeting.participants.filter((participant) => participant.state === 'JOINED');
         const localIndex = orderedParticipants.findIndex((participant) => isLocalParticipant(participant));
@@ -5941,14 +6037,29 @@ function meetingUiTemplate(): string {
 
           state.meetingId = payload.data.id;
           state.meeting = payload.data;
-          state.currentUserId = '';
+          state.currentUserId = payload.viewer?.userId || '';
           state.isHost = false;
           state.admissionStatus = '';
-          document.getElementById('displayNameInput').value = '';
+          const self = payload.data.participants.find((participant) => participant.userId === state.currentUserId);
+          const admission = (payload.data.accessRequests || []).find((entry) => entry.userId === state.currentUserId);
+          state.displayName = self?.displayName || payload.viewer?.displayName || '';
+          document.getElementById('displayNameInput').value = state.displayName;
           document.getElementById('prejoinTitle').textContent = payload.data.title + ' • ' + payload.data.id;
           setError(null);
           syncMeetingRoleUi();
+          if (self?.state === 'JOINED' && payload.data.status === 'active' && restoreMeetingDevicePreferences()) {
+            state.admissionStatus = 'APPROVED';
+            renderLocalState();
+            renderMeetingRoom();
+            showScreen('meeting');
+            return;
+          }
+          if (admission?.status === 'WAITING') state.admissionStatus = 'WAITING';
           showScreen('prejoin');
+          if (state.admissionStatus === 'WAITING') {
+            document.getElementById('joinNowButton').disabled = true;
+            document.getElementById('prejoinStatus').textContent = 'Your request is waiting for host approval.';
+          }
         } catch (error) {
           setError(error instanceof Error ? error.message : 'Unable to resolve meeting.');
         }
@@ -6068,6 +6179,9 @@ function meetingUiTemplate(): string {
         state.meetingId = '';
         syncMeetingRoleUi();
         showScreen('home');
+        const meetingUrl = new URL(window.location.href);
+        meetingUrl.searchParams.delete('meeting');
+        window.history.replaceState(null, '', meetingUrl);
         try {
           await mediaCleanup;
           const response = await fetch('/api/meetings/' + encodeURIComponent(meetingId) + '/leave', {
@@ -7739,19 +7853,39 @@ const routeHandler = {
       }
     }
 
-    const removalMatch = /^\/api\/meetings\/([^/]+)\/remove$/.exec(url.pathname);
+    const removalMatch = /^\/api\/meetings\/([^/]+)\/(remove|readmit)$/.exec(url.pathname);
     if (removalMatch && request.method === "POST") {
       const body = await parseJsonBody<{ actorUserId?: string; targetUserId?: string }>(request);
       const { session } = await getOrCreateSession(request, env);
       if (!body || typeof body.targetUserId !== "string" || !body.targetUserId.trim()) {
         return withSessionCookie(jsonResponse({ ok: false, error: "targetUserId is required." }, 400), request, session);
       }
+      if (!isValidMeetingId(removalMatch[1])) return withSessionCookie(jsonResponse({ ok: false, error: "Invalid meeting identifier." }, 400), request, session);
+      const rpc = getMeetingStateRpc(env, removalMatch[1]);
+      const token = await rpc.acquireSfuMutation(body.targetUserId);
       try {
-        const meeting = await getMeetingService(env).removeParticipant(removalMatch[1], session.userId, body.targetUserId);
-        await cleanupSfuParticipant(env, removalMatch[1], body.targetUserId);
+        const service = getMeetingService(env);
+        const current = await service.getMeeting(removalMatch[1]);
+        if (!current || !MeetingPermissions.canManageAdmission(current, session.userId)) {
+          throw new Error("Only the host may manage participant removal or re-entry.");
+        }
+        const readmit = removalMatch[2] === "readmit";
+        if (readmit) {
+          if (current.accessMode === MeetingAccessMode.LOCKED) throw new Error("Meeting admission is locked.");
+          if (!current.participants.some((participant) =>
+            participant.userId === body.targetUserId && participant.role === "PARTICIPANT" && participant.state === ParticipantState.REMOVED,
+          )) throw new Error("Removed participant not found.");
+          await cleanupSfuParticipant(env, removalMatch[1], body.targetUserId);
+        }
+        const meeting = readmit
+          ? await service.readmitParticipant(removalMatch[1], session.userId, body.targetUserId)
+          : await service.removeParticipant(removalMatch[1], session.userId, body.targetUserId);
+        if (!readmit) await cleanupSfuParticipant(env, removalMatch[1], body.targetUserId);
         return withSessionCookie(jsonResponse({ ok: true, data: meeting }), request, session);
       } catch (error) {
-        return withSessionCookie(jsonResponse({ ok: false, error: error instanceof Error ? error.message : "Unable to remove participant." }, 403), request, session);
+        return withSessionCookie(jsonResponse({ ok: false, error: error instanceof Error ? error.message : "Unable to update participant access." }, 403), request, session);
+      } finally {
+        await rpc.releaseSfuMutation(body.targetUserId, token);
       }
     }
 
@@ -7788,7 +7922,7 @@ const routeHandler = {
         return withSessionCookie(jsonResponse({ ok: false, error: "Meeting not found." }, 404), request, session);
       }
 
-      return withSessionCookie(jsonResponse({ ok: true, data: meetingSnapshotForViewer(meeting, session.userId) }), request, session);
+      return withSessionCookie(jsonResponse({ ok: true, data: meetingSnapshotForViewer(meeting, session.userId), viewer: { userId: session.userId, displayName: session.displayName } }), request, session);
     }
 
     if (meetingMatch && request.method === "POST" && meetingMatch[2] === "join") {
