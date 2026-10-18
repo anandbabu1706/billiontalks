@@ -100,6 +100,8 @@ to the host for readmission, but never remain on the video stage.
 ## Physical two-device acceptance (owner-assisted; pending)
 
 The owner has agreed to test as host and mobile participant on staging.
+The results form was cancelled; no physical-device result has been received.
+Do not treat synthetic lifecycle tests or HTTP checks as physical qualification.
 
 1. On the staging meeting UI, create a disposable meeting on the host device.
    Open its original link on a separate physical mobile device/browser, request
@@ -123,3 +125,37 @@ The owner has agreed to test as host and mobile participant on staging.
 Record device/browser versions, interruption durations, recovery time, two-way
 media observations, removal/readmission outcomes and any console error. Physical
 qualification and explicit production approval remain release gates.
+
+## Staging deployment and live evidence (2026-10-18)
+
+- Implementation commit: `2f90138e74de493cc97c3434c36bf3e9dd429da0`,
+  committed and pushed on the dedicated fix branch.
+- Existing staging Worker: `billiontalks-v1-staging`.
+- Active staging version: `df3aa9e7-4526-48c6-9f07-37e152a37a60`, 100%.
+- URL: <https://billiontalks-v1-staging.anandjob1706.workers.dev/ui>.
+- Staging rollback: `51db683b-f726-4197-82d0-b12b5fa72788`.
+- The uploaded candidate's compatibility date, fetch/scheduled handlers, D1
+  identity, Durable Object class, R2 bucket, website flag, email settings, and
+  three existing secret binding names matched the prior staging version. No
+  secrets were read, rotated, or replaced. Used version upload/promotion against
+  the staging configuration only; triggers and infrastructure were not modified.
+- Live staging `/`, `/about`, `/how-it-works`, `/features`, `/solutions`,
+  `/contact`, `/ui`, `/account`, and `/health` returned 200. The pages retained
+  staging noindex headers. Rendered meeting home opened normally.
+- `/health` reported media configuration present; this does not prove live SFU
+  audio/video. An unauthenticated readmission probe returned 403 with no-store.
+- A live independent-cookie lifecycle probe confirmed distinct session
+  identities, then stopped at the existing 401 account requirement for creating
+  meetings. No meeting was created. No account requirement was bypassed and no
+  synthetic account was registered. Authenticated live admission/readmission and
+  real media qualification remain pending owner access/testing.
+- The integrated browser cannot create isolated test pages/HTTP cookie contexts
+  under its session affinity restrictions. Those attempts were not counted as
+  successful multi-browser tests; the HTTP probe above used independent cookies.
+- After staging activation, production was independently rechecked and remained
+  `d9102cb2-fbf3-479e-b816-08c38d50e782` at 100%.
+
+**Release status:** code, focused automated gates, push and staging deployment
+complete. Physical two-device acceptance is outstanding. Production must remain
+unchanged until physical qualification is recorded and the owner explicitly
+approves a separate production release.
