@@ -127,7 +127,9 @@ describe("BT-GROWTH-001 public website", () => {
       const response = await app.fetch(new Request("https://billiontalks.com" + path), enabled);
       expect(response.status, path).toBe(200);
       expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-      if (path.includes("meeting=")) expect(await response.text()).toContain("Start or join a meeting");
+      const html = await response.text();
+      expect(parse(html).querySelector('link[rel="icon"]')?.getAttribute("href"), path).toBe("/assets/website/favicon-32.png");
+      if (path.includes("meeting=")) expect(html).toContain("Start or join a meeting");
     }
   });
 

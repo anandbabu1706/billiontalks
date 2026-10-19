@@ -17,6 +17,7 @@ export function dashboardPage(): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dashboard · BillionTalks</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/website/favicon-32.png">
   <style>
     :root {
       color-scheme: light;

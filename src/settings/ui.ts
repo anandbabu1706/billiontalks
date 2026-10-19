@@ -11,7 +11,7 @@ export function notificationsPage(): string {
   const logoUrl = logoDataUrl(logoSource);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="no-referrer"><title>Notifications · BillionTalks</title>
+<meta name="referrer" content="no-referrer"><title>Notifications · BillionTalks</title><link rel="icon" type="image/png" sizes="32x32" href="/assets/website/favicon-32.png">
 <style>
 :root{color-scheme:light;font-family:Inter,system-ui,"Segoe UI",sans-serif;background:#f4f7fc;color:#17233c}*{box-sizing:border-box}
 body{margin:0;min-width:320px;min-height:100vh;background:linear-gradient(135deg,#f7faff,#edf3fb)}a{color:inherit;text-decoration:none}

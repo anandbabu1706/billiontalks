@@ -64,6 +64,7 @@ export function accountPage(publicWebsiteEnabled = false): string {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>Account · BillionTalks</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/website/favicon-32.png">
   <style>
     :root { color-scheme: light; font-family: Inter, system-ui, "Segoe UI", sans-serif; background: #f4f7fb; color: #16233b; }
     * { box-sizing: border-box; }

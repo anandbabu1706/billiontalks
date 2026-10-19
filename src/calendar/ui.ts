@@ -17,6 +17,7 @@ export function calendarPage(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>Calendar · BillionTalks</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/website/favicon-32.png">
   <style>
     :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f7fc; color: #17233c; }
     * { box-sizing: border-box; }

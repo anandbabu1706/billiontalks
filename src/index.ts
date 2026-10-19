@@ -957,6 +957,7 @@ function meetingUiTemplate(): string {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BillionTalks</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/website/favicon-32.png" />
     <style>
       :root {
         --bg: #0b1020;
