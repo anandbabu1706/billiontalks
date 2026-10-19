@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Account } from "../src/account/domain";
@@ -85,6 +87,32 @@ describe("BT-GROWTH-001 public website", () => {
     const schema = JSON.parse(document.querySelector('script[type="application/ld+json"]')!.textContent!);
     expect(schema.publisher.name).toBe("BillionTalks");
     expect(schema).not.toHaveProperty("aggregateRating");
+  });
+
+  it("uses the approved favicon sizes and a correctly sized branded social preview", async () => {
+    const documents = await Promise.all(publicPages.map(async (page) => {
+      const response = await app.fetch(new Request(`https://staging.example${page.path}`), enabled);
+      return { page, document: parse(await response.text()) };
+    }));
+    for (const { page, document } of documents) {
+      const socialImage = "https://staging.example/assets/website/social-preview.png";
+      expect(document.querySelector('meta[property="og:url"]')?.getAttribute("content")).toBe(`https://billiontalks.com${page.path}`);
+      expect(document.querySelector('meta[property="og:image"]')?.getAttribute("content")).toBe(socialImage);
+      expect(document.querySelector('meta[property="og:image:width"]')?.getAttribute("content")).toBe("1200");
+      expect(document.querySelector('meta[property="og:image:height"]')?.getAttribute("content")).toBe("630");
+      expect(document.querySelector('meta[property="og:image:alt"]')?.getAttribute("content")).toContain("BillionTalks official logo");
+      expect(document.querySelector('meta[name="twitter:image"]')?.getAttribute("content")).toBe(socialImage);
+      expect(document.querySelector('meta[name="twitter:card"]')?.getAttribute("content")).toBe("summary_large_image");
+      expect(document.querySelectorAll('link[rel="icon"][type="image/png"]')).toHaveLength(3);
+      expect(document.querySelector('link[rel="apple-touch-icon"][sizes="180x180"]')?.getAttribute("href")).toBe("/assets/website/favicon-180.png");
+    }
+    for (const [name, size] of [["favicon-16.png", 16], ["favicon-32.png", 32], ["favicon-48.png", 48], ["favicon-180.png", 180], ["social-preview.png", 1200]] as const) {
+      const bytes = readFileSync(join(process.cwd(), "assets", "website", name));
+      expect(Array.from(bytes.slice(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+      const png = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      expect(png.getUint32(16)).toBe(size);
+      expect(png.getUint32(20)).toBe(name === "social-preview.png" ? 630 : size);
+    }
   });
 
   it("keeps the legacy root routing gated off outside the staging activation", async () => {

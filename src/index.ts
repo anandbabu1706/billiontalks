@@ -6451,7 +6451,7 @@ const routeHandler = {
           const account = env.ACCOUNT_DB ? await resolveAccountSession(request, env.ACCOUNT_DB) : null;
           if (url.pathname === "/admin/feedback") return feedbackReviewPage(account);
           const page = publicPages.find((entry) => entry.path === url.pathname)!;
-          return websiteResponse(page, account, isProductionWebsite);
+          return websiteResponse(page, account, isProductionWebsite, url.origin);
         } catch (error) {
           console.error("[billiontalks website] Account resolution failed.", error instanceof Error ? error.name : "unknown");
           return new Response("The website is temporarily unavailable. Please try again.", { status: 503, headers: { "Cache-Control": "no-store", "Content-Type": "text/plain; charset=utf-8" } });
