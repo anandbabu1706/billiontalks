@@ -1,6 +1,6 @@
 # Website favicon and social preview correction
 
-## Release
+## Initial staging release
 
 - Branch: `bt-website-favicon-social-correction`.
 - Deployed code: `63fedc381e12f355dd364ad977e885c3ffdeecf6`, including asset commit `7fa8cfdbfd824e92ccd942d08a78d50216cf5e1f`.
@@ -120,3 +120,109 @@ promotion is authorized.
 - No new live authenticated-account, multi-party meeting, or physical-device
   media qualification was performed. Existing regression coverage was retained.
 - Unrelated untracked `README.txt` was left untouched.
+
+## Owner-authorized production release (2026-10-20)
+
+This section supersedes the staging-only authorization and pending visual
+acceptance above. The owner explicitly approved production release of the
+correction qualified as staging version `6249cd70-aac8-4142-ae9a-752a9179096d`,
+while excluding unrelated V1 reconnection development.
+
+### Scope isolation and source verification
+
+- Original correction branch: `bt-website-favicon-social-correction`, left
+  undisturbed, including its unrelated untracked `README.txt`.
+- Isolated release branch: `bt-website-favicon-production-release`.
+- Production baseline: `490f03c16dc7dc135978a8ce99d075b6fa83f136`; its runtime
+  source is identical to the previously deployed source
+  `6c7febff118552231b1384f0c05e9add348886f6`.
+- Only correction commits `7fa8cfd` and `63fedc3` were cherry-picked, producing
+  `fc3f23c4372d0171a5c3c477673773becc2d1663` and deployed source commit
+  **`59223d775418e0adb550f1e9a71c2a7388ae2485`**.
+- All approved assets, website code and app favicon edits are identical to the
+  approved staging source. The meeting service, meeting regression files,
+  dependencies and production configuration remain identical to the production
+  baseline. The only production entry-point edits are the favicon head link and
+  passing the request origin into website metadata generation.
+- V1 rejoin/readmission commit `2f90138` is not an ancestor of the release.
+  No main merge or unrelated branch merge was performed.
+- Downloaded all 16 approved staging modules and verified byte-for-byte equality
+  with the staging source rebuild. Downloaded all 11 pre-release production
+  modules: binary assets matched exactly, and JavaScript matched after accounting
+  for nine dependency-path comments introduced by the isolated worktree junction.
+  No executable production-baseline differences were present.
+
+### Deployment identity and infrastructure
+
+- Existing production Worker: `billiontalks-realtime-backend`.
+- Authorized account: `2d48323814fb300c94661daac9ee80bf`.
+- Production: https://billiontalks.com/.
+- Active production version, at 100%:
+  **`e6a55a3e-79bc-4845-a0fa-783d42a5e2ca`**.
+- Version tag: `bt-favicon-59223d7`.
+- Immediate rollback:
+  **`d9102cb2-fbf3-479e-b816-08c38d50e782`**.
+- Used the existing OAuth login with explicit empty environment file and
+  process credential overrides excluded. Account membership and Workers write
+  scope were confirmed before upload.
+- Uploaded with `wrangler versions upload`, compared every candidate binding and
+  runtime property to the rollback version, then activated the exact uploaded
+  version with `wrangler versions deploy ...@100 --yes`.
+- No trigger deployment was performed. Existing cron schedules and Worker-domain
+  mappings match pre-release API snapshots exactly. D1 database, Durable Object
+  namespace, R2 bucket, plain-text variables, runtime migration tag, compatibility
+  date and all three secret binding names match the rollback version.
+- No resources, tokens, secrets, migrations, DNS entries or additional services
+  were created. Repository dotenv credentials were not changed.
+- Downloaded all 16 active production modules after activation and verified exact
+  byte-for-byte equality with the isolated production candidate build.
+
+### Production qualification
+
+- Selected website, routing, account, scheduler and meeting UI regressions:
+  **236 passed, one pre-existing failure** across seven files (237 tests).
+- The failure is
+  `allows camera cycles ON -> OFF -> ON repeatedly with live tracks and preview state`
+  in `tests/browser-ui.test.ts`, asserting a non-null `video.local-preview`.
+  The exact failure was independently reproduced on the unchanged production
+  baseline and the release candidate. No unrelated fix or test suppression was
+  included.
+- Production-candidate app/test typecheck and production dry-run build passed.
+- All six public pages and seven app routes returned 200 after deployment:
+  account, scheduler, meeting UI, Dashboard, Calendar, Contacts and Notifications.
+- Compared pre/post normalized page bodies and styles for all 13 routes:
+  unchanged. Page titles, descriptions, canonicals and indexing directives were
+  unchanged.
+- All six public pages now use the production-hosted branded 1200 x 630
+  Open Graph/Twitter image. The five generated PNGs match committed and approved
+  staging bytes, return `image/png`, support GET/HEAD 200, and return 304 for
+  matching ETags.
+- Live browser sweep of all six public pages at requested 1280/390 widths
+  reported zero horizontal overflow, broken images or pending images.
+  Document client widths were 1265/375 with scrollbars.
+- Login browser check: `/account#login` returns 200 with the visible sign-in
+  panel, password input and approved favicon.
+- Guest scheduling browser check: `/schedule` returns its app shell, then
+  correctly redirects to `/account#login`. Guest account and schedules APIs
+  return the expected 401 both before and after deployment.
+- Meeting browser check: `/ui` opens the existing Start or join a meeting screen
+  with the approved favicon. The legacy root `?meeting=` route also returns the
+  meeting interface without creating a meeting. `www` canonical redirect retains
+  the meeting query.
+- No signed-in browser session was available. This release does not claim a new
+  credentialed login, authenticated scheduling write, or live multiparty media
+  test. No production accounts, schedules or meetings were created for testing.
+
+### Rollback
+
+From the isolated production release worktree, use the same verified OAuth
+procedure, excluding repository dotenv credentials and supplying an explicit
+empty environment file:
+
+```powershell
+npx wrangler versions deploy d9102cb2-fbf3-479e-b816-08c38d50e782@100 --yes --config wrangler.jsonc --env-file <empty-env-file>
+```
+
+This is a code-only rollback to the immediately preceding production version.
+Do not restore D1, rotate secrets, change resource bindings, redeploy triggers,
+or promote the V1 reconnection branch as part of rollback.
