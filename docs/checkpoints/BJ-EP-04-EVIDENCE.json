@@ -1,0 +1,204 @@
+{
+  "reviewDate": "2026-11-27",
+  "timezone": "Asia/Calcutta",
+  "branch": "bj-ep-04-foundation",
+  "baseline": "59223d775418e0adb550f1e9a71c2a7388ae2485",
+  "approvedDocumentation": "d87e65fe5b7243455f6462c5412163346e734e0c",
+  "commands": [
+    "npm run typecheck",
+    "npm test -- tests/jobs-foundation.test.ts --reporter=verbose",
+    "npm test -- --reporter=json --outputFile=baseline-tests.json",
+    "npm test -- --reporter=json --outputFile=final-tests.json",
+    "git diff --check"
+  ],
+  "typecheck": "PASS",
+  "diffCheck": "PASS",
+  "baselineTests": {
+    "total": 427,
+    "passed": 425,
+    "failed": 2,
+    "skipped": 0,
+    "failures": [
+      {
+        "file": "browser-ui.test.ts",
+        "name": "BillionTalks browser UI regression tests allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state",
+        "error": "AssertionError: expected null not to be null"
+      },
+      {
+        "file": "calendar-v1-004.test.ts",
+        "name": "BT-V1-004 calendar and time zones renders authorized schedule records across month, week, and day navigation",
+        "error": "AssertionError: the given combination of arguments (undefined and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string"
+      }
+    ],
+    "jobs": []
+  },
+  "finalTests": {
+    "total": 457,
+    "passed": 455,
+    "failed": 2,
+    "skipped": 0,
+    "failures": [
+      {
+        "file": "browser-ui.test.ts",
+        "name": "BillionTalks browser UI regression tests allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state",
+        "error": "AssertionError: expected null not to be null"
+      },
+      {
+        "file": "calendar-v1-004.test.ts",
+        "name": "BT-V1-004 calendar and time zones renders authorized schedule records across month, week, and day navigation",
+        "error": "AssertionError: the given combination of arguments (undefined and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string"
+      }
+    ],
+    "jobs": [
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) executes D1 atomic batch rollback and rejects conventional BEGIN",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) admits exactly ten of 25 concurrent company requests across recruiters",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) returns one stable result for concurrent retries without double spending",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) resets at fixed IST midnight using the server clock",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) allows slot 30 but rejects slot 31 concurrently and frees closed slots",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) counts active by expiry without requiring cleanup",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) normalizes exact duplicate vacancies, rolls back failures and preserves quota on archive",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) enforces final seven days and adds active renewals to prior expiry",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) renews expired and reopens closed listings from action time",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) permits only one concurrent lifecycle transition at the expected revision",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) edits without spending posting allowances and rejects stale revisions",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) denies foreign companies, revoked membership and Jobs closure, including retries",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) requires explicit assignment; company and platform admins have no applicant bypass",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) defaults private and separates public projection, sensitive fields and indexing",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) discloses submitted fields only to candidate or assigned team, excluding unrelated private data",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) atomically checks current membership even when a caller bypasses the service precheck",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) blocks Worker egress at the runtime and has no production or staging bindings",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) revalidates recruiter discovery permission and hides restricted profiles even from owner",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) purges APPLICATION only at its configured day boundary",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) purges CLOSURE only at its configured day boundary",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) purges MODERATION only at its configured day boundary",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) keeps held/restricted records inaccessible and rejects unauthorized deletion",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) replays independently preserved deletions before reopening a restored database",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) closes only Jobs and preserves shared identity sessions",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) keeps Jobs disabled by default without touching authentication or data",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) uses actual account sessions and rejects revoked, expired and suspended accounts",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) enforces 18+ without collecting DOB or identity numbers and blocks self-reactivation",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) rejects cross-origin and missing CSRF headers, malformed/oversized bodies; never leaks errors",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) uses strict validation and parameterized values against injection",
+        "status": "passed"
+      },
+      {
+        "name": "EP-04 real local D1 foundation (synthetic only) has no Jobs imports of Meetings, shared data or privileged bindings; local runtime denies egress",
+        "status": "passed"
+      }
+    ]
+  },
+  "tools": {
+    "miniflare": "5.20261006.1-alpha",
+    "workerd": "1.20261006.1",
+    "wrangler": "4.149.0",
+    "esbuild": "0.21.5",
+    "vitest": "2.1.9"
+  },
+  "changedFiles": [
+    ".gitignore",
+    "docs/checkpoints/BJ-EP-04-EVIDENCE.json",
+    "docs/checkpoints/BJ-EP-04-LOCAL.md",
+    "migrations/jobs/0001_foundation.sql",
+    "package-lock.json",
+    "package.json",
+    "scripts/jobs-dev.mjs",
+    "scripts/jobs-runtime.d.mts",
+    "scripts/jobs-runtime.mjs",
+    "src/account/jobs-identity.ts",
+    "src/index.ts",
+    "src/jobs/api.ts",
+    "src/jobs/contracts.ts",
+    "src/jobs/permissions.ts",
+    "src/jobs/privacy.ts",
+    "src/jobs/quota.ts",
+    "tests/jobs-foundation.test.ts"
+  ],
+  "additionalCashINR": 0,
+  "remoteOperations": [],
+  "qualification": "Local emulator only; production D1, live isolation, recovery and legal qualification remain pending."
+}

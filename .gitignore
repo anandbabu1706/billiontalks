@@ -153,6 +153,8 @@ activemq-data/
 .dev.vars
 .wrangler/
 node_modules/
+baseline-tests.json
+final-tests.json
 .venv
 env/
 venv/

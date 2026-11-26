@@ -1,4 +1,7 @@
 import { meetingAppearance, meetingLogo } from "./meeting-appearance";
+import { handleJobs, isJobsPath } from "./jobs/api";
+import { jobsIdentity } from "./account/jobs-identity";
+import type { JobsDatabase } from "./jobs/contracts";
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
 import { validateRealtimeEnv, type RealtimeEnv } from "./config";
 import {
@@ -84,6 +87,8 @@ type WorkerEnv = Partial<RealtimeEnv> & AccountEmailConfig & {
   DEV_TOOLS_ENABLED?: string;
   LIMITED_RELEASE_MEDIA_DISABLED?: string;
   PUBLIC_WEBSITE_ENABLED?: string;
+  JOBS_ENABLED?: string;
+  JOBS_DB?: JobsDatabase;
 };
 
 const LIMITED_RELEASE_UNAVAILABLE_MESSAGE = "Realtime media and recording are unavailable in this limited release.";
@@ -6416,6 +6421,7 @@ function meetingUiTemplate(): string {
 const routeHandler = {
   async fetch(request: Request, env: WorkerEnv = {}, waitUntil?: (promise: Promise<void>) => void): Promise<Response> {
     const url = new URL(request.url);
+    if (isJobsPath(url.pathname)) return handleJobs(request, env.JOBS_ENABLED === "true", env.JOBS_DB, jobsIdentity(env.ACCOUNT_DB));
     if (url.hostname.toLowerCase() === "www.billiontalks.com") {
       url.protocol = "https:";
       url.hostname = "billiontalks.com";
