@@ -1,6 +1,6 @@
 # BillionJobs Roadmap & Release Gates
 
-**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; implementation is **BLOCKED** until explicitly authorized. Owners must discuss results before opening a follow-on prompt or workstream.
+**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 and EP-05 local synthetic milestones are completed; see the current tracker and EP-05 evidence. Owners must discuss results before opening a follow-on prompt or workstream.
 
 | Milestone | Status | Scope or exit evidence |
 |---|---|---|
@@ -11,8 +11,8 @@
 | BJ-DOC-001 / BJ-DOC-002 | COMPLETED (documentation) | Documentation branch and action tracker; no merge. |
 | BJ-PLAN-001 | APPROVED (planning) | Collective approval with REV-001–REV-007, recorded in [BJ-D22–BJ-D29](BJ-DECISION-REGISTER.md). |
 | BJ-DOC-003 | COMPLETED on verified introducing commit | Documentation only; see [tracked evidence](BJ-TRACK-001-ACTION-TRACKER.md). |
-| BJ-V0-001A | SOURCE REVIEW COMPLETE / LIVE PENDING | Prior source is not deployed evidence. No live sign-off, staging test or billing verification. |
-| BJ-V1-001 | BLOCKED | Professional profiles: structured education, skills, experience and privacy controls. |
+| BJ-V0-001A | ACCESSIBLE LIVE INSPECTION COMPLETE / QUALIFICATION PARTIAL | Dated audit verifies deployment, isolation and sampled usage; billing, complete headroom and release qualification remain open. |
+| BJ-V1-001 | COMPLETED (EP-05 local synthetic) | [Professional profiles evidence](BJ-EP-05-MILESTONE.md), f5e671faf48678c231b5a7e98f00d11be9ac3823; no real-data or release approval. |
 | BJ-V1-002 | BLOCKED | Company management: company profile, membership, delegation and revocation. |
 | BJ-V1-003 | BLOCKED | Jobs and applications: publish, discover, save, apply, quotas and status. |
 | BJ-V1-004 | BLOCKED | Recruitment workspace: applicant review and status actions; prove tenant separation. |
@@ -23,7 +23,7 @@
 | BJ-V1-009 | BLOCKED | Final qualification: security, integration, accessibility, regression, capacity and owner acceptance. |
 | Offer-letter management extension | DEFERRED | No initial issuance or document system. Optional future work requires explicit reapproval; simple employer/candidate-reported recruitment statuses remain within recruiting scope. |
 
-## Approved sequence and gates (execution not authorized)
+## Approved sequence and remaining gates
 
 1. **Before build:** Verify the currently deployed source and choose a compatible coding baseline; document bindings and published scope; obtain separate approval for development, test access and any resources. The documentation base is the verified default-branch V0 sign-off, not a direction to build against that historical release.
 2. **Before synthetic staging:** Authorize the branch and resources, pin fixtures and scope, ensure Jobs is off by default, preserve route behavior and define how to disable it without breaking Meetings. No production data. Pass functional and isolation tests for two employers and two candidates. During authorized implementation, require Codex to prove D1 atomic quota/application writes; do not assume conventional transaction support.
@@ -38,3 +38,7 @@
 - **APPROVED target:** ₹0 additional development cash using existing allowances; exclude hypothetical paid developer time.
 - **REQUIRES VERIFICATION:** Cloudflare plan, usage and fees; email and identity volume; applicable mandatory verification or compliance costs. Shared capacity must cover existing Meetings plus Jobs.
 - **DEFERRED:** New storage, document safety tooling, payment providers and marketing. Trigger based on measured need and owner approval, not on speculative feature expansion.
+
+## EP-05 closeout sequencing - 2026-11-27
+
+EP-05 is committed and pushed; EP-06/company modules remain not started and require separate authorization. Minimal Jobs profile access is included; full parent redesign remains deferred until after EP-11. See [EP-05 milestone](BJ-EP-05-MILESTONE.md) for exact source, tests, inventory and minimum next dependencies. Historical policy/decision records are retained; local completion does not waive release gates.

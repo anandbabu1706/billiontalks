@@ -2,7 +2,7 @@
 
 **Document ID:** BJ-TRACK-001  
 **Review date:** 2026-11-27
-**Status:** Revision 1.6, live metadata verified; financial and release qualification gates remain
+**Status:** Revision 1.7, EP-05 local profiles completed and pushed; release gates remain
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
@@ -39,9 +39,9 @@
 | BT-CF-SETUP-001 | Official Cloudflare integration and interactive profile | COMPLETED | Existing MCP/OAuth/Wrangler reused; live metadata succeeds; no global safeguard removal or repeat authentication. |
 | BJ-EP-04-CLOSE | EP-04 evidence and branch closeout | COMPLETED | Final SHA, 17-file inventory and committed evidence linked in audit; no test rerun for this documentation revision. |
 | BT-WEB-001 / BT-WEB-002 | Parent ecosystem technical design | COMPLETED (design only) | Extensible registry, shared responsive shell, unified identity and independent product boundaries documented in audit. No implementation. |
-| BT-WEB-003 | Essential Jobs navigation / later registry work | NOT STARTED / PARTLY DEFERRED | Only essential Jobs navigation may accompany separately authorized EP-05; full redesign waits until after EP-11. |
+| BT-WEB-003 | Essential Jobs navigation / later registry work | ESSENTIAL PROFILE ACCESS COMPLETED / REST DEFERRED | EP-05 adds flag-controlled account link and exact allowlisted return target; full registry/shell redesign remains after EP-11. |
 | BT-WEB-004 | Full parent shell/homepage redesign | DEFERRED UNTIL AFTER EP-11 | BJ-D33; not a Jobs development dependency. |
-| EP-05 | Professional profiles | NOT STARTED | Use verified EP-04 development baseline; separate implementation authorization. No automatic continuation. |
+| EP-05 | Professional profiles | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-05-MILESTONE.md); f5e671faf48678c231b5a7e98f00d11be9ac3823 on bj-ep-05-profiles; 19/19 new and 30/30 foundation tests; no deployment. |
 | BJ-LIVE-SEC | MFA, staging exposure, TLS and operational protection review | PENDING SEPARATE ACTION | Owner MFA/account enforcement absent; Access not enabled. Resolve protection strategy before sensitive shared staging; no settings changed. |
 | BJ-LIVE-QUAL | Shared staging recovery, capacity, email and Meetings regressions | PENDING | Qualify two recorded Meetings failures, remote D1 atomicity, retention/recovery, CPU/bursts and provider allowances; no real-data onboarding here. |
 
@@ -55,7 +55,7 @@
 | BJ-D07 | Recruiting before networking and monetization | APPROVED (SCOPE) | Sequencing only |
 | BJ-D09 | Prepare entitlements; defer live billing | APPROVED (SCOPE) | No activated checkout or payment collection |
 | BJ-D17 | Offer-letter creation, release, delivery and verification | DEFERRED | Basic employer/candidate-reported recruitment status confirmations retained |
-| BJ-D18 | Private-by-default candidate profiles, opt-in recruiter/public discoverability, separate indexing opt-in | APPROVED (SCOPE) | EP-04 local privacy foundation tested; full profile acceptance pending EP-05 |
+| BJ-D18 | Private-by-default candidate profiles, opt-in recruiter/public discoverability, separate indexing opt-in | APPROVED (SCOPE) | EP-05 local profile/privacy tests passed; real-data and device qualification pending |
 | BJ-D19 | Historical company-local midnight quota reset | SUPERSEDED by BJ-D21 | Historical approval retained; participant-local interview display preserved |
 | BJ-POL-001 | Renewals, reposting, duplicates and expiry operational rules | COMPLETED (business-policy approval only) | BJ-D20 approved on 2026-11-26; [requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md); local quota/lifecycle tests passed in EP-04; remote and full product qualification pending |
 | BJ-POL-002 | Global IST quota reset and anti-circumvention | COMPLETED (business-policy approval only) | BJ-D21 approved 2026-11-26; fixed IST, no company quota-zone changes; local tests passed in EP-04, remote qualification pending |
@@ -75,7 +75,7 @@
 
 | ID | Deliverable | Status | Required completion evidence |
 |---|---|---|---|
-| BJ-V1-001 | Professional profiles | NOT STARTED | Approved screens, code, tests and privacy controls |
+| BJ-V1-001 | Professional profiles | COMPLETED (EP-05 local synthetic) | [Evidence and limitations](BJ-EP-05-MILESTONE.md); 474/476 suite, two unchanged Meetings failures; device and real-data qualification pending. |
 | BJ-V1-002 | Companies, memberships and recruiter roles | NOT STARTED | Permission tests, membership revocation and tenant isolation |
 | BJ-V1-003 | Job search, postings and applications | NOT STARTED | Quota, workflow and authorization tests |
 | BJ-V1-004 | Recruiter application workspace | NOT STARTED | Application lifecycle, tenant isolation and tests |
@@ -106,5 +106,6 @@
 | 2026-11-26 | 1.4 | EP-03 adds age and responsibility approvals, legal source findings, access blockers and scoped EP-04 recommendation. No live, implementation or release sign-off. |
 | 2026-11-26 | 1.5 | Recorded authenticated setup and the exact live-read blocker. No live closure, technical implementation, legal validation or release sign-off. |
 | 2026-11-27 | 1.6 | BJ-V0-001A live metadata and sampled usage, billing limitation, EP-04/setup evidence, completed parent design and after-EP-11 redesign sequence reconciled; documentation only. |
+| 2026-11-27 | 1.7 | Authorized EP-05 completed on isolated branch; exact commit, 15-file inventory and test evidence recorded. Minimal Jobs access only; EP-06 not started; release gates retained. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
