@@ -2,7 +2,7 @@
 
 Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
 
-**Register revision 1.7 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
+**Register revision 1.8 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -52,6 +52,7 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | 2026-11-26 | 1.5 | Owner approval in P4, BJ-D21 | Global IST quota reset replaces company-local reset; policy only |
 | 2026-11-26 | 1.6 | Collective owner approval, BJ-PLAN-001 with REV-001–REV-007 | Append BJ-D22–BJ-D29 and reconcile prior decision references; no implementation or rollout granted. |
 | 2026-11-26 | 1.7 | EP-03 owner approvals and evidence review | Append BJ-D30–D32, retain legal and live infrastructure gates; no implementation or release authorization. |
+| 2026-11-26 | 1.8 | BJ-V0-001A follow-up | OAuth sign-in confirmed. Live Cloudflare metadata blocked by the noninteractive Codex tool approval gate. BJ-D28 remains pending live verification. No policy changes. |
 
 ### Reconciliation notes
 
