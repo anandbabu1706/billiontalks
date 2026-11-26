@@ -2,7 +2,7 @@
 
 Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
 
-**Register revision 1.6 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
+**Register revision 1.7 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -35,6 +35,9 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | BJ-D27 | APPROVED (design scope); testing pending | PLAN-06 / BJ-V0-003A. Screen inventory and actor-specific workflows, privacy, accessibility, concurrency, security and performance acceptance criteria. No test or implementation completion. Collective owner approval on 2026-11-26, BJ-PLAN-001 / BJ-DOC-003. |
 | BJ-D28 | APPROVED (gate); live evidence pending | PLAN-07 / BJ-V0-001A; REV-006. Obtain dated deployed-baseline, binding, billing, usage, existing subscription and remaining capacity evidence before approving new expenditure. Keep live verification open and interview qualification independent from recruiting. Collective owner approval on 2026-11-26, BJ-PLAN-001 / BJ-DOC-003. |
 | BJ-D29 | APPROVED (sequencing and gates) | PLAN-08 / BJ-ROADMAP; REV-007. Recruit first, integrate interviews after qualification, stage later features separately, and bring minimal admin/privacy safeguards forward. Invite-only pilot is controlled testing, not a permanent restriction on public registration. No implementation, pilot or release authorized. Collective owner approval on 2026-11-26, BJ-PLAN-001 / BJ-DOC-003. |
+| BJ-D30 | APPROVED (product policy) | BillionJobs minimum user age is 18, not just during the pilot. Owner approval, EP-03, 2026-11-26. Does not change shared Meetings eligibility. Age assurance design and adequacy are separate gates; see BJ-V0-003. |
+| BJ-D31 | APPROVED (initial responsibility) | Platform owner is initially accountable for BillionJobs privacy operations. Owner approval, EP-03, 2026-11-26. Does not establish the operating legal entity, make a statutory appointment, or approve a paid adviser. |
+| BJ-D32 | PROPOSED / NOT APPROVED (launch jurisdiction) | India-first is the recommended launch scope and EP-03 assessment basis, not authorization to launch in India or elsewhere. Confirm entity, territorial scope and applicable legal regimes before real-data onboarding. |
 
 ## Review and revision history
 
@@ -48,6 +51,7 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | 2026-11-26 | 1.4 | Owner approval of BJ-POL-001 / BJ-D20 | Renewals, reposting, duplicate prevention and expiry rules approved as business policy; implementation and acceptance tests pending |
 | 2026-11-26 | 1.5 | Owner approval in P4, BJ-D21 | Global IST quota reset replaces company-local reset; policy only |
 | 2026-11-26 | 1.6 | Collective owner approval, BJ-PLAN-001 with REV-001–REV-007 | Append BJ-D22–BJ-D29 and reconcile prior decision references; no implementation or rollout granted. |
+| 2026-11-26 | 1.7 | EP-03 owner approvals and evidence review | Append BJ-D30–D32, retain legal and live infrastructure gates; no implementation or release authorization. |
 
 ### Reconciliation notes
 

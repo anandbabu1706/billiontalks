@@ -2,7 +2,7 @@
 
 **Document ID:** BJ-TRACK-001  
 **Review date:** 2026-11-26  
-**Status:** Revision 1.3, collective planning approval recorded; execution not authorized  
+**Status:** Revision 1.4, EP-03 evidence and gates recorded; execution not authorized  
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
@@ -32,6 +32,10 @@
 | BJ-DOC-002 | Create master action/completion register | COMPLETED (documentation) | Tracker introduced in `0b0f21bc`. |
 | BJ-PLAN-001 | Consolidated planning and independent review | APPROVED (planning) | Collective owner approval on 2026-11-26, PLAN-01–PLAN-08 and REV-001–REV-007; BJ-D22–BJ-D29. |
 | BJ-DOC-003 | Six-file approved planning reconciliation | COMPLETED on verified introducing documentation commit | Authoritative evidence: this revision's introducing commit on [docs/bj-doc-001](https://github.com/anandbabu1706/billiontalks/commits/docs/bj-doc-001/), parent `576b46b50bb0442cfa4a91e3248734bb4f05b3df`. No scoped completion without branch and diff verification. |
+| EP-03 | Legal, infrastructure and security readiness review | COMPLETED (documentary review only) | Completion evidenced by this revision's verified introducing docs commit. Assessment is not a finding of end-to-end compliance, live infrastructure readiness or release approval. |
+| EP-03-A | India legal requirements and retention mapping | SOURCES REVIEWED / APPLICABILITY PENDING | [Legal-readiness findings](BJ-V0-003-PRODUCT-REQUIREMENTS.md#ep-03-india-legal-readiness-findings-2026-11-26); 18+ and owner responsibility approved, India-first not approved. Validate legal hold/retention fields, entity, roles, processors and statutory contacts before real data. |
+| EP-03-B / BJ-V0-001A | Read-only live infrastructure, usage and billing | BLOCKED / LIVE PENDING | [EP-03 audit](BJ-V0-001-ARCHITECTURE-AUDIT.md#ep-03-infrastructure-and-security-readiness-2026-11-26); historical source verified, authenticated evidence unavailable. Billing and remaining capacity unknown. |
+| EP-04 | Isolated local synthetic-data development | RECOMMENDED / NOT AUTHORIZED OR STARTED | Pin historical production-compatible reference, use no remote bindings/secrets, and separately authorize scope. Confirm active source and staging target before integration. |
 
 ## B. Business decisions and unresolved policy
 
@@ -55,6 +59,9 @@
 | BJ-D26 | Renewal/reopening semantics and technical quota design | APPROVED (policy) / CONDITIONAL (technical) | REV-002/004/005; active +30 days from expiry, expired/reopen +30 days from action; one IST allowance each. |
 | BJ-D28 | Live diagnostics and actual spending gate | PENDING VERIFICATION | REV-006: verify usage, current subscriptions, remaining capacity and billing before new expenditure. |
 | BJ-D29 | Controlled pilot and roadmap gates | APPROVED (strategy only) | REV-007: invite-only testing, not permanent; no pilot authorization. |
+| BJ-D30 | BillionJobs eligibility: minimum age 18 | APPROVED (policy) | Age assurance implementation and adequacy pending; no change to Meetings eligibility. |
+| BJ-D31 | Initial privacy accountability: platform owner | APPROVED (responsibility) | Formal statutory designation and coverage where applicable pending. |
+| BJ-D32 | India-first launch jurisdiction | PROPOSED / NOT APPROVED | Assess India; owner decision and legal validation before real-data processing. |
 
 ## C. Development milestones
 
@@ -88,5 +95,6 @@
 | 2026-11-26 | 1.1 | BJ-POL-001 approved and recorded in BJ-D20. Policy item completed; no implementation/test completion claimed. |
 | 2026-11-26 | 1.2 | BJ-POL-002 approved as BJ-D21; supersedes company-local quota reset; no implementation/test completion claimed |
 | 2026-11-26 | 1.3 | BJ-PLAN-001 approved; REV-001–REV-007 reflected via BJ-D22–BJ-D29. BJ-DOC-003 closeout tied to verified introducing commit. Implementation, testing, real-data and release remain pending authorization. |
+| 2026-11-26 | 1.4 | EP-03 adds age and responsibility approvals, legal source findings, access blockers and scoped EP-04 recommendation. No live, implementation or release sign-off. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
