@@ -2,12 +2,13 @@
 
 **Document ID:** BJ-TRACK-001  
 **Review date:** 2026-11-26  
-**Status:** Living project register, initial baseline  
+**Status:** Revision 1.3, collective planning approval recorded; execution not authorized  
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
 
 - **COMPLETED:** Applicable scoped work has documented evidence. Completion of planning or read-only investigation does **not** imply implementation, environment qualification or release.
+- **CONDITIONALLY APPROVED:** Design direction accepted; stated legal, technical or operational gates must be verified independently.
 - **APPROVED (SCOPE):** Owner confirmed the requirement/policy; code and tests not necessarily completed.
 - **DESIGN COMPLETE / PROVISIONAL:** Draft deliverable exists; outstanding decisions may remain.
 - **IN PROGRESS:** An actively discussed or documented planning item, not an ongoing autonomous task.
@@ -22,13 +23,15 @@
 |---|---|---|---|
 | BJ-MPB-001 | Consolidated Master Blueprint | COMPLETED (planning) | [Blueprint](BJ-MPB-001-MASTER-BLUEPRINT.md), approved business baseline; no build approval |
 | BJ-V0-001 | Read-only GitHub and history architecture audit | COMPLETED (scoped audit) | [Audit](BJ-V0-001-ARCHITECTURE-AUDIT.md); not a live account audit |
-| BJ-V0-001A | Live production/staging bindings, capacity, cost and media readiness | PENDING | Authenticated read-only verification and evidence still needed |
-| BJ-V0-002 | Proposed architecture and independent review | DESIGN COMPLETE / PROVISIONAL | [Design](BJ-V0-002-ARCHITECTURE-DESIGN.md); per-decision owner approvals only |
-| BJ-V0-002A | Finalize route/runtime, isolation and integration architecture | PENDING | Resolve design dependencies before implementation authorization |
+| BJ-V0-001A | Live production/staging, capacity, billing and readiness | SOURCE REVIEW COMPLETE / LIVE PENDING | [Audit](BJ-V0-001-ARCHITECTURE-AUDIT.md); authenticated evidence pending. Staging account/email access blocked pending separate permission. |
+| BJ-V0-002 | Architecture design and independent review | COMPLETED (scoped design) | [Design](BJ-V0-002-ARCHITECTURE-DESIGN.md); approval conditions tracked under BJ-V0-002A. |
+| BJ-V0-002A | Final technical architecture and security | CONDITIONALLY APPROVED (design) | BJ-D26 / REV-004/005; demonstrate isolation and prove D1 atomic enforcement in authorized implementation. |
 | BJ-V0-003 | Recruitment feature scope and business policy | APPROVED (SCOPE) | [Requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md); not detailed implementation acceptance |
-| BJ-V0-003A | Screen flows, full acceptance criteria and operating rules | IN PROGRESS (discussion) | Owner approval and approved acceptance matrix pending |
+| BJ-V0-003A | Screen flows and acceptance | APPROVED (design) | BJ-D27; execution and verification pending. |
 | BJ-DOC-001 | Six-file GitHub consolidation and later refinements | COMPLETED (documentation only) | Branch `docs/bj-doc-001`; review commits `2504b600`, `00bcd13d`, `0343388f`, `c9181de8` |
-| BJ-DOC-002 | Create master action/completion register | COMPLETED (documentation only) | This tracker; verify committing revision and branch in GitHub |
+| BJ-DOC-002 | Create master action/completion register | COMPLETED (documentation) | Tracker introduced in `0b0f21bc`. |
+| BJ-PLAN-001 | Consolidated planning and independent review | APPROVED (planning) | Collective owner approval on 2026-11-26, PLAN-01–PLAN-08 and REV-001–REV-007; BJ-D22–BJ-D29. |
+| BJ-DOC-003 | Six-file approved planning reconciliation | COMPLETED on verified introducing documentation commit | Authoritative evidence: this revision's introducing commit on [docs/bj-doc-001](https://github.com/anandbabu1706/billiontalks/commits/docs/bj-doc-001/), parent `576b46b50bb0442cfa4a91e3248734bb4f05b3df`. No scoped completion without branch and diff verification. |
 
 ## B. Business decisions and unresolved policy
 
@@ -44,10 +47,14 @@
 | BJ-D19 | Historical company-local midnight quota reset | SUPERSEDED by BJ-D21 | Historical approval retained; participant-local interview display preserved |
 | BJ-POL-001 | Renewals, reposting, duplicates and expiry operational rules | COMPLETED (business-policy approval only) | BJ-D20 approved on 2026-11-26; [requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md); implementation, server-side quota tests and detailed edge cases remain outstanding |
 | BJ-POL-002 | Global IST quota reset and anti-circumvention | COMPLETED (business-policy approval only) | BJ-D21 approved 2026-11-26; fixed IST, no company quota-zone changes; implementation and tests pending |
-| BJ-POL-003 | Application withdrawal, reapplication and status transitions | PENDING | Design/acceptance required |
-| BJ-POL-004 | Data retention, deletion/export and privacy operations | PENDING | Before real applicant data |
-| BJ-POL-005 | Fraud reports, company moderation, escalation and appeals | PENDING | Minimum safety before public release |
+| BJ-POL-003 | Application lifecycle, withdrawal/reapplication, interview cancellation | APPROVED (policy) | BJ-D22/D23; acceptance withdrawal/non-joining retains audit history. Interview integration still gated. |
+| BJ-POL-004 | Rights, closure, retention and privacy operations | APPROVED (defaults) / LEGAL VALIDATION PENDING | BJ-D24; no real applicant data before legal validation and operating owners. |
+| BJ-POL-005 | Fraud reports, company moderation, escalation and appeals | APPROVED (policy) / OPERATING READINESS PENDING | BJ-D25; staffing, permissions, reporting and appeal acceptance prior to public release. |
 | BJ-POL-006 | Final tier entitlements and subscription price validation | DEFERRED | Hypotheses only: Individual Free/₹99/₹199; Business Free/₹499/₹1,499/₹2,999 per month |
+| BJ-D08 | Résumé uploads | DEFERRED | No initial upload capability or storage. |
+| BJ-D26 | Renewal/reopening semantics and technical quota design | APPROVED (policy) / CONDITIONAL (technical) | REV-002/004/005; active +30 days from expiry, expired/reopen +30 days from action; one IST allowance each. |
+| BJ-D28 | Live diagnostics and actual spending gate | PENDING VERIFICATION | REV-006: verify usage, current subscriptions, remaining capacity and billing before new expenditure. |
+| BJ-D29 | Controlled pilot and roadmap gates | APPROVED (strategy only) | REV-007: invite-only testing, not permanent; no pilot authorization. |
 
 ## C. Development milestones
 
@@ -59,7 +66,7 @@
 | BJ-V1-004 | Recruiter application workspace | NOT STARTED | Application lifecycle, tenant isolation and tests |
 | BJ-V1-005 | Interview scheduling and Meetings integration | NOT STARTED | Admission, retries, time zones and Meetings regression |
 | BJ-V1-006 | Networking and posts | DEFERRED | Separate milestone approval |
-| BJ-V1-007 | Full platform administration/moderation | NOT STARTED | Abuse controls and audit evidence; minimum safeguards required earlier |
+| BJ-V1-007 | Full platform administration/moderation | NOT STARTED | Abuse controls and audit evidence; minimum safeguards delivered with V1-001–004 before real users |
 | BJ-V1-008 | Monetization and premium features | DEFERRED | Approved entitlements, merchant and paid activation |
 | BJ-V1-009 | Final functional, accessibility, security and regression qualification | NOT STARTED | Evidence-backed sign-off |
 | BJ-REL-001 | First public release | BLOCKED | Separate owner permission, actual environment readiness, rollback and sign-off |
@@ -79,7 +86,7 @@
 |---|---|---|
 | 2026-11-26 | 1.0 | Established master action tracker from BJ-DOC-001, BJ-V0-003 and BJ-D19; planning, business approvals and development statuses separated |
 | 2026-11-26 | 1.1 | BJ-POL-001 approved and recorded in BJ-D20. Policy item completed; no implementation/test completion claimed. |
-
 | 2026-11-26 | 1.2 | BJ-POL-002 approved as BJ-D21; supersedes company-local quota reset; no implementation/test completion claimed |
+| 2026-11-26 | 1.3 | BJ-PLAN-001 approved; REV-001–REV-007 reflected via BJ-D22–BJ-D29. BJ-DOC-003 closeout tied to verified introducing commit. Implementation, testing, real-data and release remain pending authorization. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.

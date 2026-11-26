@@ -6,9 +6,12 @@
 |---|---|---|
 | BJ-MPB-001 | APPROVED | [Planning baseline](BJ-MPB-001-MASTER-BLUEPRINT.md), scope, principles and ₹0 incremental development target. |
 | BJ-V0-001 | APPROVED | [Repository/history audit](BJ-V0-001-ARCHITECTURE-AUDIT.md) completed for its read-only scope; active infrastructure verification remains open. |
-| BJ-V0-002 | PROPOSED | [Architecture and independent review](BJ-V0-002-ARCHITECTURE-DESIGN.md) ready for owner review. Only individually confirmed design decisions are approved. |
-| BJ-V0-003 | APPROVED (business scope only) | [Confirmed product policy and feature scope](BJ-V0-003-PRODUCT-REQUIREMENTS.md). Detailed screens, acceptance tests, technical privacy implementation and operational rules remain **PROPOSED / REQUIRES VERIFICATION**; the privacy and visibility business policy is **APPROVED**; no build or launch authorized. |
-| BJ-DOC-001 | APPROVED (documentation only) | Consolidation on a dedicated documentation branch only; owner review before any merge or implementation. |
+| BJ-V0-002 / BJ-V0-002A | CONDITIONALLY APPROVED (design) | [Architecture](BJ-V0-002-ARCHITECTURE-DESIGN.md); demonstrate security isolation and verify D1 atomic enforcement during separately authorized work. |
+| BJ-V0-003 / BJ-V0-003A | APPROVED (scope and design) | [Product requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md) and screen/acceptance design approved; tests and release pending. |
+| BJ-DOC-001 / BJ-DOC-002 | COMPLETED (documentation) | Documentation branch and action tracker; no merge. |
+| BJ-PLAN-001 | APPROVED (planning) | Collective approval with REV-001–REV-007, recorded in [BJ-D22–BJ-D29](BJ-DECISION-REGISTER.md). |
+| BJ-DOC-003 | COMPLETED on verified introducing commit | Documentation only; see [tracked evidence](BJ-TRACK-001-ACTION-TRACKER.md). |
+| BJ-V0-001A | SOURCE REVIEW COMPLETE / LIVE PENDING | Prior source is not deployed evidence. No live sign-off, staging test or billing verification. |
 | BJ-V1-001 | BLOCKED | Professional profiles: structured education, skills, experience and privacy controls. |
 | BJ-V1-002 | BLOCKED | Company management: company profile, membership, delegation and revocation. |
 | BJ-V1-003 | BLOCKED | Jobs and applications: publish, discover, save, apply, quotas and status. |
@@ -20,13 +23,15 @@
 | BJ-V1-009 | BLOCKED | Final qualification: security, integration, accessibility, regression, capacity and owner acceptance. |
 | Offer-letter management extension | DEFERRED | No initial issuance or document system. Optional future work requires explicit reapproval; simple employer/candidate-reported recruitment statuses remain within recruiting scope. |
 
-## Proposed go/no-go checks
+## Approved sequence and gates (execution not authorized)
 
-1. **Before build:** Confirm the actual coding baseline, environmental compatibility, requirement cutline and scope of authorization. The documentation base is the verified default-branch V0 sign-off, not a direction to build against that historical release.
-2. **Before synthetic staging:** Authorize the branch and resources, pin fixtures and scope, ensure Jobs is off by default, preserve route behavior and define how to disable it without breaking Meetings. No production data. Pass functional and isolation tests for two employers and two candidates.
-3. **Before genuine applicant data:** Verify separate Jobs persistence and recovery, retention/deletion, accountable operators, privacy and abuse handling, role revocation, accessibility and risk-based runtime isolation. Verify actual account allowances, peak headroom, billing and Meetings performance/regression. No silent spend.
-4. **Before interviews or recruitment status confirmation:** Qualify interview integration independently on admission/invitee behavior and authorized email testing when email is used. Restrict basic employer/candidate-reported recruitment status transitions to the correct participants. Full offer-letter issuance is deferred and cannot be activated without a new owner-approved milestone and safeguards.
+1. **Before build:** Verify the currently deployed source and choose a compatible coding baseline; document bindings and published scope; obtain separate approval for development, test access and any resources. The documentation base is the verified default-branch V0 sign-off, not a direction to build against that historical release.
+2. **Before synthetic staging:** Authorize the branch and resources, pin fixtures and scope, ensure Jobs is off by default, preserve route behavior and define how to disable it without breaking Meetings. No production data. Pass functional and isolation tests for two employers and two candidates. During authorized implementation, require Codex to prove D1 atomic quota/application writes; do not assume conventional transaction support.
+3. **Before genuine applicant data:** Demonstrate security isolation for infrastructure reuse and choose a separate runtime where necessary. Verify Jobs persistence/recovery, configurable retention and legal validation, accountable support/moderation owners, privacy/abuse handling, role revocation and accessibility. Verify actual usage, subscriptions, remaining capacity and billing before approving spend. Qualify against Meetings performance/regression. The invite-only pilot is controlled testing (REV-007), not a permanent restriction on later public registration.
+4. **Before interviews or recruitment status confirmation:** Qualify interview integration independently on admission/invitee behavior and authorized email testing when email is used. Restrict self-reported recruiting statuses to correct actors, including candidate withdrawal of acceptance or non-joining recorded without deleting history. Full offer-letter issuance is deferred and cannot be activated without a new owner-approved milestone and safeguards.
 5. **Before broader release or monetization:** Review actual pilot usage, rollback evidence, privacy, support load and mandatory/usage-based expense. Obtain separate owner approval for production and paid activation.
+
+**Milestone order:** V1-001 profiles/privacy → V1-002 company roles → V1-003 jobs, IST quotas and applications → V1-004 recruiter workspace. Deliver minimum V1-007 privacy, moderation and appeal controls with this foundation, before real users; the fuller V1-007 tooling stays a separate milestone. V1-005 Interviews is a separate qualified integration. V1-006 networking and V1-008 merchant/paid activation remain deferred. V1-009 and separate BJ-REL-001 approval gate the relevant release.
 
 ## Expense categories
 
