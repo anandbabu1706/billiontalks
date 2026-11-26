@@ -6541,7 +6541,7 @@ const routeHandler = {
     }
 
     if (request.method === "GET" && url.pathname === "/account") {
-      return new Response(accountPage(websiteEnabled), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
+      return new Response(accountPage(websiteEnabled, env.JOBS_ENABLED === "true", url.searchParams.get("next") === "/jobs/profile"), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
     }
 
     if (request.method === "GET" && url.pathname === "/notifications") {
@@ -7989,6 +7989,7 @@ export default {
       const response = await routeHandler.fetch(request, env, ctx ? (promise) => ctx.waitUntil(promise) : undefined);
       const url = new URL(request.url);
       if (response.headers.get("Content-Type")?.includes("text/html") &&
+        !(env.JOBS_ENABLED === "true" && /^\/jobs\/profiles\/[a-f0-9-]{36}$/.test(url.pathname) && response.status === 200 && response.headers.get("X-Robots-Tag") === "index, follow") &&
         !(env.PUBLIC_WEBSITE_ENABLED === "true" && publicPages.some((page) => page.path === url.pathname) &&
           !(url.pathname === "/" && url.searchParams.has("meeting")))) {
         response.headers.set("X-Robots-Tag", "noindex, nofollow");

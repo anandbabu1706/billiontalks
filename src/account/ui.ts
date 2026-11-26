@@ -52,7 +52,7 @@ function renderCountryOptions(options: CountryOption[]): string {
 }
 
 /** Standalone V1 account surface, deliberately independent of V0 media scripts. */
-export function accountPage(publicWebsiteEnabled = false): string {
+export function accountPage(publicWebsiteEnabled = false, jobsEnabled = false, jobsReturn = false): string {
   const logoUrl = logoDataUrl(logoSource);
   const options = countryOptions();
   const dialingCodes = Object.fromEntries(options.map(({ code, dialingCode }) => [code, dialingCode]));
@@ -182,6 +182,7 @@ export function accountPage(publicWebsiteEnabled = false): string {
   </nav>
   <nav id="workspaceAccountNavigation" aria-label="Workspace" hidden>
     <a class="account-nav-link" href="/dashboard">Dashboard</a>
+    ${jobsEnabled ? '<a class="account-nav-link" href="/jobs/profile">Jobs profile</a>' : ''}
     <a class="account-nav-link" href="/account#profile" data-page="profile" data-account-workspace-page="profile">Profile</a>
     <a class="account-nav-link" href="/account#preferences" data-page="preferences" data-account-workspace-page="preferences">Settings</a>
     <a class="account-nav-link" href="/notifications">Notifications</a>
@@ -366,7 +367,7 @@ export function accountPage(publicWebsiteEnabled = false): string {
     if (values[key] !== values[other]) throw Error(key === 'email' ? 'Email addresses do not match.' : 'Passwords do not match.');
     return values;
   }
-  submit('login', 'login', 'POST', (values) => ({ email: values.email, password: values.password }), async () => { location.href = '/dashboard'; });
+  submit('login', 'login', 'POST', (values) => ({ email: values.email, password: values.password }), async () => { location.href = '${jobsEnabled && jobsReturn ? '/jobs/profile' : '/dashboard'}'; });
   submit('register', 'register', 'POST', (values, form) => {
     matching(values, 'email', 'emailConfirm');
     const country = selectedCountry(values.country);
@@ -459,7 +460,7 @@ export function accountPage(publicWebsiteEnabled = false): string {
       workspaceNavigationLinks.forEach((link) => {
         if (link.dataset.accountWorkspacePage === initialPage) link.setAttribute('aria-current', 'page');
       });
-      if (initialPage === 'login' || initialPage === 'register') location.replace('/dashboard');
+      if (initialPage === 'login' || initialPage === 'register') location.replace('${jobsEnabled && jobsReturn ? '/jobs/profile' : '/dashboard'}');
     } catch {
       message('Unable to verify your account session. Please reload and try again.', true);
     }
