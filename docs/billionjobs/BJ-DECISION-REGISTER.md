@@ -1,6 +1,8 @@
 # BillionJobs Decision Register
 
-Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status.
+Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
+
+**Register revision 1.1 — reviewed 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -21,6 +23,14 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | BJ-D15 | REQUIRES VERIFICATION | Candidate/profile visibility, daily reset, renewals, duplicates, abuse thresholds, retention/deletion, active Cloudflare deployment/bindings/capacity/billing and interview access. See [audit](BJ-V0-001-ARCHITECTURE-AUDIT.md) and [requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md). |
 | BJ-D16 | BLOCKED | Staging account/email qualification on hold. No build, provisioning, migration, production operations, payments or implementation under this documentation authorization. Owner review before next milestone. |
 
+## Review and revision history
+
+| Date | Revision | Authority / evidence | Change |
+|---|---|---|---|
+| Historical approval dates unverified | Historical decisions BJ-D01–BJ-D16 | Owner discussions summarized by BJ-DOC-001 | Original policy approvals preserved; individual dates not fabricated |
+| 2026-11-26 | 1.0 | Initial GitHub commit `2504b6003fdd5c571c69c9a5d417b27650aa75db` | Six-file documentation baseline |
+| 2026-11-26 | 1.1 | Owner approval to proceed following independent documentation review | Traceability, milestone-scope clarity, extension contract template and offer-issuer responsibility clarified; no new product approval |
+
 ### Reconciliation notes
 
 - The early “10 / day active” wording was superseded by the accepted 10 new/day and 30 simultaneous policy. Unlimited applications is a product policy, not an infrastructure promise.
@@ -30,7 +40,7 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 
 ## Extension & Integration Register
 
-The statuses below describe each integration proposal, not approval of its parent subdivision. Start with owned interfaces and no new infrastructure. For a new entry, add intended capability, owner/consumer, interface and data scope, dependency, compatibility guarantee, extraction trigger and approval needed. Update this register when an extension is reviewed or changes state.
+The statuses below describe each integration proposal, not approval of its parent subdivision. Start with owned interfaces and no new infrastructure. For a new entry, add intended capability, owner/consumer, interface and data scope, dependency, compatibility guarantee, extraction trigger and approval needed. Before any extension becomes an actionable design, specify provider and consumer ownership, data/access scope, version and compatibility guarantees, failure and rollback semantics, verified extraction trigger and approval evidence. No speculative service is authorized by a placeholder. Update this register when an extension is reviewed or changes state.
 
 | ID | Status | Capability and proposed integration point | Dependencies and decisions awaiting approval |
 |---|---|---|---|
@@ -46,3 +56,7 @@ The statuses below describe each integration proposal, not approval of its paren
 | EXT-10 | DEFERRED | BillionAI: bounded AI workflows using approved product APIs and per-subdivision usage/access rules. | Purpose, data minimization, consent, evaluation, costs and budget approval; no default applicant access. |
 | EXT-11 | PROPOSED | Independent deployment of Jobs or later modules behind compatible versioned interfaces. | Threat model, measured capacity, deployment cadence or regulatory requirement; data/secrets isolation, recovery and rollout/rollback evidence; no resource creation now. |
 | EXT-12 | PROPOSED | Reusable email/notifications and security audit conventions when a second product needs the same contract. | Delivery and permission qualification; per-product data boundaries and rate/cost controls. Reuse selectively. |
+
+### Future extension design placeholder (not approved implementation)
+
+Complete when an extension advances: **ID · business objective · provider/data owner · consumer · API/version policy · authorization/data scope · failure and rollback · privacy and cost evidence · extraction trigger · milestone dependencies · owner approval/date**. Until then, keep fields explicitly pending.

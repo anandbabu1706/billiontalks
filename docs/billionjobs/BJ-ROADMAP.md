@@ -7,8 +7,8 @@
 | BJ-MPB-001 | APPROVED | [Planning baseline](BJ-MPB-001-MASTER-BLUEPRINT.md), scope, principles and ₹0 incremental development target. |
 | BJ-V0-001 | APPROVED | [Repository/history audit](BJ-V0-001-ARCHITECTURE-AUDIT.md) completed for its read-only scope; active infrastructure verification remains open. |
 | BJ-V0-002 | PROPOSED | [Architecture and independent review](BJ-V0-002-ARCHITECTURE-DESIGN.md) ready for owner review. Only individually confirmed design decisions are approved. |
-| BJ-V0-003 | APPROVED | [Confirmed product policy and feature scope](BJ-V0-003-PRODUCT-REQUIREMENTS.md). Exact launch controls, screens and acceptance detail still await review. |
-| BJ-DOC-001 | APPROVED | Consolidation on a dedicated documentation branch only; owner review before any merge or implementation. |
+| BJ-V0-003 | APPROVED (business scope only) | [Confirmed product policy and feature scope](BJ-V0-003-PRODUCT-REQUIREMENTS.md). Detailed screens, acceptance tests, privacy and operational rules remain **PROPOSED / REQUIRES VERIFICATION**; no build or launch authorized. |
+| BJ-DOC-001 | APPROVED (documentation only) | Consolidation on a dedicated documentation branch only; owner review before any merge or implementation. |
 | BJ-V1-001 | BLOCKED | Professional profiles: structured education, skills, experience and privacy controls. |
 | BJ-V1-002 | BLOCKED | Company management: company profile, membership, delegation and revocation. |
 | BJ-V1-003 | BLOCKED | Jobs and applications: publish, discover, save, apply, quotas and status. |

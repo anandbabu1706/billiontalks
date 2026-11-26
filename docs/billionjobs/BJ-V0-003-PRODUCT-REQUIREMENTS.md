@@ -1,6 +1,6 @@
 # BJ-V0-003: Product Requirements & Acceptance
 
-**APPROVED scope:** Functional recruiting first, then interview integration, professional networking and monetization. The approved feature inventory is design scope, not a release authorization. Tests and detailed UI below are **PROPOSED** until reviewed.
+**APPROVED scope:** Functional recruiting first, then interview integration, professional networking and monetization. The approved feature inventory is design scope, not a release authorization. Tests and detailed UI below are **PROPOSED** until reviewed. Business-scope approval does not approve screen designs, acceptance tests, implementation or real-data processing.
 
 | Status | Actor / area | Requirement |
 |---|---|---|
@@ -15,7 +15,7 @@
 
 ## Offer management: employer commitments and platform safeguards
 
-**APPROVED:** Employers control their own internal approvals and choose authorized issuers. Employers own offer terms, eligibility, compensation, joining and employment commitments. BillionJobs provides authenticated issuance and delivery, records the candidate's acceptance status and makes it available to the authorized employer. The platform applies safeguards on its own service; it does not sit in the employer's approval chain or guarantee employment, joining, payment or any outcome. The candidate decides whether to accept. This does not waive the platform's applicable security, privacy or complaint-handling responsibilities.
+**APPROVED:** Employers control their own internal approvals and choose authorized issuers. Employers own offer terms, eligibility, compensation, joining and employment commitments. BillionJobs provides authenticated issuance and delivery, records the candidate's acceptance status and makes it available to the authorized employer. Employer selection of its issuer remains an internal decision; BillionJobs authenticates the designated user's platform permissions without approving the employer's hiring decision. The platform applies safeguards on its own service; it does not sit in the employer's approval chain or guarantee employment, joining, payment or any outcome. The candidate decides whether to accept. This does not waive the platform's applicable security, privacy or complaint-handling responsibilities.
 
 **PROPOSED:** Let only a current, designated employer issuer release a versioned offer to the intended applicant. Record actor, company, version, timestamp and delivery/response state; allow the candidate to view the exact version securely and accept or decline. Distinguish presented, accepted, declined, expired, withdrawn and superseded states. Prevent unauthorized, duplicate or stale acceptance. Keep terms out of email, URLs and general logs. Provide reports, audit history and platform suspension controls; do not redesign the employer's internal chain of approval. Basic job-post eligibility is not the same as authority to issue offers.
 
