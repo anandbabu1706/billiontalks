@@ -2,7 +2,7 @@
 
 Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
 
-**Register revision 1.2 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
+**Register revision 1.3 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -24,6 +24,7 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | BJ-D16 | BLOCKED | Staging account/email qualification on hold. No build, provisioning, migration, production operations, payments or implementation under this documentation authorization. Owner review before next milestone. |
 | BJ-D17 | DEFERRED | **Offer-letter creation, release, delivery and verification** excluded from initial product scope; retain only an optional future extension. Basic employer-reported `Offer Extended`, candidate-reported `Accepted`/`Declined`, and employer-reported `Joined` recruitment statuses remain in scope as self-reported workflow states, not validated employment outcomes. **Supersedes BJ-D12 and BJ-D13 for current delivery scope without removing their historical records.** Approved by owner in P3 offer-release discussion, 2026-11-26. No external employer offer documents are required for the MVP. |
 | BJ-D18 | APPROVED | **Candidate privacy and discoverability:** New professional profiles default to `PRIVATE`. Candidate may opt into `RECRUITERS_ONLY` or `PUBLIC` profile visibility; Google/search-engine indexing requires a separate opt-in. Name, professional headline, experience, education and skills follow the chosen visibility and field preferences. Photo is optional; current employer and Open to Work visibility are candidate-controlled. Email/phone, salary expectations, saved jobs, applications and their statuses remain private except for access by the applying candidate and the authorized recruiting team; interview details only for invitees. Applying intentionally discloses submitted application information to the relevant authorized recruiting team even if general profile is private. No guarantee that recruiters cannot infer the candidate's job-search activity. Explicit owner approval, P3 candidate-privacy discussion, 2026-11-26. |
+| BJ-D19 | APPROVED | **Global company-local posting quota:** Owner approved 2026-11-26: 10 new postings per company per company-local calendar day, resetting at midnight in its confirmed IANA time zone. Suggest the company's zone from the browser at registration but require confirmation. All recruiters share this company-wide quota. Enforce using server-authoritative UTC timestamps and IANA date conversion, never a device clock. Prevent zone changes from granting extra quota. Display interviews in each participant's selected/local zone. Preserve 30 concurrent active postings and 30-day listing validity. Supersedes the *proposed* IST-only reset. Exact timezone-change policy and renewal/duplicate rules require separate design. No implementation approval. |
 
 ## Review and revision history
 
@@ -33,8 +34,11 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | 2026-11-26 | 1.0 | Initial GitHub commit `2504b6003fdd5c571c69c9a5d417b27650aa75db` | Six-file documentation baseline |
 | 2026-11-26 | 1.1 | Owner approval to proceed following independent documentation review | Traceability, milestone-scope clarity, extension contract template and offer-issuer responsibility clarified; no new product approval |
 | 2026-11-26 | 1.2 | Owner confirmations in P3, BJ-D17 and BJ-D18 | Offer release deferred; privacy/visibility model approved; previous offer concepts retained as historical design only |
+| 2026-11-26 | 1.3 | Owner approval of BJ-D19 | Confirmed company-local IANA time zone for daily posting reset; user-local interview displays; no implementation permission |
 
 ### Reconciliation notes
+
+- BJ-D19 resolves the daily quota reset zone, not the still-open renewal, reposting, duplicate, or timezone-change cooldown details.
 
 - **Supersession:** BJ-D17 is the current authority over BJ-D12/BJ-D13 on initial product scope. Earlier approvals of a proposed offer-issuance responsibility boundary do not authorize building or launching offer release. Keep historical entries for traceability.
 - **Privacy:** BJ-D18 closes the earlier visibility-policy question in BJ-D15. All other BJ-D15 operational, data retention, capacity and security checks remain unresolved.
