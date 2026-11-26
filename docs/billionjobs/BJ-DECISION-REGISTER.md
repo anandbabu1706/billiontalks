@@ -2,7 +2,7 @@
 
 Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
 
-**Register revision 1.1 — reviewed 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
+**Register revision 1.2 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -22,6 +22,8 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | BJ-D14 | APPROVED | ₹0 incremental development cash target; existing tools first; no paid additions without express consent. P3 owner blueprint and follow-up. This does not establish operating cost. |
 | BJ-D15 | REQUIRES VERIFICATION | Candidate/profile visibility, daily reset, renewals, duplicates, abuse thresholds, retention/deletion, active Cloudflare deployment/bindings/capacity/billing and interview access. See [audit](BJ-V0-001-ARCHITECTURE-AUDIT.md) and [requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md). |
 | BJ-D16 | BLOCKED | Staging account/email qualification on hold. No build, provisioning, migration, production operations, payments or implementation under this documentation authorization. Owner review before next milestone. |
+| BJ-D17 | DEFERRED | **Offer-letter creation, release, delivery and verification** excluded from initial product scope; retain only an optional future extension. Basic employer-reported `Offer Extended`, candidate-reported `Accepted`/`Declined`, and employer-reported `Joined` recruitment statuses remain in scope as self-reported workflow states, not validated employment outcomes. **Supersedes BJ-D12 and BJ-D13 for current delivery scope without removing their historical records.** Approved by owner in P3 offer-release discussion, 2026-11-26. No external employer offer documents are required for the MVP. |
+| BJ-D18 | APPROVED | **Candidate privacy and discoverability:** New professional profiles default to `PRIVATE`. Candidate may opt into `RECRUITERS_ONLY` or `PUBLIC` profile visibility; Google/search-engine indexing requires a separate opt-in. Name, professional headline, experience, education and skills follow the chosen visibility and field preferences. Photo is optional; current employer and Open to Work visibility are candidate-controlled. Email/phone, salary expectations, saved jobs, applications and their statuses remain private except for access by the applying candidate and the authorized recruiting team; interview details only for invitees. Applying intentionally discloses submitted application information to the relevant authorized recruiting team even if general profile is private. No guarantee that recruiters cannot infer the candidate's job-search activity. Explicit owner approval, P3 candidate-privacy discussion, 2026-11-26. |
 
 ## Review and revision history
 
@@ -30,8 +32,12 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | Historical approval dates unverified | Historical decisions BJ-D01–BJ-D16 | Owner discussions summarized by BJ-DOC-001 | Original policy approvals preserved; individual dates not fabricated |
 | 2026-11-26 | 1.0 | Initial GitHub commit `2504b6003fdd5c571c69c9a5d417b27650aa75db` | Six-file documentation baseline |
 | 2026-11-26 | 1.1 | Owner approval to proceed following independent documentation review | Traceability, milestone-scope clarity, extension contract template and offer-issuer responsibility clarified; no new product approval |
+| 2026-11-26 | 1.2 | Owner confirmations in P3, BJ-D17 and BJ-D18 | Offer release deferred; privacy/visibility model approved; previous offer concepts retained as historical design only |
 
 ### Reconciliation notes
+
+- **Supersession:** BJ-D17 is the current authority over BJ-D12/BJ-D13 on initial product scope. Earlier approvals of a proposed offer-issuance responsibility boundary do not authorize building or launching offer release. Keep historical entries for traceability.
+- **Privacy:** BJ-D18 closes the earlier visibility-policy question in BJ-D15. All other BJ-D15 operational, data retention, capacity and security checks remain unresolved.
 
 - The early “10 / day active” wording was superseded by the accepted 10 new/day and 30 simultaneous policy. Unlimited applications is a product policy, not an infrastructure promise.
 - Easy employer onboarding and safe offer issuance serve different actions. Earlier suggestions about manual authorization do not create a platform approval chain for employer offers. Separate exact issuer, identity and anti-fraud controls from that policy.
@@ -45,7 +51,7 @@ The statuses below describe each integration proposal, not approval of its paren
 | ID | Status | Capability and proposed integration point | Dependencies and decisions awaiting approval |
 |---|---|---|---|
 | EXT-01 | PROPOSED | Jobs interviews via Meetings scheduling/admission adapter; Meetings owns rooms/media; Jobs owns applicant records. | Deployed API/identity proof, invitee-only admission, regression, operational headroom and staging approval. |
-| EXT-02 | PROPOSED | Offer delivery via Jobs application and in-app notifications; employer issuers and candidate acceptance records stay in Jobs. | Decide exact controls, privacy/retention, issuer checks and release phase. |
+| EXT-02 | DEFERRED | Optional future employer offer-letter creation, issuance, delivery and verification integration, separate from simple self-reported recruitment statuses. | Explicit future owner reapproval, security/privacy/legal review, issuer authority and company-owned employment commitments; no initial launch dependency. |
 | EXT-03 | DEFERRED | Résumé attachments via a Jobs-owned private storage adapter. | Consent, scope, scanning/quarantine, recovery/deletion, verified storage costs and provisioning permission. |
 | EXT-04 | DEFERRED | Jobs premium billing via entitlement interface and eventual payment adapter. | Pilot economics, price, product entitlements, compliance, provider and expense approval. |
 | EXT-05 | DEFERRED | Jobs networking via Jobs profiles and privacy-aware posts/connections. | Visibility, anti-abuse and moderation. No dependency on a new Chat service. |
@@ -56,6 +62,7 @@ The statuses below describe each integration proposal, not approval of its paren
 | EXT-10 | DEFERRED | BillionAI: bounded AI workflows using approved product APIs and per-subdivision usage/access rules. | Purpose, data minimization, consent, evaluation, costs and budget approval; no default applicant access. |
 | EXT-11 | PROPOSED | Independent deployment of Jobs or later modules behind compatible versioned interfaces. | Threat model, measured capacity, deployment cadence or regulatory requirement; data/secrets isolation, recovery and rollout/rollback evidence; no resource creation now. |
 | EXT-12 | PROPOSED | Reusable email/notifications and security audit conventions when a second product needs the same contract. | Delivery and permission qualification; per-product data boundaries and rate/cost controls. Reuse selectively. |
+| EXT-13 | APPROVED (policy); IMPLEMENTATION PENDING | Candidate-controlled professional profile discovery with `PRIVATE` default, optional `RECRUITERS_ONLY`/`PUBLIC`, field-level controls and separate indexing opt-in. | Enforce candidate choice and application-specific authorized disclosure; pending implementation acceptance, authorization tests and deletion/retention design. |
 
 ### Future extension design placeholder (not approved implementation)
 
