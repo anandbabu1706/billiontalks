@@ -2,7 +2,7 @@
 
 Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
 
-**Register revision 1.8 — updated 2026-11-26.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
+**Register revision 1.9 — updated 2026-11-27.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -39,6 +39,17 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | BJ-D31 | APPROVED (initial responsibility) | Platform owner is initially accountable for BillionJobs privacy operations. Owner approval, EP-03, 2026-11-26. Does not establish the operating legal entity, make a statutory appointment, or approve a paid adviser. |
 | BJ-D32 | PROPOSED / NOT APPROVED (launch jurisdiction) | India-first is the recommended launch scope and EP-03 assessment basis, not authorization to launch in India or elsewhere. Confirm entity, territorial scope and applicable legal regimes before real-data onboarding. |
 
+## Current execution decisions - 2026-11-27
+
+These entries preserve earlier approval history and supersede historical statements that EP-04 has not been authorized or live reads cannot proceed. They do not grant EP-05, production or expenditure authorization.
+
+| ID | Status | Decision and provenance |
+|---|---|---|
+| BJ-D33 | APPROVED (owner sequencing) | BJ-V0-001A execution instruction: BillionJobs is the immediate priority. Full parent website redesign is deferred until after EP-11, except essential Jobs-specific navigation. BT-WEB-001/002 technical design is complete and recorded in the audit; BT-WEB-003/004 implementation is not authorized by this package. Supersedes any earlier sequence making full redesign a prerequisite for EP-05. |
+| BJ-D34 | APPROVED (permanent execution rules) | Owner instruction, BJ-V0-001A: preserve BillionTalks Meetings identity, URLs and data; support an ecosystem without a fixed subdivision limit; commit/push completed development milestones only to authorized branches and maintain documentation/tracking. No automatic next-milestone implementation, production changes or spending. |
+| BJ-D35 | VERIFIED (scoped milestones) | EP-04 authorized local foundation completed at 82e2c8c1cc6812931e62a58b459465cb77a6df10 on bj-ep-04-foundation; 455/457 tests and 30/30 Jobs tests passed, two unchanged Meetings failures. BT-CF-SETUP-001 connectivity works. Evidence and exact boundaries are in the dated audit; no remote deployment or real-data qualification implied. |
+| BJ-D36 | PARTIALLY VERIFIED (BJ-D28 gate remains) | BJ-V0-001A live metadata establishes production version/source, separate Meetings environment storage and sampled usage. Billing APIs lack billing:read; exact subscriptions/cost/monthly capacity and outbound email capacity remain unverified. MFA protections are absent in inspected metadata. Continue isolated synthetic development; shared sensitive staging/production require separate readiness evidence and authorization. No permission expansion or hardening was performed. |
+
 ## Review and revision history
 
 | Date | Revision | Authority / evidence | Change |
@@ -53,6 +64,7 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 | 2026-11-26 | 1.6 | Collective owner approval, BJ-PLAN-001 with REV-001–REV-007 | Append BJ-D22–BJ-D29 and reconcile prior decision references; no implementation or rollout granted. |
 | 2026-11-26 | 1.7 | EP-03 owner approvals and evidence review | Append BJ-D30–D32, retain legal and live infrastructure gates; no implementation or release authorization. |
 | 2026-11-26 | 1.8 | BJ-V0-001A follow-up | OAuth sign-in confirmed. Live Cloudflare metadata blocked by the noninteractive Codex tool approval gate. BJ-D28 remains pending live verification. No policy changes. |
+| 2026-11-27 | 1.9 | BJ-V0-001A authorized live reads and milestone reconciliation | Append BJ-D33-D36; record EP-04 completion, actual metadata, remaining financial/security gates and full redesign deferral after EP-11. |
 
 ### Reconciliation notes
 

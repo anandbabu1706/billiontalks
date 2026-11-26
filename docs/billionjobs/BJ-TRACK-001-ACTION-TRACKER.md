@@ -1,8 +1,8 @@
 # BillionJobs Master Action & Completion Tracker
 
 **Document ID:** BJ-TRACK-001  
-**Review date:** 2026-11-26  
-**Status:** Revision 1.5, Cloudflare OAuth confirmed; live read approval pending  
+**Review date:** 2026-11-27
+**Status:** Revision 1.6, live metadata verified; financial and release qualification gates remain
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
@@ -23,7 +23,7 @@
 |---|---|---|---|
 | BJ-MPB-001 | Consolidated Master Blueprint | COMPLETED (planning) | [Blueprint](BJ-MPB-001-MASTER-BLUEPRINT.md), approved business baseline; no build approval |
 | BJ-V0-001 | Read-only GitHub and history architecture audit | COMPLETED (scoped audit) | [Audit](BJ-V0-001-ARCHITECTURE-AUDIT.md); not a live account audit |
-| BJ-V0-001A | Live production/staging, capacity, billing and readiness | SOURCE REVIEW COMPLETE / LIVE PENDING | [Audit](BJ-V0-001-ARCHITECTURE-AUDIT.md); authenticated evidence pending. Staging account/email access blocked pending separate permission. |
+| BJ-V0-001A | Live production/staging, capacity, billing and readiness | ACCESSIBLE INSPECTION COMPLETED / QUALIFICATION PARTIAL | Dated [live audit](BJ-V0-001-ARCHITECTURE-AUDIT.md#bj-v0-001a-live-verification--2026-11-27); production source/version, bindings, security and usage verified; billing and complete headroom remain blocked/unqualified. |
 | BJ-V0-002 | Architecture design and independent review | COMPLETED (scoped design) | [Design](BJ-V0-002-ARCHITECTURE-DESIGN.md); approval conditions tracked under BJ-V0-002A. |
 | BJ-V0-002A | Final technical architecture and security | CONDITIONALLY APPROVED (design) | BJ-D26 / REV-004/005; demonstrate isolation and prove D1 atomic enforcement in authorized implementation. |
 | BJ-V0-003 | Recruitment feature scope and business policy | APPROVED (SCOPE) | [Requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md); not detailed implementation acceptance |
@@ -34,30 +34,38 @@
 | BJ-DOC-003 | Six-file approved planning reconciliation | COMPLETED on verified introducing documentation commit | Authoritative evidence: this revision's introducing commit on [docs/bj-doc-001](https://github.com/anandbabu1706/billiontalks/commits/docs/bj-doc-001/), parent `576b46b50bb0442cfa4a91e3248734bb4f05b3df`. No scoped completion without branch and diff verification. |
 | EP-03 | Legal, infrastructure and security readiness review | COMPLETED (documentary review only) | Completion evidenced by this revision's verified introducing docs commit. Assessment is not a finding of end-to-end compliance, live infrastructure readiness or release approval. |
 | EP-03-A | India legal requirements and retention mapping | SOURCES REVIEWED / APPLICABILITY PENDING | [Legal-readiness findings](BJ-V0-003-PRODUCT-REQUIREMENTS.md#ep-03-india-legal-readiness-findings-2026-11-26); 18+ and owner responsibility approved, India-first not approved. Validate legal hold/retention fields, entity, roles, processors and statutory contacts before real data. |
-| EP-03-B / BJ-V0-001A | Read-only live infrastructure, usage and billing | BLOCKED / LIVE PENDING | OAuth completed and MCP discovery responded; first account metadata read required interactive Codex tool approval and did not reach Cloudflare. No live account, cost, headroom or isolation evidence. |
-| EP-04 | Isolated local synthetic-data development | RECOMMENDED / NOT AUTHORIZED OR STARTED | Pin historical production-compatible reference, use no remote bindings/secrets, and separately authorize scope. Confirm active source and staging target before integration. |
+| EP-03-B / BJ-V0-001A | Read-only live infrastructure, usage and billing | METADATA COMPLETE / BILLING BLOCKED | Existing MCP reads succeed. Billing requires absent billing:read; no scope expansion. Owner redacted billing/email summaries can resolve evidence gaps. No release approval. |
+| EP-04 | Isolated local synthetic-data development | COMPLETED / COMMITTED / PUSHED | [82e2c8c1cc6812931e62a58b459465cb77a6df10](https://github.com/anandbabu1706/billiontalks/commit/82e2c8c1cc6812931e62a58b459465cb77a6df10), bj-ep-04-foundation; 457 tests, 455 passed, 30/30 Jobs passed; two unchanged Meetings failures. Local only. |
+| BT-CF-SETUP-001 | Official Cloudflare integration and interactive profile | COMPLETED | Existing MCP/OAuth/Wrangler reused; live metadata succeeds; no global safeguard removal or repeat authentication. |
+| BJ-EP-04-CLOSE | EP-04 evidence and branch closeout | COMPLETED | Final SHA, 17-file inventory and committed evidence linked in audit; no test rerun for this documentation revision. |
+| BT-WEB-001 / BT-WEB-002 | Parent ecosystem technical design | COMPLETED (design only) | Extensible registry, shared responsive shell, unified identity and independent product boundaries documented in audit. No implementation. |
+| BT-WEB-003 | Essential Jobs navigation / later registry work | NOT STARTED / PARTLY DEFERRED | Only essential Jobs navigation may accompany separately authorized EP-05; full redesign waits until after EP-11. |
+| BT-WEB-004 | Full parent shell/homepage redesign | DEFERRED UNTIL AFTER EP-11 | BJ-D33; not a Jobs development dependency. |
+| EP-05 | Professional profiles | NOT STARTED | Use verified EP-04 development baseline; separate implementation authorization. No automatic continuation. |
+| BJ-LIVE-SEC | MFA, staging exposure, TLS and operational protection review | PENDING SEPARATE ACTION | Owner MFA/account enforcement absent; Access not enabled. Resolve protection strategy before sensitive shared staging; no settings changed. |
+| BJ-LIVE-QUAL | Shared staging recovery, capacity, email and Meetings regressions | PENDING | Qualify two recorded Meetings failures, remote D1 atomicity, retention/recovery, CPU/bursts and provider allowances; no real-data onboarding here. |
 
 ## B. Business decisions and unresolved policy
 
 | ID | Action item | Status | Evidence / implementation note |
 |---|---|---|---|
-| BJ-D03 | Reuse accounts; separate Jobs D1 and company permissions | APPROVED (SCOPE) | Resource creation and permissions implementation not yet authorized |
-| BJ-D05 | Free jobs: 10 new/day, 30 active, 30-day listing validity | APPROVED (SCOPE) | Atomic enforcement not yet implemented |
+| BJ-D03 | Reuse accounts; separate Jobs D1 and company permissions | APPROVED (SCOPE) | Resource creation pending; local membership/permission foundation tested in EP-04 |
+| BJ-D05 | Free jobs: 10 new/day, 30 active, 30-day listing validity | APPROVED (SCOPE) | EP-04 local atomic quota tests passed; remote qualification pending |
 | BJ-D06 | Publishing immediately after account email verification | APPROVED (SCOPE) | No mandatory employer pre-approval for job listing; abuse controls required |
 | BJ-D07 | Recruiting before networking and monetization | APPROVED (SCOPE) | Sequencing only |
 | BJ-D09 | Prepare entitlements; defer live billing | APPROVED (SCOPE) | No activated checkout or payment collection |
 | BJ-D17 | Offer-letter creation, release, delivery and verification | DEFERRED | Basic employer/candidate-reported recruitment status confirmations retained |
-| BJ-D18 | Private-by-default candidate profiles, opt-in recruiter/public discoverability, separate indexing opt-in | APPROVED (SCOPE) | Enforcement tests pending |
+| BJ-D18 | Private-by-default candidate profiles, opt-in recruiter/public discoverability, separate indexing opt-in | APPROVED (SCOPE) | EP-04 local privacy foundation tested; full profile acceptance pending EP-05 |
 | BJ-D19 | Historical company-local midnight quota reset | SUPERSEDED by BJ-D21 | Historical approval retained; participant-local interview display preserved |
-| BJ-POL-001 | Renewals, reposting, duplicates and expiry operational rules | COMPLETED (business-policy approval only) | BJ-D20 approved on 2026-11-26; [requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md); implementation, server-side quota tests and detailed edge cases remain outstanding |
-| BJ-POL-002 | Global IST quota reset and anti-circumvention | COMPLETED (business-policy approval only) | BJ-D21 approved 2026-11-26; fixed IST, no company quota-zone changes; implementation and tests pending |
+| BJ-POL-001 | Renewals, reposting, duplicates and expiry operational rules | COMPLETED (business-policy approval only) | BJ-D20 approved on 2026-11-26; [requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md); local quota/lifecycle tests passed in EP-04; remote and full product qualification pending |
+| BJ-POL-002 | Global IST quota reset and anti-circumvention | COMPLETED (business-policy approval only) | BJ-D21 approved 2026-11-26; fixed IST, no company quota-zone changes; local tests passed in EP-04, remote qualification pending |
 | BJ-POL-003 | Application lifecycle, withdrawal/reapplication, interview cancellation | APPROVED (policy) | BJ-D22/D23; acceptance withdrawal/non-joining retains audit history. Interview integration still gated. |
 | BJ-POL-004 | Rights, closure, retention and privacy operations | APPROVED (defaults) / LEGAL VALIDATION PENDING | BJ-D24; no real applicant data before legal validation and operating owners. |
 | BJ-POL-005 | Fraud reports, company moderation, escalation and appeals | APPROVED (policy) / OPERATING READINESS PENDING | BJ-D25; staffing, permissions, reporting and appeal acceptance prior to public release. |
 | BJ-POL-006 | Final tier entitlements and subscription price validation | DEFERRED | Hypotheses only: Individual Free/₹99/₹199; Business Free/₹499/₹1,499/₹2,999 per month |
 | BJ-D08 | Résumé uploads | DEFERRED | No initial upload capability or storage. |
 | BJ-D26 | Renewal/reopening semantics and technical quota design | APPROVED (policy) / CONDITIONAL (technical) | REV-002/004/005; active +30 days from expiry, expired/reopen +30 days from action; one IST allowance each. |
-| BJ-D28 | Live diagnostics and actual spending gate | PENDING VERIFICATION | OAuth alone is not live access evidence. Current usage, subscriptions, remaining capacity and billing not retrieved; no new spend authorized. |
+| BJ-D28 | Live diagnostics and actual spending gate | PARTIALLY VERIFIED | Live deployment, resource isolation and sampled usage recorded; current subscriptions/invoices, monthly headroom and email capacity remain unverified. No new spend authorized. |
 | BJ-D29 | Controlled pilot and roadmap gates | APPROVED (strategy only) | REV-007: invite-only testing, not permanent; no pilot authorization. |
 | BJ-D30 | BillionJobs eligibility: minimum age 18 | APPROVED (policy) | Age assurance implementation and adequacy pending; no change to Meetings eligibility. |
 | BJ-D31 | Initial privacy accountability: platform owner | APPROVED (responsibility) | Formal statutory designation and coverage where applicable pending. |
@@ -97,5 +105,6 @@
 | 2026-11-26 | 1.3 | BJ-PLAN-001 approved; REV-001–REV-007 reflected via BJ-D22–BJ-D29. BJ-DOC-003 closeout tied to verified introducing commit. Implementation, testing, real-data and release remain pending authorization. |
 | 2026-11-26 | 1.4 | EP-03 adds age and responsibility approvals, legal source findings, access blockers and scoped EP-04 recommendation. No live, implementation or release sign-off. |
 | 2026-11-26 | 1.5 | Recorded authenticated setup and the exact live-read blocker. No live closure, technical implementation, legal validation or release sign-off. |
+| 2026-11-27 | 1.6 | BJ-V0-001A live metadata and sampled usage, billing limitation, EP-04/setup evidence, completed parent design and after-EP-11 redesign sequence reconciled; documentation only. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
