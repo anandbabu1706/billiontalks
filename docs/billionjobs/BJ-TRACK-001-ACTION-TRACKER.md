@@ -41,9 +41,9 @@
 | BJ-D09 | Prepare entitlements; defer live billing | APPROVED (SCOPE) | No activated checkout or payment collection |
 | BJ-D17 | Offer-letter creation, release, delivery and verification | DEFERRED | Basic employer/candidate-reported recruitment status confirmations retained |
 | BJ-D18 | Private-by-default candidate profiles, opt-in recruiter/public discoverability, separate indexing opt-in | APPROVED (SCOPE) | Enforcement tests pending |
-| BJ-D19 | Company-local midnight quota reset using confirmed IANA zone | APPROVED (SCOPE) | Server UTC authority; participant-local interview display |
+| BJ-D19 | Historical company-local midnight quota reset | SUPERSEDED by BJ-D21 | Historical approval retained; participant-local interview display preserved |
 | BJ-POL-001 | Renewals, reposting, duplicates and expiry operational rules | COMPLETED (business-policy approval only) | BJ-D20 approved on 2026-11-26; [requirements](BJ-V0-003-PRODUCT-REQUIREMENTS.md); implementation, server-side quota tests and detailed edge cases remain outstanding |
-| BJ-POL-002 | Time-zone change controls and daily reset anti-circumvention | PENDING | Existing company-local reset decision stays approved |
+| BJ-POL-002 | Global IST quota reset and anti-circumvention | COMPLETED (business-policy approval only) | BJ-D21 approved 2026-11-26; fixed IST, no company quota-zone changes; implementation and tests pending |
 | BJ-POL-003 | Application withdrawal, reapplication and status transitions | PENDING | Design/acceptance required |
 | BJ-POL-004 | Data retention, deletion/export and privacy operations | PENDING | Before real applicant data |
 | BJ-POL-005 | Fraud reports, company moderation, escalation and appeals | PENDING | Minimum safety before public release |
@@ -79,5 +79,7 @@
 |---|---|---|
 | 2026-11-26 | 1.0 | Established master action tracker from BJ-DOC-001, BJ-V0-003 and BJ-D19; planning, business approvals and development statuses separated |
 | 2026-11-26 | 1.1 | BJ-POL-001 approved and recorded in BJ-D20. Policy item completed; no implementation/test completion claimed. |
+
+| 2026-11-26 | 1.2 | BJ-POL-002 approved as BJ-D21; supersedes company-local quota reset; no implementation/test completion claimed |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
