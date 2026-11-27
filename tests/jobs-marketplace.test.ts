@@ -149,7 +149,9 @@ describe('EP-07 local synthetic marketplace workflows',()=>{
       for(const script of dom.window.document.querySelectorAll('script')) expect(()=>new Function(script.textContent||'')).not.toThrow();
       dom.window.close();
     }
-    expect((await manageJobsPage(company)).headers.get('X-Robots-Tag')).toContain('noindex');
+    const management=await manageJobsPage(company);
+    expect(management.headers.get('X-Robots-Tag')).toContain('noindex');
+    expect(await management.text()).toContain('posting allowance');
   });
 
   it('restricts applications and clears saved jobs on Jobs-only closure without deleting shared accounts',async()=>{
