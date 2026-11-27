@@ -1,0 +1,53 @@
+{
+  "execution": "EP-07 / BJ-V1-003",
+  "date": "2026-11-27",
+  "timezone": "Asia/Calcutta",
+  "branch": "bj-ep-07-jobs-applications",
+  "baseline": "723f89bd2a0a0101a0776cf1c7d10616648c6d70",
+  "documentationBaseline": "b8a4a2d04e94f1970b4c1e3a79819d9a9b9714dc",
+  "commands": [
+    "npm run typecheck",
+    "npm run build",
+    "npm test -- tests/jobs-marketplace.test.ts --reporter=dot",
+    "npm run test:jobs -- --reporter=dot",
+    "npm test -- --reporter=json --outputFile=ep07-final-tests.json",
+    "git diff --check"
+  ],
+  "typecheck": "PASS",
+  "dryRunBuild": "PASS_NO_DEPLOYMENT",
+  "focusedTests": {"total": 13, "passed": 13, "failed": 0},
+  "jobsTests": {"total": 67, "passed": 67, "failed": 0},
+  "fullTests": {
+    "total": 494,
+    "passed": 492,
+    "failed": 2,
+    "skipped": 0,
+    "failures": [
+      "BillionTalks browser UI regression tests allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state",
+      "BT-V1-004 calendar and time zones renders authorized schedule records across month, week, and day navigation"
+    ],
+    "comparison": "Exactly the two EP-06 pre-existing Meetings failures; 13 EP-07 tests added and no new failure."
+  },
+  "changedFiles": [
+    "docs/checkpoints/BJ-EP-07-EVIDENCE.json",
+    "docs/checkpoints/BJ-EP-07-LOCAL.md",
+    "migrations/jobs/0004_marketplace.sql",
+    "package.json",
+    "scripts/jobs-runtime.mjs",
+    "src/jobs/api.ts",
+    "src/jobs/company-ui.ts",
+    "src/jobs/marketplace-ui.ts",
+    "src/jobs/marketplace.ts",
+    "src/jobs/profile-ui.ts",
+    "src/jobs/quota.ts",
+    "tests/jobs-marketplace.test.ts",
+    "tests/jobs-profiles.test.ts"
+  ],
+  "limitations": [
+    "Full recruiter application workspace and assignment-management UI are deferred to EP-08.",
+    "Production migration, live bindings, recovery, real-data and operational qualification were not authorized.",
+    "The two pre-existing Meetings failures remain for separate qualification."
+  ],
+  "additionalCashINR": 0,
+  "remoteOperations": []
+}

@@ -1,7 +1,7 @@
 import { identifier, JobsError, type Identity, type JobsDatabase } from "./contracts";
 import { requireCompany } from "./permissions";
 
-export type PostingAction = { company: string; listing: string; key: string; operation: "CREATE" | "RENEW" | "REOPEN" | "CLOSE" | "ARCHIVE" | "EDIT"; revision: number; vacancy?: { position: string; location: string; department: string; arrangement: string } };
+export type PostingAction = { company: string; listing: string; key: string; operation: "CREATE" | "RENEW" | "REOPEN" | "CLOSE" | "ARCHIVE" | "EDIT"; revision: number; vacancy?: { position: string; location: string; department: string; arrangement: string }; details?: unknown };
 export function vacancyFingerprint(vacancy: PostingAction["vacancy"]): string {
   if (!vacancy || Object.keys(vacancy).sort().join() !== "arrangement,department,location,position") throw new JobsError(400, "invalid_vacancy");
   return JSON.stringify([vacancy.position, vacancy.location, vacancy.department, vacancy.arrangement].map(value => {
@@ -18,7 +18,7 @@ export class PostingQuota {
     identifier(action.company); identifier(action.listing); identifier(action.key);
     if (!["CREATE", "RENEW", "REOPEN", "CLOSE", "ARCHIVE", "EDIT"].includes(action.operation) || !Number.isSafeInteger(action.revision) || action.revision < 0) throw new JobsError(400, "invalid_action");
     const fingerprint = ["CREATE", "EDIT"].includes(action.operation) ? vacancyFingerprint(action.vacancy) : "";
-    const payload = JSON.stringify([action.listing, action.operation, action.revision, fingerprint]);
+    const payload = JSON.stringify({ listing: action.listing, operation: action.operation, revision: action.revision, fingerprint, details: action.details });
     await requireCompany(this.db, actor, action.company);
     try {
       // One SQL statement plus its trigger is the atomic unit. No BEGIN/COMMIT assumption.

@@ -175,7 +175,7 @@ describe('EP-05 local synthetic profile workflows',()=>{
       const saved=await new Profiles(instance.jobs).save({subject:'restart'},input());
       await instance.mf.dispose();instance=await createJobsRuntime({enabled:true,localState});
       expect(await new Profiles(instance.jobs).get({subject:'restart'})).toEqual(saved);
-      expect(await instance.jobs.prepare('SELECT COUNT(*) AS n FROM local_migrations').first()).toEqual({n:3});
+      expect(await instance.jobs.prepare('SELECT COUNT(*) AS n FROM local_migrations').first()).toEqual({n:4});
     } finally {await instance.mf.dispose();}
     await expect(createJobsRuntime({localState:'../outside'})).rejects.toThrow('Invalid synthetic state');
   },60000);

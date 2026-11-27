@@ -3,6 +3,8 @@ import { companyPage } from './company-ui';
 import { JobsError, type IdentityResolver, type JobsDatabase } from "./contracts";
 import { requireEligible } from "./permissions";
 import { JobsPrivacy } from "./privacy";
+import { Marketplace } from './marketplace';
+import { candidateJobsPage, jobPage, manageJobsPage, searchPage } from './marketplace-ui';
 import { Profiles } from "./profiles";
 import { profilePage, sharedProfilePage, signInPage } from "./profile-ui";
 
@@ -19,12 +21,22 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     const actor = await identity(request);
     const path = new URL(request.url).pathname;
     const profiles = new Profiles(db);
+    const marketplace = new Marketplace(db);
+    if (path === '/jobs/search' && request.method === 'GET') return searchPage();
+    if (path === '/api/jobs/v1/jobs' && request.method === 'GET') return reply(200, await marketplace.search(new URL(request.url)));
+    const publicJob = path.match(/^\/api\/jobs\/v1\/jobs\/([\w-]+)\/([\w-]+)$/);
+    if (publicJob && request.method === 'GET') return reply(200, await marketplace.publicListing(publicJob[1],publicJob[2]));
+    const publicJobPage = path.match(/^\/jobs\/jobs\/([\w-]+)\/([\w-]+)$/);
+    if (publicJobPage && request.method === 'GET') {
+      await marketplace.publicListing(publicJobPage[1],publicJobPage[2]);
+      return jobPage(publicJobPage[1],publicJobPage[2]);
+    }
     const shared = path.match(/^\/(?:api\/jobs\/v1|jobs)\/profiles\/([^/]+)$/);
     if (shared && request.method === 'GET') {
       const result = await profiles.shared(shared[1], actor);
       return path.startsWith('/api/') ? reply(200, { profile: result.fields }) : sharedProfilePage(result.fields, result.indexing);
     }
-    if (!actor) return (path === '/jobs' || path === '/jobs/profile' || path === '/jobs/companies') && request.method === 'GET' ? signInPage() : reply(401, {error:'authentication_required'});
+    if (!actor) return (path === '/jobs' || path === '/jobs/profile' || path === '/jobs/companies' || path === '/jobs/saved' || path === '/jobs/applications' || /^\/jobs\/companies\/[\w-]+\/jobs$/.test(path)) && request.method === 'GET' ? signInPage() : reply(401, {error:'authentication_required'});
     if ((path === '/jobs' || path === '/jobs/profile') && request.method === 'GET') return profilePage();
     if (path === '/api/jobs/v1/status' && request.method === 'GET') {
       const enrolled = await db.prepare('SELECT subject FROM jobs_users WHERE subject=?').bind(actor.subject).first();
@@ -45,6 +57,40 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     }
     await requireEligible(db, actor);
     if (path === "/api/jobs/v1/closure" && request.method === "POST") { await new JobsPrivacy(db).close(actor); return reply(200, { closed: true }); }
+    if (path === '/jobs/saved' && request.method === 'GET') return candidateJobsPage('saved');
+    if (path === '/jobs/applications' && request.method === 'GET') return candidateJobsPage('applications');
+    const jobsManagementPage=path.match(/^\/jobs\/companies\/([\w-]+)\/jobs$/);
+    if (jobsManagementPage && request.method === 'GET') {
+      await marketplace.companyListings(actor,jobsManagementPage[1]);
+      return manageJobsPage(jobsManagementPage[1]);
+    }
+    if (path === '/api/jobs/v1/saved' && request.method === 'GET') return reply(200,await marketplace.saved(actor));
+    if (path === '/api/jobs/v1/applications' && request.method === 'GET') return reply(200,await marketplace.history(actor));
+    const candidateApplication=path.match(/^\/api\/jobs\/v1\/applications\/([\w-]+)(?:\/(withdraw))?$/);
+    if (candidateApplication) {
+      if (!candidateApplication[2] && request.method === 'GET') return reply(200,await marketplace.application(actor,candidateApplication[1]));
+      if (candidateApplication[2] === 'withdraw' && request.method === 'POST') return reply(200,await marketplace.withdraw(actor,candidateApplication[1]));
+    }
+    const listingApi=path.match(/^\/api\/jobs\/v1\/companies\/([\w-]+)\/jobs(?:\/([\w-]+)(?:\/(publish|close|renew|reopen|archive|applications))?)?$/);
+    if (listingApi) {
+      const [,company,id,action]=listingApi;
+      if (!id && request.method === 'GET') return reply(200,await marketplace.companyListings(actor,company));
+      if (!id && request.method === 'POST') return reply(201,await marketplace.createDraft(actor,company,await readBody(request,65536)));
+      if (id && !action && request.method === 'GET') return reply(200,await marketplace.manage(actor,company,id));
+      if (id && !action && request.method === 'PUT') return reply(200,await marketplace.update(actor,company,id,await readBody(request,65536)));
+      if (id && action === 'publish' && request.method === 'POST') return reply(200,await marketplace.publish(actor,company,id,await readBody(request,1024)));
+      if (id && ['close','renew','reopen','archive'].includes(action||'') && request.method === 'POST') return reply(200,await marketplace.lifecycle(actor,company,id,action!.toUpperCase() as 'CLOSE'|'RENEW'|'REOPEN'|'ARCHIVE',await readBody(request,1024)));
+      if (id && action === 'applications' && request.method === 'GET') return reply(200,await marketplace.assignedApplications(actor,company,id));
+    }
+    const candidateListing=path.match(/^\/api\/jobs\/v1\/jobs\/([\w-]+)\/([\w-]+)\/(saved|disclosure|applications|reports)$/);
+    if (candidateListing) {
+      const [,company,id,action]=candidateListing;
+      if (action === 'saved' && request.method === 'POST') return reply(200,await marketplace.save(actor,company,id));
+      if (action === 'saved' && request.method === 'DELETE') return reply(200,await marketplace.unsave(actor,company,id));
+      if (action === 'disclosure' && request.method === 'POST') return reply(200,await marketplace.disclosure(actor,company,id,(await readBody(request,4096) as {fields:unknown})?.fields));
+      if (action === 'applications' && request.method === 'POST') return reply(201,await marketplace.apply(actor,company,id,await readBody(request,4096)));
+      if (action === 'reports' && request.method === 'POST') return reply(202,await marketplace.report(actor,company,id,await readBody(request,4096)));
+    }
     const companies = new Companies(db);
     if (path === '/jobs/companies' && request.method === 'GET') return companyPage();
     if (path === '/api/jobs/v1/companies') {
