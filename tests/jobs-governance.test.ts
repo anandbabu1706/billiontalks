@@ -6,6 +6,8 @@ import { executeGovernanceExtension } from '../src/jobs/intelligence';
 import { JobsPrivacy } from '../src/jobs/privacy';
 import { JobsOperations } from '../src/jobs/operations';
 import { Marketplace } from '../src/jobs/marketplace';
+import { administrationPage } from '../src/jobs/governance-ui';
+import { JSDOM } from 'jsdom';
 
 let runtime:Awaited<ReturnType<typeof createJobsRuntime>>;
 let governance:JobsGovernance;
@@ -26,11 +28,12 @@ it('denies administrative authority without MFA, role and recent reauthenticatio
   await expect(governance.enforce({subject:'owner',privilegedMfaAt:now()}, {caseId:'case',targetKind:'USER',targetRef:'stranger',kind:'WARNING',reasonCode:'ABUSE'})).rejects.toMatchObject({code:'admin_reauthentication_required'});
 });
 it('keeps reporter cases confidential, audits review, and requires human enforcement',async()=>{
-  const created=await request('reports','stranger','POST',{kind:'SCAM',targetRef:'listing_1',category:'RECRUITMENT_FEE',detail:'Synthetic report'});expect(created.status).toBe(201);
+  const created=await request('reports','owner','POST',{kind:'SCAM',targetRef:'stranger',category:'RECRUITMENT_FEE',detail:'Synthetic report'});expect(created.status).toBe(201);
   const {id}=await created.json() as {id:string};
   expect((await request('reports/'+id,'recipient')).status).toBe(404);
   const queue=await governance.cases(owner(),new URL('http://localhost/?status=OPEN'));expect(queue.rows).toEqual(expect.arrayContaining([expect.objectContaining({id})]));
   const result=await governance.decideCase(owner(),id,{revision:1,status:'RESOLVED',note:'Synthetic review'});expect(result.revision).toBe(2);
+  await expect(governance.enforce(owner(),{caseId:id,targetKind:'USER',targetRef:'recipient',kind:'JOBS_TEMP',reasonCode:'WRONG_TARGET'})).rejects.toMatchObject({code:'case_target_mismatch'});
   const action=await governance.enforce(owner(),{caseId:id,targetKind:'USER',targetRef:'stranger',kind:'JOBS_TEMP',reasonCode:'SUBSTANTIATED',expiresAt:now()+86400000});
   expect(await governance.activeRestrictions('USER','stranger')).toEqual([expect.objectContaining({id:action.id})]);
   const appeal=await request('enforcement/'+action.id+'/appeals','stranger','POST',{reason:'Synthetic dispute'});expect(appeal.status).toBe(201);
@@ -140,7 +143,11 @@ it('removes only the intended company listing from public discovery',async()=>{
       .bind(c.id,listing,JSON.stringify({title:'Synthetic listing',description:'Local fixture'}),timestamp,timestamp,timestamp).run();
   }
   const report=await governance.report({subject:'owner'},{kind:'JOB',targetRef:first.id+'/'+listing,category:'MISLEADING',detail:'Synthetic review'});
-  await governance.enforce(owner(),{caseId:report.id,targetKind:'LISTING',targetRef:first.id+'/'+listing,kind:'REMOVE_DISCOVERY',reasonCode:'MISLEADING'});
+  const action=await governance.enforce(owner(),{caseId:report.id,targetKind:'LISTING',targetRef:first.id+'/'+listing,kind:'REMOVE_DISCOVERY',reasonCode:'MISLEADING'});
+  expect((await request('companies/'+first.id+'/cases/'+report.id,'owner')).status).toBe(200);
+  expect((await request('companies/'+first.id+'/cases/'+report.id,'stranger')).status).toBe(404);
+  expect((await request('enforcement/'+action.id+'/appeals','stranger','POST',{reason:'Not my listing'})).status).toBe(404);
+  expect((await request('enforcement/'+action.id+'/appeals','owner','POST',{reason:'Review our listing'})).status).toBe(201);
   const market=new Marketplace(runtime.jobs);
   await expect(market.publicListing(first.id,listing)).rejects.toMatchObject({status:404});
   expect((await market.publicListing(second.id,listing)).id).toBe(listing);
@@ -173,4 +180,16 @@ it('keeps Jobs consent versioned and independent of shared account data',async()
   const events=(await runtime.jobs.prepare("SELECT granted FROM jobs_consent_events WHERE subject='stranger' AND purpose='OPTIONAL_ANALYTICS' ORDER BY at,id").all<{granted:number}>()).results;
   expect(events.map(e=>e.granted).sort()).toEqual([0,1]);
   expect((await runtime.accounts.prepare("SELECT status FROM accounts WHERE id='stranger'").first<{status:string}>())?.status).toBe('ACTIVE');
+});
+it('renders a responsive, labeled administration workspace without case details in the document',async()=>{
+  const response=administrationPage();expect(response.headers.get('Cache-Control')).toContain('no-store');
+  const html=await response.text();const dom=new JSDOM(html,{runScripts:'outside-only'});
+  try{const document=dom.window.document;
+    expect(document.querySelector('meta[name="viewport"]')).not.toBeNull();
+    expect(document.querySelector('select#status')?.getAttribute('id')).toBe(document.querySelector('label[for="status"]')?.getAttribute('for'));
+    expect(document.querySelectorAll('th[scope="col"]')).toHaveLength(4);
+    expect(document.querySelector('button#next')?.getAttribute('type')).toBe('button');
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    expect(html).not.toContain('Synthetic report');
+  }finally{dom.window.close();}
 });

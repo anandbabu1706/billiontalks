@@ -9,9 +9,9 @@ EP-11 has a substantial **local synthetic foundation, not full milestone complet
 | ADM-03 | PARTIAL | Company directory, membership revocation and optional verification states; review UI and evidence operations remain. |
 | ADM-04 | PARTIAL | Reporting/case flow and listing discovery removal; full policy categorization and restoration UI remain. |
 | ADM-05 | PARTIAL | Deterministic fee, frequency, duplicate and complaint signals; other approved rule families and evaluation remain. |
-| ADM-06 | PARTIAL | Confidential reporter case IDs, queue, status and notes; employer-visible case view, assignment workflow and targets remain. |
+| ADM-06 | PARTIAL | Confidential reporter case IDs, queue, status and notes; company-visible public status exists, while assignment workflow and targets remain. |
 | ADM-07 | PARTIAL | Reason-coded actions, active/expiring restrictions and sensitive-path checks; complete action transitions and UI remain. |
-| ADM-08 | PARTIAL | User appeals, resolution and restriction revocation; company appeals and independent review coverage remain. |
+| ADM-08 | PARTIAL | User, company and owned-listing appeals, resolution and restriction revocation; independent review coverage remains. |
 | ADM-09 | LOCAL FOUNDATION | Single-use, expiring recipient acceptance, atomic transfer, history and controlled retirement tested; exceptional recovery review remains. |
 | ADM-10 | PARTIAL | Seven product-scoped roles, denial and revocation; real MFA integration, bootstrap and full role workflow remain. |
 | ADM-11 | PARTIAL | Jobs-only versioned notices and optional consent events; complete rights UI and policy publication remain. |

@@ -62,6 +62,15 @@ export class JobsGovernance {
     return {id,status:'OPEN'};
   }
   async ownCase(actor:Identity,id:string){const row=await this.db.prepare('SELECT id,kind,category,status,created_at,updated_at FROM moderation_cases WHERE id=? AND reporter=?').bind(identifier(id),actor.subject).first();if(!row)throw new JobsError(404,'case_not_found');return row;}
+  async companyCaseStatus(actor:Identity,companyId:string,caseId:string){
+    identifier(companyId);identifier(caseId);const company=await this.db.prepare('SELECT owner FROM companies WHERE id=?').bind(companyId).first<{owner:string}>();
+    if(!company)throw new JobsError(404,'case_not_found');
+    const member=await this.db.prepare("SELECT subject FROM memberships WHERE company=? AND subject=? AND role='COMPANY_ADMIN' AND revoked_at IS NULL").bind(companyId,actor.subject).first();
+    if(company.owner!==actor.subject&&!member)throw new JobsError(404,'case_not_found');
+    const row=await this.db.prepare("SELECT id,kind,category,status,created_at,updated_at FROM moderation_cases WHERE id=? AND (target_ref=? OR target_ref LIKE ? ESCAPE '\\')")
+      .bind(caseId,companyId,companyId.replace(/[\\%_]/g,'\\$&')+'/%').first();
+    if(!row)throw new JobsError(404,'case_not_found');return row;
+  }
   async decideCase(actor:Identity,id:string,input:{revision:number;status:'ASSIGNED'|'WAITING'|'RESOLVED'|'CLOSED';note:string;assignee?:string}){
     await this.authorize(actor,'CASE_DECIDE');identifier(id);const revision=finiteRevision(input.revision),note=bounded(input.note,2000),now=this.clock();
     const result=await this.db.prepare('UPDATE moderation_cases SET status=?,assignee=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=? RETURNING revision').bind(input.status,input.assignee||actor.subject,now,id,revision).first<{revision:number}>();
@@ -72,12 +81,21 @@ export class JobsGovernance {
     await this.authorize(actor,'ENFORCE',true);const caseId=identifier(input.caseId),targetRef=input.targetKind==='LISTING'?bounded(input.targetRef,161):identifier(input.targetRef),reason=bounded(input.reasonCode,80);
     if(!['WARNING','FEATURE','POSTING','RECRUITER','JOBS_TEMP','JOBS_PERMANENT','EMERGENCY','REMOVE_DISCOVERY'].includes(input.kind)||!['USER','COMPANY','LISTING','RECRUITER'].includes(input.targetKind))throw new JobsError(400,'invalid_action');
     if(input.targetKind==='LISTING'&&!/^[A-Za-z0-9_-]{1,80}\/[A-Za-z0-9_-]{1,80}$/.test(targetRef))throw new JobsError(400,'invalid_listing_target');
+    if(input.kind==='REMOVE_DISCOVERY'&&input.targetKind!=='LISTING'||input.kind.startsWith('JOBS_')&&input.targetKind!=='USER'||input.kind==='POSTING'&&!['USER','COMPANY'].includes(input.targetKind))throw new JobsError(400,'invalid_action_target');
+    const moderationCase=await this.db.prepare('SELECT target_ref FROM moderation_cases WHERE id=?').bind(caseId).first<{target_ref:string}>();
+    if(!moderationCase||moderationCase.target_ref!==targetRef)throw new JobsError(409,'case_target_mismatch');
     if(input.expiresAt!==undefined&&(!Number.isSafeInteger(input.expiresAt)||input.expiresAt<=this.clock()))throw new JobsError(400,'invalid_expiry');
     const id=crypto.randomUUID(),now=this.clock();await this.db.prepare('INSERT INTO enforcement_actions(id,case_id,target_kind,target_ref,kind,reason_code,actor,evidence_ref,starts_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(id,caseId,input.targetKind,targetRef,input.kind,reason,actor.subject,input.evidenceRef||null,now,input.expiresAt||null).run();
     await this.audit(actor,'ENFORCEMENT',input.targetKind,targetRef,input.kind,'SUCCESS',1);return {id};
   }
   async activeRestrictions(targetKind:string,targetRef:string){const rows=(await this.db.prepare('SELECT id,kind,reason_code,expires_at FROM enforcement_actions WHERE target_kind=? AND target_ref=? AND revoked_at IS NULL AND starts_at<=? AND (expires_at IS NULL OR expires_at>?)').bind(targetKind,targetRef,this.clock(),this.clock()).all()).results;return rows;}
-  async appeal(actor:Identity,actionId:string,reason:string){identifier(actionId);const enrolled=await this.db.prepare('SELECT subject FROM jobs_users WHERE subject=? AND eligible=1 AND closed_at IS NULL').bind(actor.subject).first();if(!enrolled)throw new JobsError(403,'jobs_ineligible');const action=await this.db.prepare('SELECT target_kind,target_ref FROM enforcement_actions WHERE id=?').bind(actionId).first<{target_kind:string;target_ref:string}>();if(!action||action.target_kind!=='USER'||action.target_ref!==actor.subject)throw new JobsError(404,'action_not_found');
+  async appeal(actor:Identity,actionId:string,reason:string){identifier(actionId);const enrolled=await this.db.prepare('SELECT subject FROM jobs_users WHERE subject=? AND eligible=1 AND closed_at IS NULL').bind(actor.subject).first();if(!enrolled)throw new JobsError(403,'jobs_ineligible');const action=await this.db.prepare('SELECT target_kind,target_ref FROM enforcement_actions WHERE id=?').bind(actionId).first<{target_kind:string;target_ref:string}>();if(!action)throw new JobsError(404,'action_not_found');
+    let allowed=action.target_kind==='USER'&&action.target_ref===actor.subject;
+    if(action.target_kind==='COMPANY'||action.target_kind==='LISTING'){
+      const companyId=action.target_kind==='COMPANY'?action.target_ref:action.target_ref.split('/')[0];
+      const company=await this.db.prepare('SELECT owner FROM companies WHERE id=?').bind(companyId).first<{owner:string}>();allowed=company?.owner===actor.subject;
+    }
+    if(!allowed)throw new JobsError(404,'action_not_found');
     const id=crypto.randomUUID(),now=this.clock();try{await this.db.prepare("INSERT INTO enforcement_appeals VALUES(?,?,?,'SUBMITTED',NULL,?,NULL,?,?,1)").bind(id,actionId,actor.subject,bounded(reason,2000),now,now).run();}catch{throw new JobsError(409,'appeal_pending');}return {id,status:'SUBMITTED'};}
   async resolveAppeal(actor:Identity,id:string,revision:number,overturn:boolean,note:string){await this.authorize(actor,'APPEAL_REVIEW',true);identifier(id);const now=this.clock();
     const appeal=await this.db.prepare('SELECT action_id,appellant FROM enforcement_appeals WHERE id=? AND revision=? AND status NOT IN (\'UPHELD\',\'OVERTURNED\')').bind(id,finiteRevision(revision)).first<{action_id:string;appellant:string}>();if(!appeal)throw new JobsError(409,'appeal_conflict');

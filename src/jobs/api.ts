@@ -68,6 +68,8 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     if(appealRoute&&request.method==='POST'){const input=await readBody(request,2048) as {reason?:unknown};return reply(201,await governance.appeal(actor,appealRoute[1],input?.reason as string));}
     const ownCase=path.match(/^\/api\/jobs\/v1\/reports\/([\w-]+)$/);
     if(ownCase&&request.method==='GET')return reply(200,await governance.ownCase(actor,ownCase[1]));
+    const companyCase=path.match(/^\/api\/jobs\/v1\/companies\/([\w-]+)\/cases\/([\w-]+)$/);
+    if(companyCase&&request.method==='GET')return reply(200,await governance.companyCaseStatus(actor,companyCase[1],companyCase[2]));
     await requireEligible(db, actor);
     if(path==='/api/jobs/v1/reports'&&request.method==='POST')return reply(201,await governance.report(actor,await readBody(request,4096)));
     if(path==='/jobs/admin'&&request.method==='GET'){await governance.authorize(actor,'DASHBOARD');return administrationPage();}
