@@ -269,7 +269,7 @@ export function appealsPage(admin:boolean):Response{
 export function reportsPage():Response{
   return jobsPage(`<h1>Report a concern</h1><form><fieldset><legend>New complaint</legend>
     <label>Report type<select name="kind">${['JOB','COMPANY','RECRUITER','CANDIDATE','INTERVIEW','HARASSMENT','SCAM','PRIVACY'].map(k=>'<option>'+k+'</option>').join('')}</select></label>
-    <label>Subject or record ID<input name="targetRef" required maxlength="80"></label><label>Category<input required maxlength="80" name="category"></label>
+    <label>Subject or record ID<input name="targetRef" required maxlength="161"></label><label>Category<input required maxlength="80" name="category"></label>
     <label>Details for the investigator<textarea name="detail" required maxlength="2000"></textarea></label><button>Submit complaint</button></fieldset></form>
     <p id="feedback" role="status"></p><h2>My complaints</h2><ul id="reports"></ul><button id="prev">Previous page</button><button id="next">Next page</button>`,`
     const endpoint='/api/jobs/v1/reports',el=id=>document.getElementById(id);let offset=0;

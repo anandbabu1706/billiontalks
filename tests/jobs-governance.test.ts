@@ -572,6 +572,20 @@ it('recovers persisted meeting and reminder work after interruption without dupl
     const dispatched=await Promise.all([operations.dispatchReminders(actor),operations.dispatchReminders(actor)]);
     expect(dispatched.reduce((n,r)=>n+r.delivered,0)).toBe(2);
     expect(await instance.jobs.prepare("SELECT count(*) n FROM jobs_notifications WHERE kind='INTERVIEW_REMINDER'").first()).toEqual({n:2});
+    // Lose the response after adapter activation, then cancel before the next process retries.
+    await instance.jobs.prepare("UPDATE interview_meeting_outbox SET status='PENDING',payload='{}',attempts=0 WHERE id='job'").run();
+    await instance.jobs.prepare("UPDATE interviews SET meeting_ref=NULL WHERE id='interview'").run();
+    let remoteActive=false;
+    const uncertain={...adapter,activate:async()=>{remoteActive=true;throw new Error('lost response')},
+      findActivation:async()=>remoteActive?'local-meeting':null,revoke:async()=>{remoteActive=false}};
+    await new Interviews(instance.jobs,uncertain,()=>clock).reconcile();
+    expect(remoteActive).toBe(true);
+    await instance.jobs.prepare("UPDATE interviews SET state='CANCELLED',revision=2 WHERE id='interview'").run();
+    await instance.mf.dispose();instance=await createJobsRuntime({enabled:true,localState});
+    clock+=3000;
+    await new Interviews(instance.jobs,uncertain,()=>clock).reconcile();
+    expect(remoteActive).toBe(false);
+    expect(await instance.jobs.prepare("SELECT status FROM interview_meeting_outbox WHERE id='job'").first()).toEqual({status:'COMPLETED'});
   }finally{await instance.mf.dispose();}
 },60000);
 
@@ -612,4 +626,98 @@ it('enforces timed employer verification on the directory, review and resubmissi
   expect(await gov.employerEvidence(submitter,company,false)).toMatchObject({state:'EXPIRED'});
   expect((await gov.companies(reviewer,new URL('http://local/?q=Expiry'))).rows).toContainEqual(expect.objectContaining({id:company,employer_verification:'EXPIRED'}));
   expect(await gov.submitEmployerEvidence(submitter,company,{reference:'synthetic:renewal',revision:3})).toMatchObject({revision:4});
+});
+
+it('rolls back sensitive changes when the local audit append fails',async()=>{
+  const db=runtime.jobs,at=now(),actor={subject:'matrix-PLATFORM_OWNER',privilegedMfaAt:at,reauthenticatedAt:at};
+  await db.prepare("CREATE TRIGGER audit_failure_fixture BEFORE INSERT ON admin_audit WHEN NEW.purpose IN ('SECURITY_INCIDENT','LEGAL_HOLD','PRIVACY_NOTICE') BEGIN SELECT RAISE(ABORT,'audit_unavailable'); END").run();
+  try{
+    await expect(governance.createIncident(actor,'HIGH','Rollback fixture')).rejects.toThrow('audit_unavailable');
+    await expect(governance.legalHold(actor,'stranger','JOBS','ROLLBACK',at+86400000)).rejects.toThrow('audit_unavailable');
+    await expect(governance.publishPrivacyNotice(actor,'BJ-rollback','Synthetic')).rejects.toThrow('audit_unavailable');
+    expect(await db.prepare("SELECT id FROM security_incidents WHERE summary='Rollback fixture'").first()).toBeNull();
+    expect(await db.prepare("SELECT id FROM legal_holds WHERE reason_code='ROLLBACK'").first()).toBeNull();
+    expect(await db.prepare("SELECT version FROM jobs_privacy_notices WHERE version='BJ-rollback'").first()).toBeNull();
+    expect(await db.prepare("SELECT version FROM jobs_privacy_notices WHERE active=1").first()).not.toBeNull();
+  }finally{await db.prepare('DROP TRIGGER audit_failure_fixture').run();}
+});
+
+it('replays profile, application, interview, notification, case and grant deletion from one Jobs snapshot',async()=>{
+  const db=runtime.jobs,subject='snapshot-subject',at=now(),actor={subject:'retention-operator',privilegedMfaAt:at,reauthenticatedAt:at};
+  await db.batch([
+    db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject),
+    db.prepare("INSERT INTO jobs_profiles VALUES(?,'snapshot-profile',1,'{}','[]','PRIVATE',0,?)").bind(subject,at),
+    db.prepare("INSERT INTO applications(id,candidate,company,listing,attempt,status,snapshot,created_at,updated_at) VALUES('snapshot-app',?,'co','listing',1,'SUBMITTED','{}',?,?)").bind(subject,at,at),
+    db.prepare("INSERT INTO interviews(id,application,company,listing,round,title,instructions,duration_minutes,scheduling_timezone,state,revision,created_by,created_at,updated_at) VALUES('snapshot-interview','snapshot-app','co','listing',1,'Synthetic','',30,'UTC','CANCELLED',1,?,?,?)").bind(subject,at,at),
+    db.prepare("INSERT INTO jobs_notifications VALUES('snapshot-note',?,'snapshot-app','snapshot-key','SYNTHETIC','{}',?,NULL)").bind(subject,at),
+    db.prepare("INSERT INTO saved_jobs VALUES(?,'co','listing',?)").bind(subject,at),
+    db.prepare("INSERT INTO admin_grants VALUES(?,'BILLIONJOBS','SUPPORT','fixture',?,NULL)").bind(subject,at),
+    db.prepare("INSERT INTO moderation_cases(id,kind,target_ref,reporter,category,severity,status,created_at,updated_at) VALUES('snapshot-case','CANDIDATE',?,'fixture','PRIVACY','LOW','CLOSED',?,?)").bind(subject,at,at),
+    db.prepare("INSERT INTO moderation_events VALUES('snapshot-evidence','snapshot-case','fixture','STATUS','CLOSED','private','synthetic:private',?)").bind(at),
+    db.prepare("INSERT INTO privacy_requests VALUES('snapshot-request',?,'DELETE','REVIEWING',NULL,?,NULL)").bind(subject,at),
+    db.prepare('UPDATE restore_gate SET ready=0 WHERE id=1')
+  ]);
+  const privacy=new JobsPrivacy(db);
+  await privacy.replayDeletionLedger(actor,['snapshot-profile','snapshot-app'].map(record=>({record,subject,at})),[{requestId:'snapshot-request',subject,at}]);
+  for(const table of ['jobs_profiles','applications','interviews','jobs_notifications']){
+    expect(await db.prepare('SELECT id FROM '+table+" WHERE id LIKE 'snapshot-%'").first()).toBeNull();
+  }
+  expect(await db.prepare('SELECT candidate FROM saved_jobs WHERE candidate=?').bind(subject).first()).toBeNull();
+  expect(await db.prepare("SELECT internal_note,evidence_ref FROM moderation_events WHERE id='snapshot-evidence'").first()).toEqual({internal_note:null,evidence_ref:null});
+  expect(await db.prepare('SELECT revoked_at FROM admin_grants WHERE subject=?').bind(subject).first()).toEqual({revoked_at:at});
+  expect(await db.prepare("SELECT status FROM privacy_requests WHERE id='snapshot-request'").first()).toEqual({status:'COMPLETED'});
+  expect(await db.prepare('SELECT ready FROM restore_gate WHERE id=1').first()).toEqual({ready:1});
+});
+
+it('propagates temporary enforcement and expiry across discovery, applications, recruitment and interview admission',async()=>{
+  const {Recruitment}=await import('../src/jobs/recruitment'),{Interviews}=await import('../src/jobs/interviews');
+  const db=runtime.jobs,at=now(),subject='matrix-cross-surface',companyId=crypto.randomUUID(),actor={subject,recipientHash:'verified'};
+  await db.batch([
+    db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject),
+    db.prepare("INSERT INTO companies(id,owner,data,created_at) VALUES(?,'matrix-PLATFORM_OWNER','{}',?)").bind(companyId,at),
+    db.prepare("INSERT INTO memberships VALUES(?,?,'RECRUITER',NULL)").bind(companyId,subject),
+    db.prepare("INSERT INTO jobs_profiles VALUES(?,'matrix-public-profile',1,?,?,'PUBLIC',0,?)").bind(subject,JSON.stringify({name:'Matrix candidate'}),JSON.stringify(['name']),at),
+    db.prepare("INSERT INTO listings VALUES(?,'matrix-vacancy','matrix','ACTIVE',?,1)").bind(companyId,at+86400000),
+    db.prepare("INSERT INTO listing_details VALUES(?,'matrix-vacancy',?,'PUBLISHED',1,?,?,?)").bind(companyId,JSON.stringify({title:'Matrix vacancy'}),at,at,at),
+    db.prepare("INSERT INTO applications(id,candidate,company,listing,attempt,status,snapshot,created_at,updated_at) VALUES('matrix-interview-app',?,?,'historical-listing',1,'SUBMITTED','{}',?,?)").bind(subject,companyId,at,at),
+    db.prepare("INSERT INTO interviews(id,application,company,listing,round,title,instructions,duration_minutes,scheduling_timezone,state,revision,created_by,created_at,updated_at,meeting_ref,meeting_state) VALUES('matrix-admission','matrix-interview-app',?,'historical-listing',1,'Synthetic','',30,'UTC','CONFIRMED',1,?,?,?,'matrix-meeting','ACTIVE')").bind(companyId,subject,at,at),
+    db.prepare("INSERT INTO interview_slots(id,interview,starts_at,ends_at,original_timezone,expires_at,status,created_at) VALUES('matrix-slot','matrix-admission',?,?,'UTC',?,'CONFIRMED',?)").bind(new Date(at).toISOString(),new Date(at+1800000).toISOString(),at+86400000,at),
+    db.prepare("UPDATE interviews SET confirmed_slot='matrix-slot' WHERE id='matrix-admission'")
+  ]);
+  const recruiter={subject:'matrix-observer',recipientHash:'verified'};
+  await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(recruiter.subject).run();
+  await db.prepare("INSERT INTO memberships VALUES(?,?,'RECRUITER',NULL)").bind(companyId,recruiter.subject).run();
+  const market=new Marketplace(db),recruit=new Recruitment(db);
+  const interviews=new Interviews(db,{version:'billiontalks-meetings.v1',activate:async()=>{throw Error('unexpected')},revoke:async()=>{},authorizeJoin:async()=>({joinPath:'/fixture'})});
+  const report=await governance.report(recruiter,{kind:'CANDIDATE',targetRef:subject,category:'MISLEADING',detail:'Fixture'});
+  const decision=await governance.enforce({subject:'matrix-PLATFORM_OWNER',privilegedMfaAt:at,reauthenticatedAt:at},{caseId:report.id,targetKind:'USER',targetRef:subject,kind:'JOBS_TEMP',reasonCode:'REVIEW',expiresAt:at+60000});
+  const query=new URL('http://localhost/?q=Matrix%20candidate');
+  const visible=async()=>(await recruit.discover(recruiter,query)).items.some(item=>item.id==='matrix-public-profile');
+  expect(await visible()).toBe(false);
+  const apply=()=>market.apply(actor,companyId,'matrix-vacancy',{fields:['name'],key:'matrix-submission'});
+  const join=()=>interviews.join(actor,'matrix-admission','Synthetic');
+  for(const operation of [apply,()=>recruit.discover(actor,query),join])await expect(operation()).rejects.toMatchObject({status:403});
+  // Advance this synthetic action's interval without modifying any process-wide clock.
+  await db.prepare('UPDATE enforcement_actions SET starts_at=?,expires_at=? WHERE id=?').bind(at-60000,at-1,decision.id).run();
+  expect(await visible()).toBe(true);
+  await expect(recruit.discover(actor,query)).resolves.toMatchObject({total:1});
+  await expect(join()).resolves.toEqual({joinPath:'/fixture'});
+  await expect(apply()).resolves.toBeDefined();
+});
+
+it('enforces report capacity concurrently and limits period drilldowns to authorized aggregates',async()=>{
+  const at=now(),db=runtime.jobs,subject='burst-reporter',actor={subject:'matrix-PLATFORM_OWNER',privilegedMfaAt:at,reauthenticatedAt:at};
+  await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject).run();
+  const attempts=await Promise.allSettled(Array.from({length:7},()=>governance.report({subject},{kind:'HARASSMENT',targetRef:'synthetic',category:'CAPACITY',detail:'Private evidence'})));
+  expect(attempts.filter(r=>r.status==='fulfilled')).toHaveLength(5);
+  for(const r of attempts)if(r.status==='rejected')expect(r.reason).toMatchObject({status:429});
+  const report=await governance.operationalAnalytics(actor,7,'reported');
+  expect(report.breakdown).toContainEqual(expect.objectContaining({category:'HARASSMENT'}));
+  expect(JSON.stringify(report.breakdown)).not.toContain(subject);
+  expect((report.breakdown as {count:number}[]).every(r=>r.count>=5)).toBe(true);
+  await expect(governance.operationalAnalytics({...actor,subject:'matrix-AUDITOR'},7,'reported')).rejects.toMatchObject({code:'metric_forbidden'});
+  const hold=await governance.legalHold(actor,subject,'MODERATION','REVIEW',at+86400000);
+  await governance.reviewHold(actor,hold.id,at+86400000,at+2*86400000);
+  await expect(governance.reviewHold(actor,hold.id,at+86400000,at+3*86400000)).rejects.toMatchObject({code:'hold_conflict'});
+  await governance.releaseHold(actor,hold.id);
 });

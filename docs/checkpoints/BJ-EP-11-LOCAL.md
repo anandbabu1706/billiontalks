@@ -1,5 +1,15 @@
 # EP-11 local checkpoint
 
+## Final local verification on 2026-11-28
+
+All 557 regression tests passed in 24 files. The focused run passed 35 governance tests and 19 profile and persistence tests. TypeScript validation, the Wrangler 4.149.0 dry-run bundle and the whitespace check passed. Fourteen Jobs migrations apply once across a local runtime restart. The two prior Meetings fixture corrections are included in the full suite.
+
+The Chrome harness completed reporter submission, company membership revocation, employer verification, recipient-bound ownership acceptance, retirement, separate-identity appeals, role changes, evidence review, account enforcement and closure, notice publication and consent, reviewed export completion, incident transitions, policy revision and reminder dispatch. Responsive and initial keyboard checks covered 14 routes at two viewport widths.
+
+The final acceptance tests exercise rollback under an injected audit failure, temporary suspension and expiry across four access paths, combined Jobs deletion replay, and adapter success followed by a lost response, cancellation, restart and revocation. The reporter concurrency test also verifies that five submissions succeed and two are rate-limited. The database enforces quotas and admission checks independently of client controls. Historical qualification results follow.
+
+## Historical checkpoints
+
 Date: 2026-11-27 (Asia/Calcutta). All work used local synthetic fixtures. The application branch starts at EP-10 `c08591f970a4c977c98286f045145bda58a27474`. No deployment, real data, external AI, email, payment or new resource was used.
 
 ## Repository housekeeping

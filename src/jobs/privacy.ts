@@ -85,8 +85,10 @@ export class JobsPrivacy {
     await this.purgeDueRecords(actor);
   }
   async purgeDueRecordsForReview(actor:Identity){
-    await new JobsGovernance(this.db,this.clock).authorize(actor,'PRIVACY_REVIEW',true);
+    const governance=new JobsGovernance(this.db,this.clock);
+    await governance.authorize(actor,'PRIVACY_REVIEW',true);
     await this.purgeDueRecords(actor);
+    await governance.purgeModerationEvidence(actor);
   }
   private async purgeDueRecords(actor:Identity){
     const now = this.clock();

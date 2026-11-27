@@ -40,8 +40,13 @@ export function detectCompanySignals(companyId:string,listings:{id:string;data:s
 /** Production account identity deliberately supplies no MFA or recent reauthentication claim yet. */
 export class JobsGovernance {
   constructor(private readonly db:JobsDatabase,private readonly clock:()=>number=Date.now){}
-  private async audit(actor:Identity,purpose:string,targetType:string,targetRef:string,action:string,outcome='SUCCESS',revision:number|null=null){
-    await this.db.prepare('INSERT INTO admin_audit VALUES(?,?,?,?,?,?,?,?,?,?)').bind(crypto.randomUUID(),actor.subject,'BILLIONJOBS',purpose,targetType,targetRef,action,outcome,revision,this.clock()).run();
+  private auditEntry(actor:Identity,purpose:string,targetType:string,targetRef:string,action:string,outcome='SUCCESS',revision:number|null=null,onlyChanged=false){
+    const condition=onlyChanged?' WHERE changes()>0':'';
+    return this.db.prepare('INSERT INTO admin_audit SELECT ?,?,?,?,?,?,?,?,?,?'+condition)
+      .bind(crypto.randomUUID(),actor.subject,'BILLIONJOBS',purpose,targetType,targetRef,action,outcome,revision,this.clock());
+  }
+  private async audit(actor:Identity,purpose:string,targetType:string,targetRef:string,action:string){
+    await this.auditEntry(actor,purpose,targetType,targetRef,action).run();
   }
   async authorize(actor:Identity,permission:AdminPermission,highImpact=false){
     await requireEligible(this.db,actor);
@@ -123,12 +128,17 @@ export class JobsGovernance {
   }
   async report(actor:Identity,input:unknown){await requireEligible(this.db,actor);const x=input as Record<string,unknown>;
     if(!x||typeof x!=='object'||Array.isArray(x)||Object.keys(x).some(k=>!['kind','targetRef','category','detail'].includes(k)))throw new JobsError(400,'invalid_report');
-    const kind=bounded(x.kind,30),category=bounded(x.category,80),target=bounded(x.targetRef,80),detail=bounded(x.detail,2000);
+    const kind=bounded(x.kind,30),category=bounded(x.category,80),target=bounded(x.targetRef,kind==='JOB'?161:80),detail=bounded(x.detail,2000);
     if(!['JOB','COMPANY','RECRUITER','CANDIDATE','INTERVIEW','HARASSMENT','SCAM','PRIVACY'].includes(kind))throw new JobsError(400,'invalid_report');
-    const recent=await this.db.prepare('SELECT count(*) n FROM moderation_cases WHERE reporter=? AND created_at>?').bind(actor.subject,this.clock()-86400000).first<{n:number}>();
-    if((recent?.n||0)>=5)throw new JobsError(429,'report_rate_limit');const id=crypto.randomUUID(),now=this.clock();
-    await this.db.batch([this.db.prepare('INSERT INTO moderation_cases(id,kind,target_ref,reporter,category,severity,status,created_at,updated_at) VALUES(?,?,?,?,?,\'MEDIUM\',\'OPEN\',?,?)').bind(id,kind,target,actor.subject,category,now,now),
-      this.db.prepare('INSERT INTO moderation_events(id,case_id,actor,action,public_status,internal_note,at) VALUES(?,?,?,\'SUBMITTED\',\'OPEN\',?,?)').bind(crypto.randomUUID(),id,actor.subject,detail,now)]);
+    const id=crypto.randomUUID(),now=this.clock();
+    const [insert]=await this.db.batch([
+      this.db.prepare(`INSERT INTO moderation_cases(id,kind,target_ref,reporter,category,severity,status,created_at,updated_at)
+        SELECT ?,?,?,?,?,'MEDIUM','OPEN',?,? WHERE (SELECT count(*) FROM moderation_cases WHERE reporter=? AND created_at>?)<5 RETURNING id`)
+        .bind(id,kind,target,actor.subject,category,now,now,actor.subject,now-86400000),
+      this.db.prepare(`INSERT INTO moderation_events(id,case_id,actor,action,public_status,internal_note,at)
+        SELECT ?,?,?,'SUBMITTED','OPEN',?,? WHERE changes()=1`).bind(crypto.randomUUID(),id,actor.subject,detail,now)
+    ]);
+    if(!(insert as {results:unknown[]}).results.length)throw new JobsError(429,'report_rate_limit');
     return {id,status:'OPEN'};
   }
   async reportedCases(actor:Identity,url:URL){
@@ -375,10 +385,12 @@ export class JobsGovernance {
     const ref=bounded(reference,200);
     if(!/^[A-Za-z0-9_:/.-]+$/.test(ref))throw new JobsError(400,'invalid_evidence_ref');
     const id=crypto.randomUUID(),now=this.clock();
-    const row=await this.db.prepare(`INSERT INTO ownership_recovery_cases(id,company,requester,kind,evidence_ref,status,created_at,updated_at)
-      VALUES(?,?,?,?,?,'OPEN',?,?) ON CONFLICT DO NOTHING RETURNING id`).bind(id,company,actor.subject,kind,ref,now,now).first();
+    const [written]=await this.db.batch([this.db.prepare(`INSERT INTO ownership_recovery_cases(id,company,requester,kind,evidence_ref,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,'OPEN',?,?) ON CONFLICT DO NOTHING RETURNING id`).bind(id,company,actor.subject,kind,ref,now,now),
+      this.auditEntry(actor,'OWNERSHIP','RECOVERY',id,'OPEN','SUCCESS',null,true)]);
+    const row=(written as {results:unknown[]}).results[0];
     if(!row)throw new JobsError(409,'recovery_pending');
-    await this.audit(actor,'OWNERSHIP','RECOVERY',id,'OPEN');return {id,status:'OPEN'};
+    return {id,status:'OPEN'};
   }
   async updateRecovery(actor:Identity,id:string,input:unknown,admin:boolean){
     const cmd=input as {revision:number;status:string;note:string};
@@ -429,17 +441,17 @@ export class JobsGovernance {
     const email=bounded(recipientEmail,254).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new JobsError(400,'invalid_recipient');
     const token=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');const id=crypto.randomUUID(),now=this.clock();
     await this.db.batch([this.db.prepare('UPDATE ownership_transfers SET cancelled_at=? WHERE company=? AND accepted_at IS NULL AND cancelled_at IS NULL AND expires_at<=?').bind(now,companyId,now),
-      this.db.prepare('INSERT INTO ownership_transfers VALUES(?,?,?,?,?,?,?,?,NULL,NULL,?)').bind(id,companyId,actor.subject,recipientSubject,await digest(email),await digest(token),revision,now+7*86400000,now)]);
-    await this.audit(actor,'OWNERSHIP','COMPANY',companyId,'TRANSFER_REQUEST','SUCCESS',revision);
+      this.db.prepare('INSERT INTO ownership_transfers VALUES(?,?,?,?,?,?,?,?,NULL,NULL,?)').bind(id,companyId,actor.subject,recipientSubject,await digest(email),await digest(token),revision,now+7*86400000,now),
+      this.auditEntry(actor,'OWNERSHIP','COMPANY',companyId,'TRANSFER_REQUEST','SUCCESS',revision)]);
     return {id,token,expiresAt:now+7*86400000};
   }
   async acceptOwnershipTransfer(actor:Identity,id:string,token:string){
     await requireEligible(this.db,actor);if(!actor.recipientHash)throw new JobsError(403,'verified_identity_required');
     const transfer=await this.db.prepare('SELECT company,recipient_hash FROM ownership_transfers WHERE id=? AND accepted_at IS NULL AND cancelled_at IS NULL AND expires_at>?').bind(identifier(id),this.clock()).first<{company:string;recipient_hash:string}>();
     if(!transfer||transfer.recipient_hash!==actor.recipientHash)throw new JobsError(404,'transfer_not_found');
-    try{await this.db.prepare('INSERT INTO ownership_acceptances VALUES(?,?,?,?)').bind(id,actor.subject,await digest(bounded(token,64)),this.clock()).run();}
+    try{await this.db.batch([this.db.prepare('INSERT INTO ownership_acceptances VALUES(?,?,?,?)').bind(id,actor.subject,await digest(bounded(token,64)),this.clock()),this.auditEntry(actor,'OWNERSHIP','COMPANY',transfer.company,'TRANSFER_ACCEPT')]);}
     catch{throw new JobsError(409,'transfer_invalid');}
-    await this.audit(actor,'OWNERSHIP','COMPANY',transfer.company,'TRANSFER_ACCEPT');return {company:transfer.company,accepted:true};
+    return {company:transfer.company,accepted:true};
   }
   async retireCompany(actor:Identity,companyId:string,reasonCode:string,revision:number){
     await requireEligible(this.db,actor);if(!fresh(actor.reauthenticatedAt,this.clock(),5*60_000))throw new JobsError(403,'reauthentication_required');
@@ -452,9 +464,9 @@ export class JobsGovernance {
       this.db.prepare('UPDATE memberships SET revoked_at=COALESCE(revoked_at,?) WHERE company=?').bind(now,companyId),
       this.db.prepare('UPDATE company_invitations SET revoked_at=? WHERE company=? AND used_at IS NULL AND revoked_at IS NULL').bind(now,companyId),
       this.db.prepare('DELETE FROM assignments WHERE company=?').bind(companyId),
-      this.db.prepare('UPDATE ownership_transfers SET cancelled_at=? WHERE company=? AND accepted_at IS NULL AND cancelled_at IS NULL').bind(now,companyId)
-    ]);
-    await this.audit(actor,'OWNERSHIP','COMPANY',companyId,'RETIRE');return {company:companyId,retired:true};
+      this.db.prepare('UPDATE ownership_transfers SET cancelled_at=? WHERE company=? AND accepted_at IS NULL AND cancelled_at IS NULL').bind(now,companyId),
+      this.auditEntry(actor,'OWNERSHIP','COMPANY',companyId,'RETIRE')]);
+    return {company:companyId,retired:true};
   }
   async roleDirectory(actor:Identity,url:URL) {
     await this.authorize(actor,'ROLE_GRANT');
@@ -539,8 +551,8 @@ export class JobsGovernance {
     if(typeof version!=='string'||!/^BJ-[A-Za-z0-9.-]{1,40}$/.test(version))throw new JobsError(400,'invalid_notice_version');
     const now=this.clock();await this.db.batch([
       this.db.prepare('UPDATE jobs_privacy_notices SET active=0 WHERE active=1'),
-      this.db.prepare('INSERT INTO jobs_privacy_notices VALUES(?,?,?,1)').bind(version,now,bounded(summary,1000))
-    ]);await this.audit(actor,'PRIVACY_NOTICE','NOTICE',version,'PUBLISH');return {version,active:true};
+      this.db.prepare('INSERT INTO jobs_privacy_notices VALUES(?,?,?,1)').bind(version,now,bounded(summary,1000)),
+      this.auditEntry(actor,'PRIVACY_NOTICE','NOTICE',version,'PUBLISH')]);return {version,active:true};
   }
   async recordConsent(actor:Identity,purpose:'OPTIONAL_ANALYTICS'|'PUBLIC_INDEXING',granted:boolean,version?:string){await requireEligible(this.db,actor);
     if(!['OPTIONAL_ANALYTICS','PUBLIC_INDEXING'].includes(purpose)||typeof granted!=='boolean')throw new JobsError(400,'invalid_consent');
@@ -563,8 +575,8 @@ export class JobsGovernance {
     await this.authorize(actor,'PRIVACY_REVIEW',true);identifier(subject);
     if(!['JOBS','APPLICATION','CLOSURE','MODERATION'].includes(scope))throw new JobsError(400,'invalid_hold_scope');
     if(!Number.isSafeInteger(reviewAt)||reviewAt<=this.clock()||reviewAt>this.clock()+365*86400000)throw new JobsError(400,'invalid_review_date');
-    const id=crypto.randomUUID();await this.db.prepare('INSERT INTO legal_holds VALUES(?,?,?,?,?,?,?,NULL,NULL)').bind(id,subject,bounded(reasonCode,80),bounded(scope,80),actor.subject,this.clock(),reviewAt).run();
-    await this.audit(actor,'LEGAL_HOLD','USER',subject,'CREATE');return {id};
+    const id=crypto.randomUUID();await this.db.batch([this.db.prepare('INSERT INTO legal_holds VALUES(?,?,?,?,?,?,?,NULL,NULL)').bind(id,subject,bounded(reasonCode,80),bounded(scope,80),actor.subject,this.clock(),reviewAt),this.auditEntry(actor,'LEGAL_HOLD','USER',subject,'CREATE')]);
+    return {id};
   }
   async reviewHold(actor:Identity,id:string,prior:number,next:number){
     await this.authorize(actor,'PRIVACY_REVIEW',true);identifier(id);const now=this.clock();
@@ -576,8 +588,12 @@ export class JobsGovernance {
     return {id,reviewAt:next};
   }
   async releaseHold(actor:Identity,id:string){await this.authorize(actor,'PRIVACY_REVIEW',true);identifier(id);
-    const hold=await this.db.prepare('UPDATE legal_holds SET released_at=?,release_actor=? WHERE id=? AND released_at IS NULL RETURNING subject').bind(this.clock(),actor.subject,id).first<{subject:string}>();if(!hold)throw new JobsError(404,'hold_not_found');
-    await this.audit(actor,'LEGAL_HOLD','USER',hold.subject,'RELEASE');return {id,released:true};
+    const existing=await this.db.prepare('SELECT subject FROM legal_holds WHERE id=?').bind(id).first<{subject:string}>();
+    if(!existing)throw new JobsError(404,'hold_not_found');
+    const [written]=await this.db.batch([this.db.prepare('UPDATE legal_holds SET released_at=?,release_actor=? WHERE id=? AND released_at IS NULL RETURNING id').bind(this.clock(),actor.subject,id),
+      this.auditEntry(actor,'LEGAL_HOLD','USER',existing.subject,'RELEASE','SUCCESS',null,true)]);
+    if(!(written as {results:unknown[]}).results.length)throw new JobsError(404,'hold_not_found');
+    return {id,released:true};
   }
   async completePrivacy(actor:Identity,id:string,approved:boolean,reasonCode:string){await this.authorize(actor,'PRIVACY_REVIEW',true);identifier(id);
     if(typeof approved!=='boolean')throw new JobsError(400,'invalid_decision');
@@ -621,16 +637,19 @@ export class JobsGovernance {
     await this.db.batch([this.db.prepare(`UPDATE security_incidents SET owner=?,severity=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND status<>'RESOLVED'
       AND EXISTS(SELECT 1 FROM admin_grants g JOIN jobs_users u ON u.subject=g.subject WHERE g.subject=? AND g.product='BILLIONJOBS' AND g.role IN ('PLATFORM_OWNER','SECURITY_ADMIN')
       AND g.revoked_at IS NULL AND u.closed_at IS NULL AND u.eligible=1 AND u.restricted=0)`).bind(owner,severity,now,id,revision,owner),
-      this.db.prepare(`INSERT INTO incident_events SELECT ?,?,?,'ASSIGN',NULL,?,? WHERE changes()=1`).bind(event,id,actor.subject,owner+' / '+severity,now)]);
+      this.db.prepare(`INSERT INTO incident_events SELECT ?,?,?,'ASSIGN',NULL,?,? WHERE changes()=1`).bind(event,id,actor.subject,owner+' / '+severity,now),
+      this.auditEntry(actor,'SECURITY_INCIDENT','INCIDENT',id,'ASSIGN','SUCCESS',revision+1,true)]);
     if(!await this.db.prepare('SELECT id FROM incident_events WHERE id=?').bind(event).first())throw new JobsError(409,'incident_conflict');
-    await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',id,'ASSIGN','SUCCESS',revision+1);return {revision:revision+1};
+    return {revision:revision+1};
   }
   async finishCorrectiveAction(actor:Identity,incident:string,id:string){
     await this.authorize(actor,'INCIDENT',true);
-    const result=await this.db.prepare('UPDATE incident_corrective_actions SET completed_at=? WHERE id=? AND incident=? AND completed_at IS NULL RETURNING id')
-      .bind(this.clock(),identifier(id),identifier(incident)).first();
+    const [written]=await this.db.batch([this.db.prepare('UPDATE incident_corrective_actions SET completed_at=? WHERE id=? AND incident=? AND completed_at IS NULL RETURNING id')
+      .bind(this.clock(),identifier(id),identifier(incident)),
+      this.auditEntry(actor,'SECURITY_INCIDENT','INCIDENT',incident,'COMPLETE_CORRECTIVE_ACTION','SUCCESS',null,true)]);
+    const result=(written as {results:unknown[]}).results[0];
     if(!result)throw new JobsError(409,'action_conflict');
-    await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',incident,'COMPLETE_CORRECTIVE_ACTION');return result;
+    return result;
   }
   async createIncident(actor:Identity,severity:'LOW'|'MEDIUM'|'HIGH'|'CRITICAL',summary:string){await this.authorize(actor,'INCIDENT',true);
     if(!['LOW','MEDIUM','HIGH','CRITICAL'].includes(severity))throw new JobsError(400,'invalid_severity');const id=crypto.randomUUID(),now=this.clock();
@@ -639,8 +658,9 @@ export class JobsGovernance {
     const reportingDue=reporting?now+Number(reporting.value)*3600000:null;
     const reviewDue=now+(escalation?Number(JSON.parse(escalation.value)):24)*3600_000;
     await this.db.batch([this.db.prepare("INSERT INTO security_incidents(id,severity,status,owner,summary,created_at,updated_at,review_due_at,reporting_due_at) VALUES(?,?,'OPEN',?,?,?,?,?,?)").bind(id,severity,actor.subject,bounded(summary,500),now,now,reviewDue,reportingDue),
-      this.db.prepare("INSERT INTO incident_events(id,incident,actor,action,at) VALUES(?,?,?,'OPEN',?)").bind(crypto.randomUUID(),id,actor.subject,now)]);
-    await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',id,'OPEN');return {id,status:'OPEN',reviewDueAt:reviewDue};
+      this.db.prepare("INSERT INTO incident_events(id,incident,actor,action,at) VALUES(?,?,?,'OPEN',?)").bind(crypto.randomUUID(),id,actor.subject,now),
+      this.auditEntry(actor,'SECURITY_INCIDENT','INCIDENT',id,'OPEN')]);
+    return {id,status:'OPEN',reviewDueAt:reviewDue};
   }
   async incidentTransition(actor:Identity,id:string,revision:number,status:'CONTAINED'|'RECOVERING'|'RESOLVED',note:string,evidenceRef?:string){
     await this.authorize(actor,'INCIDENT',true);identifier(id);const allowed:Record<string,string[]>={OPEN:['CONTAINED'],CONTAINED:['RECOVERING'],RECOVERING:['RESOLVED']};
@@ -648,17 +668,17 @@ export class JobsGovernance {
     if(!current||current.revision!==finiteRevision(revision)||!allowed[current.status]?.includes(status))throw new JobsError(409,'incident_conflict');
     const now=this.clock(),event=crypto.randomUUID();await this.db.batch([
       this.db.prepare('UPDATE security_incidents SET status=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?').bind(status,now,id,revision),
-      this.db.prepare('INSERT INTO incident_events SELECT ?,?,?,?,?,?,? WHERE changes()=1').bind(event,id,actor.subject,status,evidenceRef?bounded(evidenceRef,200):null,bounded(note,1000),now)
-    ]);
+      this.db.prepare('INSERT INTO incident_events SELECT ?,?,?,?,?,?,? WHERE changes()=1').bind(event,id,actor.subject,status,evidenceRef?bounded(evidenceRef,200):null,bounded(note,1000),now),
+      this.auditEntry(actor,'SECURITY_INCIDENT','INCIDENT',id,status,'SUCCESS',revision+1,true)]);
     if(!await this.db.prepare('SELECT id FROM incident_events WHERE id=?').bind(event).first())throw new JobsError(409,'incident_conflict');
-    await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',id,status,'SUCCESS',revision+1);return {id,status,revision:revision+1};
+    return {id,status,revision:revision+1};
   }
   async addCorrectiveAction(actor:Identity,incidentId:string,ownerSubject:string,description:string,dueAt:number){
     await this.authorize(actor,'INCIDENT',true);identifier(incidentId);identifier(ownerSubject);
     if(!await this.db.prepare("SELECT subject FROM jobs_users WHERE subject=? AND closed_at IS NULL AND eligible=1 AND restricted=0").bind(ownerSubject).first())throw new JobsError(400,'invalid_action_owner');
     if(!Number.isSafeInteger(dueAt)||dueAt<=this.clock())throw new JobsError(400,'invalid_due_date');
-    const id=crypto.randomUUID();await this.db.prepare('INSERT INTO incident_corrective_actions VALUES(?,?,?,?,?,NULL,?)').bind(id,incidentId,ownerSubject,bounded(description,500),dueAt,this.clock()).run();
-    await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',incidentId,'CORRECTIVE_ACTION');return {id};
+    const id=crypto.randomUUID();await this.db.batch([this.db.prepare('INSERT INTO incident_corrective_actions VALUES(?,?,?,?,?,NULL,?)').bind(id,incidentId,ownerSubject,bounded(description,500),dueAt,this.clock()),this.auditEntry(actor,'SECURITY_INCIDENT','INCIDENT',incidentId,'CORRECTIVE_ACTION')]);
+    return {id};
   }
   async policies(actor:Identity,url:URL){
     await this.authorize(actor,'POLICY');
@@ -691,7 +711,7 @@ export class JobsGovernance {
     const {indicators,fingerprints}=detectCompanySignals(companyId,listings,{
       postings:actions?.n||0,complaints:complaints?.n||0,recruitment:recruiterCommands?.n||0,interviews:interviewCommands?.n||0
     },threshold?Number(JSON.parse(threshold.value)):8);
-    let created=0;
+    const writes=[];
     const observations:Record<string,number>={
       POSTING_FREQUENCY:actions?.n||0,REPEATED_COMPLAINTS:complaints?.n||0,
       RECRUITER_ACTIVITY_VOLUME:recruiterCommands?.n||0,INTERVIEW_WORKFLOW_VOLUME:interviewCommands?.n||0
@@ -700,12 +720,13 @@ export class JobsGovernance {
       const listing=listings.find(row=>companyId+'/'+row.id===item.target);
       const observed=listing?.data??(item.rule==='REPEATED_DUPLICATE'?JSON.stringify([...fingerprints].sort()):String(observations[item.rule]));
       const evidence=await digest(item.rule+'|'+observed);
-      const result=await this.db.prepare(`INSERT OR IGNORE INTO fraud_signals
+      writes.push(this.db.prepare(`INSERT OR IGNORE INTO fraud_signals
         SELECT ?,?,?,?,?,?,'OPEN',?,NULL,NULL WHERE NOT EXISTS(SELECT 1 FROM fraud_signals WHERE rule=? AND target_ref=? AND evidence_ref=?) RETURNING id`)
-        .bind(crypto.randomUUID(),item.rule,item.target===companyId?'COMPANY':'LISTING',item.target,item.severity,evidence,this.clock(),item.rule,item.target,evidence).first();
-      if(result)created++;
+        .bind(crypto.randomUUID(),item.rule,item.target===companyId?'COMPANY':'LISTING',item.target,item.severity,evidence,this.clock(),item.rule,item.target,evidence));
     }
-    await this.audit(actor,'FRAUD_REVIEW','COMPANY',companyId,'SCAN');return {indicators:indicators.map(i=>({rule:i.rule,target:i.target,severity:i.severity,humanReviewRequired:true})),created};
+    const results=await this.db.batch([...writes,this.auditEntry(actor,'FRAUD_REVIEW','COMPANY',companyId,'SCAN')]);
+    const created=results.slice(0,-1).filter(result=>(result as {results:unknown[]}).results.length).length;
+    return {indicators:indicators.map(i=>({rule:i.rule,target:i.target,severity:i.severity,humanReviewRequired:true})),created};
   }
   async signals(actor:Identity,url:URL){
     await this.authorize(actor,'CASE_DECIDE');const {limit,offset}=page(url);
@@ -857,9 +878,9 @@ export class JobsGovernance {
       reviewer=NULL,reviewed_at=NULL,expires_at=NULL,revision=revision+1 WHERE company=? AND revision=? AND (state IN ('UNVERIFIED','REJECTED','EXPIRED') OR state='VERIFIED' AND expires_at<=?) RETURNING revision`)
       .bind(reference,companyId,revision,this.clock()):this.db.prepare(`INSERT INTO employer_verifications(company,state,evidence_ref)
       VALUES(?,'EVIDENCE_PENDING',?) ON CONFLICT DO NOTHING RETURNING revision`).bind(companyId,reference);
-    const result=await write.first<{revision:number}>();
+    const [written]=await this.db.batch([write,this.auditEntry(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,'SUBMIT','SUCCESS',revision+1,true)]);
+    const result=(written as {results:{revision:number}[]}).results[0];
     if(!result)throw new JobsError(409,'verification_conflict');
-    await this.audit(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,'SUBMIT','SUCCESS',result.revision);
     return {state:'EVIDENCE_PENDING',revision:result.revision};
   }
   async reviewEmployerVerification(actor:Identity,companyId:string,state:'IN_REVIEW'|'VERIFIED'|'REJECTED'|'EXPIRED'|'UNVERIFIED',evidenceRef:string,revision:number,expiresAt?:number){
@@ -867,20 +888,21 @@ export class JobsGovernance {
     const evidence=bounded(evidenceRef,200);if(!/^[A-Za-z0-9_:/.-]+$/.test(evidence))throw new JobsError(400,'invalid_evidence_ref');
     if(expiresAt!==undefined&&(state!=='VERIFIED'||!Number.isSafeInteger(expiresAt)||expiresAt<=this.clock()))throw new JobsError(400,'invalid_expiry');
     const previous=state==='IN_REVIEW'?'EVIDENCE_PENDING':(state==='EXPIRED'||state==='UNVERIFIED')?'VERIFIED':'IN_REVIEW';
-    const result=await this.db.prepare(`UPDATE employer_verifications SET state=?,reviewer=?,reviewed_at=?,expires_at=?,revision=revision+1
+    const [written]=await this.db.batch([this.db.prepare(`UPDATE employer_verifications SET state=?,reviewer=?,reviewed_at=?,expires_at=?,revision=revision+1
       WHERE company=? AND revision=? AND evidence_ref=? AND state=? RETURNING revision`)
-      .bind(state,actor.subject,this.clock(),expiresAt??null,companyId,finiteRevision(revision),evidence,previous).first<{revision:number}>();
+      .bind(state,actor.subject,this.clock(),expiresAt??null,companyId,finiteRevision(revision),evidence,previous),this.auditEntry(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,state,'SUCCESS',revision+1,true)]);
+    const result=(written as {results:{revision:number}[]}).results[0];
     if(!result)throw new JobsError(409,'verification_conflict');
-    await this.audit(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,state,'SUCCESS',result.revision);
     return {company:companyId,state,revision:result.revision};
   }
   async purgeModerationEvidence(actor:Identity){await this.authorize(actor,'PRIVACY_REVIEW',true);
     const configured=await this.db.prepare("SELECT value FROM effective_jobs_policies WHERE key='retention_moderation_days'").first<{value:string}>();
     const days=configured?Number(JSON.parse(configured.value)):90,cutoff=this.clock()-days*86400000;
-    const result=await this.db.prepare(`UPDATE moderation_events SET internal_note=NULL,evidence_ref=NULL WHERE case_id IN (
+    const [result]=await this.db.batch([this.db.prepare(`UPDATE moderation_events SET internal_note=NULL,evidence_ref=NULL WHERE case_id IN (
       SELECT c.id FROM moderation_cases c WHERE c.status='CLOSED' AND c.updated_at<=?
       AND NOT EXISTS(SELECT 1 FROM legal_holds h WHERE h.released_at IS NULL AND h.scope IN ('JOBS','MODERATION') AND (h.subject=c.reporter OR h.subject=c.target_ref)))
-      AND (internal_note IS NOT NULL OR evidence_ref IS NOT NULL) RETURNING id`).bind(cutoff).all();
-    await this.audit(actor,'RETENTION','MODERATION_EVIDENCE','BILLIONJOBS','PURGE');return {redacted:result.results.length};
+      AND (internal_note IS NOT NULL OR evidence_ref IS NOT NULL) RETURNING id`).bind(cutoff),
+      this.auditEntry(actor,'RETENTION','MODERATION_EVIDENCE','BILLIONJOBS','PURGE')]);
+    return {redacted:(result as {results:unknown[]}).results.length};
   }
 }

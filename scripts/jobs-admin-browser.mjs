@@ -1,6 +1,7 @@
 // Standalone local acceptance check. Supply the installed Chromium executable.
 import {spawn} from 'node:child_process';
 import {mkdtemp, rm} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join,dirname,resolve,basename} from 'node:path';
 import assert from 'node:assert/strict';
@@ -21,7 +22,7 @@ try{
   }
   await runtime.bootstrapOwner('browser-owner');
   await runtime.jobs.prepare("INSERT INTO admin_grants VALUES('browser-reviewer','BILLIONJOBS','MODERATOR','fixture',?,NULL)").bind(Date.now()).run();
-  let currentSubject='browser-owner';
+  let currentSubject='browser-owner',dialogResponse='SYNTHETIC_REVIEW';
   const company=crypto.randomUUID();
   await runtime.jobs.prepare("INSERT INTO companies(id,owner,data,created_at) VALUES(?,'browser-owner','{}',?)").bind(company,Date.now()).run();
   await runtime.jobs.prepare("INSERT INTO memberships VALUES(?,'browser-auditor','RECRUITER',NULL)").bind(company).run();
@@ -39,7 +40,7 @@ try{
     let response=new Response('',{status:404});
     if(new URL(request.url).origin===local){
       const input=new Request(request.url,{method:request.method,headers:request.headers,body:request.postData});
-      response=await handleJobs(input,true,runtime.jobs,async()=>({subject:currentSubject,privilegedMfaAt:Date.now(),reauthenticatedAt:Date.now()}));
+      response=await handleJobs(input,true,runtime.jobs,async()=>({subject:currentSubject,recipientHash:createHash('sha256').update(currentSubject+'@example.invalid').digest('hex'),privilegedMfaAt:Date.now(),reauthenticatedAt:Date.now()}));
     }
     await cdp('Fetch.fulfillRequest',{requestId,responseCode:response.status,responseHeaders:Array.from(response.headers,([name,value])=>({name,value})),body:Buffer.from(await response.arrayBuffer()).toString('base64')},message.sessionId);
   }
@@ -50,7 +51,7 @@ try{
       const message=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);
       const task=pending.get(message.id);
       if(task){pending.delete(message.id);if(message.error)task.reject(Error(message.error.message));else task.resolve(message.result)}
-      else if(message.method==='Page.javascriptDialogOpening')cdp('Page.handleJavaScriptDialog',{accept:true,promptText:'SYNTHETIC_REVIEW'},message.sessionId).catch(error=>{if(!shuttingDown){console.error(error);process.exitCode=1;browser.kill()}});
+      else if(message.method==='Page.javascriptDialogOpening')cdp('Page.handleJavaScriptDialog',{accept:true,promptText:dialogResponse},message.sessionId).catch(error=>{if(!shuttingDown){console.error(error);process.exitCode=1;browser.kill()}});
       else if(message.method==='Fetch.requestPaused')respond(message).catch(error=>{if(!shuttingDown){console.error(error);process.exitCode=1;browser.kill()}});
     }
   });
@@ -191,6 +192,25 @@ try{
       assert.equal(await evaluate("['A','BUTTON','INPUT','SELECT'].includes(document.activeElement.tagName)"),true,'Missing focus: '+route);
     }
   }
+  await cmd('Page.navigate',{url:local+'/jobs/reports'});
+  await waitFor("document.querySelector('[name=targetRef]')");
+  await evaluate("const f=document.querySelector('form');f.elements.kind.value='COMPANY';f.elements.targetRef.value="+JSON.stringify(company)+";f.elements.category.value='LOCAL_REVIEW';f.elements.detail.value='Synthetic confidential report';f.querySelector('button').click()");
+  await waitFor("document.querySelector('#reports').textContent.includes('LOCAL_REVIEW')");
+  assert.equal(await evaluate("document.querySelector('#reports').textContent.includes('confidential')"),false);
+  await cmd('Page.navigate',{url:local+'/jobs/ownership'});
+  await waitFor("document.querySelector('#company')?.options.length===1");
+  await evaluate("const f=document.querySelector('#request');f.elements.subject.value='browser-reviewer';f.elements.email.value='browser-reviewer@example.invalid';f.querySelector('button').click()");
+  await waitFor("document.querySelector('#token')?.value.length===64");
+  dialogResponse=await evaluate("document.querySelector('#token').value");
+  currentSubject='browser-reviewer';
+  await cmd('Page.navigate',{url:local+'/jobs/ownership'});
+  await waitFor("document.querySelector('#requests button')?.textContent==='accept'");
+  await evaluate("document.querySelector('#requests button').click()");
+  await waitFor("document.querySelector('#requests').textContent.includes('Accepted') && document.querySelector('#company').options.length===1");
+  dialogResponse='SYNTHETIC_REVIEW';
+  await evaluate("document.querySelector('#retire [name=reason]').value='SYNTHETIC';document.querySelector('#retire button').click()");
+  await waitFor("document.querySelector('#company').options.length===0 && document.querySelector('#feedback').textContent.includes('updated')");
+  console.log('Passed complaint submission, recipient-bound ownership acceptance and retirement.');
   console.log('Passed separate-identity appeal review, consent and export, incident transitions, policy editing, recovery dispatch and fourteen responsive navigation checks at two widths.');
   console.log('Passed company membership revocation, verification through expiry and case-linked account warning, revocation and closure');
 

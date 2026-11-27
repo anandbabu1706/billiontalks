@@ -53,11 +53,11 @@ export class Interviews {
   async reconcile(limit=3,interviewId?:string){
     if(!this.meetings)return {processed:0,pending:true};
     const now=this.clock();
-    const items=(await this.db.prepare(`SELECT id,interview,interview_revision,operation,attempts FROM interview_meeting_outbox q
+    const items=(await this.db.prepare(`SELECT id,interview,interview_revision,operation,attempts,json_extract(payload,'$.activationStarted') started FROM interview_meeting_outbox q
       WHERE status IN ('PENDING','FAILED') AND attempts<8 AND next_attempt_at<=? AND (? IS NULL OR interview=?)
       AND NOT EXISTS(SELECT 1 FROM meeting_outbox_leases l WHERE l.job=q.id AND l.expires_at>?)
       ORDER BY created_at,id LIMIT ?`).bind(now,interviewId??null,interviewId??null,now,integer(limit,1,10))
-      .all<{id:string;interview:string;interview_revision:number;operation:string;attempts:number}>()).results;
+      .all<{id:string;interview:string;interview_revision:number;operation:string;attempts:number;started:number|null}>()).results;
     let processed=0;
     for(const item of items){
       const token=crypto.randomUUID(),start=this.clock();
@@ -72,10 +72,18 @@ export class Interviews {
       try{
         const row=await this.db.prepare('SELECT * FROM interviews WHERE id=?').bind(item.interview).first<InterviewRow>();
         if(!row||item.operation==='ACTIVATE'&&(row.state!=='CONFIRMED'||row.revision!==item.interview_revision)){
+          if(row && item.started && row.state!=='CONFIRMED'){
+            if(!this.meetings.findActivation)throw new Error('Meeting recovery lookup unavailable');
+            const ref=await this.meetings.findActivation(row.id,row.created_by);
+            if(ref)await this.meetings.revoke(ref,row.id,row.created_by);
+          }
           await done.run();continue;
         }
         if(item.operation==='ACTIVATE'){
           const participants=(await this.db.prepare('SELECT subject FROM interview_participants WHERE interview=? ORDER BY subject').bind(row.id).all<{subject:string}>()).results;
+          const started=await this.db.prepare(`UPDATE interview_meeting_outbox SET payload=json_set(payload,'$.activationStarted',1)
+            WHERE id=? AND ${guard} RETURNING id`).bind(item.id,item.id,token).first();
+          if(!started)continue;
           const result=await this.meetings.activate({interviewRef:row.id,title:row.title,hostSubject:row.created_by,participantSubjects:participants.map(p=>p.subject)});
           const updated=await this.db.prepare(`UPDATE interviews SET meeting_ref=?,meeting_state='ACTIVE',updated_at=? WHERE id=? AND revision=? AND state='CONFIRMED' AND ${guard} RETURNING id`)
             .bind(result.meetingRef,start,row.id,item.interview_revision,item.id,token).first();

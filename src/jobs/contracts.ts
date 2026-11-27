@@ -16,6 +16,7 @@ export interface MeetingsAdapterV1 {
   readonly version: "billiontalks-meetings.v1";
   activate(input: InterviewMeetingActivation): Promise<{ meetingRef: string; joinPath: string }>;
   authorizeJoin(meetingRef: string, interviewRef: string, subject: string, displayName: string): Promise<{ joinPath: string }>;
+  findActivation?(interviewRef: string, hostSubject: string): Promise<string | null>;
   revoke(meetingRef: string, interviewRef: string, hostSubject: string): Promise<void>;
 }
 export class JobsError extends Error {

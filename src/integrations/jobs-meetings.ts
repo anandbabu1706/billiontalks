@@ -21,6 +21,12 @@ export class JobsMeetingsAdapter implements MeetingsAdapterV1 {
     await this.meetings.joinIntegratedMeeting(meetingRef,interviewRef,{userId:subject,displayName});
     return {joinPath:`/ui?meeting=${encodeURIComponent(meetingRef)}`};
   }
+  async findActivation(interviewRef:string,hostSubject:string){
+    const meeting=await this.meetings.getMeeting(opaqueMeetingId(interviewRef));
+    if(!meeting)return null;
+    if(meeting.integration?.ref!==interviewRef||meeting.hostId!==hostSubject)throw new Error('Interview meeting recovery reference mismatch.');
+    return meeting.status===MeetingStatus.ACTIVE?meeting.id:null;
+  }
   async revoke(meetingRef:string,interviewRef:string,hostSubject:string){
     const meeting=await this.meetings.getMeeting(meetingRef);
     if(!meeting||meeting.integration?.ref!==interviewRef)throw new Error('Interview meeting reference mismatch.');
