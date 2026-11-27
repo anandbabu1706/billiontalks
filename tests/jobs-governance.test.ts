@@ -5,6 +5,7 @@ import { digest } from '../src/jobs/companies';
 import { executeGovernanceExtension } from '../src/jobs/intelligence';
 import { JobsPrivacy } from '../src/jobs/privacy';
 import { JobsOperations } from '../src/jobs/operations';
+import { Marketplace } from '../src/jobs/marketplace';
 
 let runtime:Awaited<ReturnType<typeof createJobsRuntime>>;
 let governance:JobsGovernance;
@@ -13,7 +14,7 @@ const now=()=>Date.now();
 const owner=()=>({subject:'owner',recipientHash:'',privilegedMfaAt:now(),reauthenticatedAt:now()});
 const recipient=async()=>({subject:'recipient',recipientHash:await digest('recipient@example.invalid'),reauthenticatedAt:now()});
 async function request(path:string,who:keyof typeof tokens='owner',method='GET',body?:unknown){return runtime.mf.dispatchFetch('http://localhost/api/jobs/v1/'+path,{method,headers:{Cookie:'bt_account_session='+tokens[who],Origin:'http://localhost','Content-Type':'application/json','X-Jobs-Request':'1'},body:body===undefined?undefined:JSON.stringify(body)});}
-async function company(){const r=await request('companies','owner','POST',{data:{name:'Synthetic',industry:'',description:'',website:'',location:'',size:'',businessEmail:''}});expect(r.status).toBe(201);return r.json() as Promise<{id:string;revision:number}>;}
+async function company(who:keyof typeof tokens='owner'){const r=await request('companies',who,'POST',{data:{name:'Synthetic',industry:'',description:'',website:'',location:'',size:'',businessEmail:''}});expect(r.status).toBe(201);return r.json() as Promise<{id:string;revision:number}>;}
 beforeAll(async()=>{runtime=await createJobsRuntime({enabled:true});for(const [subject,token] of Object.entries(tokens)){await seedIdentity(runtime.accounts,subject,token);await runtime.jobs.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject).run();}governance=new JobsGovernance(runtime.jobs);},60000);
 afterAll(async()=>{await runtime?.mf.dispose();});
 
@@ -102,9 +103,9 @@ it('deduplicates explainable fraud indicators without enforcing automatically',a
   expect(first.indicators).toEqual([expect.objectContaining({rule:'POTENTIAL_RECRUITMENT_FEE',humanReviewRequired:true})]);
   expect(first.created).toBe(1);
   const again=await governance.scanCompany(owner(),c.id);expect(again.created).toBe(0);
-  const signal=await runtime.jobs.prepare("SELECT id FROM fraud_signals WHERE rule='POTENTIAL_RECRUITMENT_FEE' AND target_ref='synthetic_fee_listing'").first<{id:string}>();
+  const signal=await runtime.jobs.prepare("SELECT id FROM fraud_signals WHERE rule='POTENTIAL_RECRUITMENT_FEE' AND target_ref=?").bind(c.id+'/synthetic_fee_listing').first<{id:string}>();
   await governance.reviewSignal(owner(),signal!.id,false);
-  expect((await runtime.jobs.prepare("SELECT count(*) n FROM enforcement_actions WHERE target_ref='synthetic_fee_listing'").first<{n:number}>())?.n).toBe(0);
+  expect((await runtime.jobs.prepare("SELECT count(*) n FROM enforcement_actions WHERE target_ref=?").bind(c.id+'/synthetic_fee_listing').first<{n:number}>())?.n).toBe(0);
 });
 it('expires transfer requests and permits only one concurrent recipient acceptance',async()=>{
   const c=await company();const target={subject:'stranger',recipientHash:await digest('stranger@example.invalid')};
@@ -130,6 +131,22 @@ it('versions operational policy and records incident containment without exporti
   const analytics=await governance.operationalAnalytics(owner(),7);
   expect(analytics.period.days).toBe(7);
   expect(analytics.counts).not.toHaveProperty('candidate');
+});
+it('removes only the intended company listing from public discovery',async()=>{
+  const first=await company(),second=await company('stranger'),listing='shared_listing_id',timestamp=now();
+  for(const c of [first,second]){
+    await runtime.jobs.prepare("INSERT INTO listings VALUES(?,?,'fingerprint','ACTIVE',?,1)").bind(c.id,listing,timestamp+86400000).run();
+    await runtime.jobs.prepare("INSERT INTO listing_details VALUES(?,?,?,'PUBLISHED',1,?,?,?)")
+      .bind(c.id,listing,JSON.stringify({title:'Synthetic listing',description:'Local fixture'}),timestamp,timestamp,timestamp).run();
+  }
+  const report=await governance.report({subject:'owner'},{kind:'JOB',targetRef:first.id+'/'+listing,category:'MISLEADING',detail:'Synthetic review'});
+  await governance.enforce(owner(),{caseId:report.id,targetKind:'LISTING',targetRef:first.id+'/'+listing,kind:'REMOVE_DISCOVERY',reasonCode:'MISLEADING'});
+  const market=new Marketplace(runtime.jobs);
+  await expect(market.publicListing(first.id,listing)).rejects.toMatchObject({status:404});
+  expect((await market.publicListing(second.id,listing)).id).toBe(listing);
+  const search=await market.search(new URL('http://localhost/jobs/search'));
+  expect(search.items.some(item=>item.company===first.id&&item.id===listing)).toBe(false);
+  expect(search.items.some(item=>item.company===second.id&&item.id===listing)).toBe(true);
 });
 it('persists and deduplicates in-app reminder dispatch and skips stale interview revisions',async()=>{
   const c=await company(),id='synthetic_reminder_interview',application='synthetic_reminder_application';

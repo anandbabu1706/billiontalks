@@ -161,7 +161,7 @@ export class Marketplace {
     const page=integer(Number(url.searchParams.get('page')||1),1,1000);
     const limit=integer(Number(url.searchParams.get('limit')||20),1,50);
     const clauses=["d.publication='PUBLISHED'","l.state='ACTIVE'","l.expires_at>?","c.restricted=0",
-      "NOT EXISTS(SELECT 1 FROM enforcement_actions e WHERE e.target_kind='LISTING' AND e.target_ref=d.id AND e.kind='REMOVE_DISCOVERY' AND e.revoked_at IS NULL AND e.starts_at<=? AND (e.expires_at IS NULL OR e.expires_at>?))"];
+      "NOT EXISTS(SELECT 1 FROM enforcement_actions e WHERE e.target_kind='LISTING' AND e.target_ref=d.company||'/'||d.id AND e.kind='REMOVE_DISCOVERY' AND e.revoked_at IS NULL AND e.starts_at<=? AND (e.expires_at IS NULL OR e.expires_at>?))"];
     const values:unknown[]=[this.clock(),this.clock(),this.clock()];
     const filter=(name:string,path:string,max=160)=>{
       const value=text(url.searchParams.get(name)||'',max);
@@ -191,7 +191,7 @@ export class Marketplace {
 
   async publicListing(company:string,id:string) {
     identifier(company); identifier(id);
-    const row=await this.db.prepare(`SELECT d.*,l.state,l.expires_at,json_extract(c.data,'$.name') AS company_name,json_extract(c.data,'$.industry') AS industry,json_extract(c.data,'$.description') AS company_description,json_extract(c.data,'$.website') AS company_website,json_extract(c.data,'$.location') AS company_location,json_extract(c.data,'$.size') AS company_size FROM listing_details d JOIN listings l ON l.company=d.company AND l.id=d.id JOIN companies c ON c.id=d.company WHERE d.company=? AND d.id=? AND d.publication='PUBLISHED' AND l.state='ACTIVE' AND l.expires_at>? AND c.restricted=0 AND NOT EXISTS(SELECT 1 FROM enforcement_actions e WHERE e.target_kind='LISTING' AND e.target_ref=d.id AND e.kind='REMOVE_DISCOVERY' AND e.revoked_at IS NULL AND e.starts_at<=? AND (e.expires_at IS NULL OR e.expires_at>?))`).bind(company,id,this.clock(),this.clock(),this.clock()).first<ListingRow>();
+    const row=await this.db.prepare(`SELECT d.*,l.state,l.expires_at,json_extract(c.data,'$.name') AS company_name,json_extract(c.data,'$.industry') AS industry,json_extract(c.data,'$.description') AS company_description,json_extract(c.data,'$.website') AS company_website,json_extract(c.data,'$.location') AS company_location,json_extract(c.data,'$.size') AS company_size FROM listing_details d JOIN listings l ON l.company=d.company AND l.id=d.id JOIN companies c ON c.id=d.company WHERE d.company=? AND d.id=? AND d.publication='PUBLISHED' AND l.state='ACTIVE' AND l.expires_at>? AND c.restricted=0 AND NOT EXISTS(SELECT 1 FROM enforcement_actions e WHERE e.target_kind='LISTING' AND e.target_ref=d.company||'/'||d.id AND e.kind='REMOVE_DISCOVERY' AND e.revoked_at IS NULL AND e.starts_at<=? AND (e.expires_at IS NULL OR e.expires_at>?))`).bind(company,id,this.clock(),this.clock(),this.clock()).first<ListingRow>();
     if (!row) throw new JobsError(404,'listing_not_found');
     return listingView(row);
   }

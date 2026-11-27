@@ -69,8 +69,9 @@ export class JobsGovernance {
     await this.audit(actor,'MODERATION','CASE',id,'DECIDE','SUCCESS',result.revision);return {id,status:input.status,revision:result.revision};
   }
   async enforce(actor:Identity,input:{caseId:string;targetKind:'USER'|'COMPANY'|'LISTING'|'RECRUITER';targetRef:string;kind:string;reasonCode:string;expiresAt?:number;evidenceRef?:string}){
-    await this.authorize(actor,'ENFORCE',true);const caseId=identifier(input.caseId),targetRef=identifier(input.targetRef),reason=bounded(input.reasonCode,80);
+    await this.authorize(actor,'ENFORCE',true);const caseId=identifier(input.caseId),targetRef=input.targetKind==='LISTING'?bounded(input.targetRef,161):identifier(input.targetRef),reason=bounded(input.reasonCode,80);
     if(!['WARNING','FEATURE','POSTING','RECRUITER','JOBS_TEMP','JOBS_PERMANENT','EMERGENCY','REMOVE_DISCOVERY'].includes(input.kind)||!['USER','COMPANY','LISTING','RECRUITER'].includes(input.targetKind))throw new JobsError(400,'invalid_action');
+    if(input.targetKind==='LISTING'&&!/^[A-Za-z0-9_-]{1,80}\/[A-Za-z0-9_-]{1,80}$/.test(targetRef))throw new JobsError(400,'invalid_listing_target');
     if(input.expiresAt!==undefined&&(!Number.isSafeInteger(input.expiresAt)||input.expiresAt<=this.clock()))throw new JobsError(400,'invalid_expiry');
     const id=crypto.randomUUID(),now=this.clock();await this.db.prepare('INSERT INTO enforcement_actions(id,case_id,target_kind,target_ref,kind,reason_code,actor,evidence_ref,starts_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(id,caseId,input.targetKind,targetRef,input.kind,reason,actor.subject,input.evidenceRef||null,now,input.expiresAt||null).run();
     await this.audit(actor,'ENFORCEMENT',input.targetKind,targetRef,input.kind,'SUCCESS',1);return {id};
@@ -227,7 +228,7 @@ export class JobsGovernance {
     for(const listing of listings){
       let data:Record<string,unknown>;try{data=JSON.parse(listing.data) as Record<string,unknown>;}catch{continue;}
       const content=JSON.stringify(data).slice(0,16000).toLowerCase();
-      if(/(?:registration|processing|training|security)\s+fee|pay\s+(?:us|a\s+fee)|refundable\s+(?:deposit|fee)/i.test(content))indicators.push({rule:'POTENTIAL_RECRUITMENT_FEE',target:listing.id,severity:'HIGH'});
+      if(/(?:registration|processing|training|security)\s+fee|pay\s+(?:us|a\s+fee)|refundable\s+(?:deposit|fee)/i.test(content))indicators.push({rule:'POTENTIAL_RECRUITMENT_FEE',target:companyId+'/'+listing.id,severity:'HIGH'});
       const fingerprint=String(data.title||'').trim().toLowerCase()+'|'+String(data.location||'').trim().toLowerCase();
       if(fingerprint!=='|'){fingerprints.set(fingerprint,(fingerprints.get(fingerprint)||0)+1);if(fingerprints.get(fingerprint)===3)indicators.push({rule:'REPEATED_DUPLICATE',target:companyId,severity:'MEDIUM'});}
     }

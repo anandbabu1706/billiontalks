@@ -14,7 +14,7 @@ The governance service enforces deny-by-default role checks, a trusted recent MF
 
 The two EP-10 Meetings fixture issues were corrected in tests only. The pre-join camera cycle now checks stopped and newly live camera tracks while acknowledging that the joined self tile does not yet exist. The calendar test navigates from the current local month to its fixed October 2026 fixture. No production Meetings code or assertion was weakened. The Jobs profile persistence fixture also now expects seven migrations after EP-11.
 
-Focused verification: TypeScript passed; 12/12 governance tests and 19/19 profile tests passed; governance, marketplace and foundation checks passed 46/46 before later additions. Wrangler 4.149.0 `deploy --dry-run` bundled successfully with no Jobs production binding. The final full regression passed **534/534 tests across 24 files**, including both corrected Meetings fixtures.
+Focused verification: TypeScript passed; 13/13 governance tests and 19/19 profile tests passed; governance, marketplace and foundation checks passed 46/46 before later additions. Wrangler 4.149.0 `deploy --dry-run` bundled successfully with no Jobs production binding. The final full regression passed **535/535 tests across 24 files**, including both corrected Meetings fixtures.
 
 ## Security and operational limits
 
