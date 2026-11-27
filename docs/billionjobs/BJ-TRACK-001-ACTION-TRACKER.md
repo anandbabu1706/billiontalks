@@ -145,3 +145,7 @@ All ADM items below are owner-approved for local synthetic implementation. “Lo
 | 2026-11-27 | 1.12 | Recorded approved ADM-01–ADM-20 and the local EP-11 checkpoint with component-level status. Trusted MFA, complete workflows and release gates remain open. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
+
+## EP-11-A continuation checkpoint
+
+EP-11 remains IN PROGRESS. ADM-01, 02, 03 and 10 have additional API or interface evidence. ADM-07, 14, 16, 19 and 20 have narrower security or test coverage. All twenty components still require local acceptance. See the continuation register in the EP-11 milestone for the outstanding work per component.

@@ -132,3 +132,7 @@ Company registration remains free after account email verification. Employer ver
 Jobs privacy notices and optional consent events are versioned and product-specific; public indexing remains candidate controlled. Exports are reviewed, recently reauthenticated and scoped to requester-owned Jobs data, excluding private recruiter notes and shared account credentials. Active legal holds block ordinary purge. Current 180-day application, 30-day eligible closure and 90-day routine moderation defaults remain subject to jurisdiction-specific legal mapping. Incident and regulatory clocks require legal and operating-owner qualification; no automatic external notice is authorized.
 
 Operational analytics use recorded events and defined periods, suppressing small counts. Fraud indicators are deterministic review signals; no autonomous enforcement, external AI, protected-trait profiling or identity-document collection is enabled. The existing Jobs–Meetings activation outbox and new local reminder outbox still need production scheduling, recovery monitoring and remote persistence qualification before a pilot.
+
+## EP-11-A continuation checkpoint
+
+The EP-11-A checkpoint adds role-scoped metrics, user/company directories, owner grant management and company evidence review. The approved ADM-01 through ADM-20 acceptance criteria remain open as detailed in the application continuation register.

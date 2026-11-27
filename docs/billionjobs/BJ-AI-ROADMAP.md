@@ -30,3 +30,7 @@ The shared extension contract may be reused only when the specific capability is
 EP-10 also registers purpose-limited contracts for interviewer assistance, multilingual interview assistance, consent-dependent summaries and feedback assistance. These interfaces do not configure a provider or authorize recording, transcription, data transfer, automated assessment, facial/emotion/personality inference or employment decisions. BJ-AI-008 remains proposed because no interview content is captured.
 
 EP-11 extends that contract with scam, suspicious-activity, complaint categorization, multilingual moderation, security-alert, investigation-summary and moderation-assistance purposes. Only allowlisted case metadata and redacted excerpts may cross a future provider boundary. The local runtime has no provider and blocks outbound calls; deterministic signals are not AI. Future BillionAI integration still requires separate approval and BJ-AI-020 remains deferred.
+
+## EP-11-A continuation checkpoint
+
+The EP-11-A continuation adds no provider integration. ADM-05 and ADM-17 still require local false-positive review, provenance, minimized input and bounded-output acceptance before any provider decision.

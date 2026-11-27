@@ -60,3 +60,7 @@ EP-08 is committed and pushed on its authorized isolated branch. The next functi
 EP-10 is committed and pushed on its authorized isolated branch with 95/95 Jobs tests passing and no new full-suite failure. The approved sequence, without renumbering historical milestones, is **EP-08 → EP-10 → EP-11 → BT-WEB website restructuring → EP-09 recruitment qualification and controlled pilot → EP-12 final integrated qualification → EP-13 production release**.
 
 EP-11 is authorized for isolated local synthetic implementation and has a governance checkpoint; see [EP-11 milestone](BJ-EP-11-MILESTONE.md). Full administration/moderation, trusted MFA and release controls are not complete. BT-WEB restructuring follows EP-11 and remains independent of Jobs domain data. Before genuine applicant data or any controlled pilot, complete the mandatory security, legal, privacy, accessibility, recovery, capacity and operating-owner gates. EP-11 does not authorize staging, pilot, deployment, merge or AI/provider activation.
+
+## EP-11-A continuation checkpoint
+
+EP-11 remains in progress. Role management, available-owner protection and employer-verification operations advanced in section A. Later milestones retain their existing order.

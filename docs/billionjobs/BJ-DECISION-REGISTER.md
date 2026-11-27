@@ -116,3 +116,7 @@ Complete when an extension advances: **ID · business objective · provider/data
 ## EP-10 interview scheduling decision
 
 Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement request-and-confirm interview scheduling on the existing BillionTalks meeting infrastructure. Candidates can respond to an interview request without maintaining an availability calendar. Optional external calendar integrations, including Google Calendar and Microsoft Outlook, are deferred until sufficient customer demand exists. Each integration must be consent-based and independently configurable. Existing admission, revocation and Meetings regression gates continue to apply.
+
+## EP-11-A continuation checkpoint
+
+The seven-role Jobs model now has a tested owner grant/revoke form. The first synthetic owner is seeded through an in-process Miniflare handle that rejects a second bootstrap. Trusted production identity and accountable production initialization remain release decisions.
