@@ -1,6 +1,6 @@
 import { Companies } from './companies';
 import { companyPage } from './company-ui';
-import { JobsError, type IdentityResolver, type JobsDatabase } from "./contracts";
+import { JobsError, type IdentityResolver, type JobsDatabase, type MeetingsAdapterV1 } from "./contracts";
 import { requireEligible } from "./permissions";
 import { JobsPrivacy } from "./privacy";
 import { Marketplace } from './marketplace';
@@ -9,12 +9,14 @@ import { Profiles } from "./profiles";
 import { profilePage, sharedProfilePage, signInPage } from "./profile-ui";
 import { Recruitment } from './recruitment';
 import { applicantReviewPage, applicantsPage, candidateStatusPage, discoveryPage, notificationsPage, recruiterDashboardPage } from './recruiter-ui';
+import { Interviews } from './interviews';
+import { interviewPage, interviewsPage } from './interview-ui';
 
 export function isJobsPath(path: string): boolean { return path === "/jobs" || path.startsWith("/jobs/") || path === "/api/jobs/v1" || path.startsWith("/api/jobs/v1/"); }
 function reply(status: number, body: unknown): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "private, no-store", "Vary": "Cookie", "X-Robots-Tag": "noindex, nofollow", "X-Content-Type-Options": "nosniff" } });
 }
-export async function handleJobs(request: Request, enabled: boolean, db: JobsDatabase | undefined, identity: IdentityResolver): Promise<Response> {
+export async function handleJobs(request: Request, enabled: boolean, db: JobsDatabase | undefined, identity: IdentityResolver, meetings?:MeetingsAdapterV1): Promise<Response> {
   if (!enabled) return reply(404, { error: "not_found" });
   try {
     if (!db) throw new JobsError(503, "jobs_unavailable");
@@ -25,6 +27,7 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     const profiles = new Profiles(db);
     const marketplace = new Marketplace(db);
     const recruitment = new Recruitment(db);
+    const interviews = new Interviews(db,meetings);
     if (path === '/jobs/search' && request.method === 'GET') return searchPage();
     if (path === '/api/jobs/v1/jobs' && request.method === 'GET') return reply(200, await marketplace.search(new URL(request.url)));
     const publicJob = path.match(/^\/api\/jobs\/v1\/jobs\/([\w-]+)\/([\w-]+)$/);
@@ -39,7 +42,7 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
       const result = await profiles.shared(shared[1], actor);
       return path.startsWith('/api/') ? reply(200, { profile: result.fields }) : sharedProfilePage(result.fields, result.indexing);
     }
-    if (!actor) return (path === '/jobs' || path === '/jobs/profile' || path === '/jobs/companies' || path === '/jobs/saved' || path === '/jobs/applications' || path === '/jobs/notifications' || path === '/jobs/recruitment/discovery' || /^\/jobs\/applications\/[\w-]+$/.test(path) || /^\/jobs\/companies\/[\w-]+\/jobs$/.test(path) || path.startsWith('/jobs/recruitment/')) && request.method === 'GET' ? signInPage() : reply(401, {error:'authentication_required'});
+    if (!actor) return (path === '/jobs' || path === '/jobs/profile' || path === '/jobs/companies' || path === '/jobs/saved' || path === '/jobs/applications' || path === '/jobs/notifications' || path === '/jobs/interviews' || path === '/jobs/recruitment/discovery' || /^\/jobs\/applications\/[\w-]+$/.test(path) || /^\/jobs\/interviews\/[\w-]+$/.test(path) || /^\/jobs\/companies\/[\w-]+\/jobs$/.test(path) || path.startsWith('/jobs/recruitment/')) && request.method === 'GET' ? signInPage() : reply(401, {error:'authentication_required'});
     if ((path === '/jobs' || path === '/jobs/profile') && request.method === 'GET') return profilePage();
     if (path === '/api/jobs/v1/status' && request.method === 'GET') {
       const enrolled = await db.prepare('SELECT subject FROM jobs_users WHERE subject=?').bind(actor.subject).first();
@@ -62,6 +65,8 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     if (path === "/api/jobs/v1/closure" && request.method === "POST") { await new JobsPrivacy(db).close(actor); return reply(200, { closed: true }); }
     if(path==='/jobs/recruitment/discovery'&&request.method==='GET'){await recruitment.discover(actor,new URL(request.url));return discoveryPage();}
     if(path==='/jobs/notifications'&&request.method==='GET')return notificationsPage();
+    if(path==='/jobs/interviews'&&request.method==='GET'){await interviews.list(actor,new URL(request.url));return interviewsPage(new URL(request.url).searchParams.get('company')||undefined);}
+    const interviewPageRoute=path.match(/^\/jobs\/interviews\/([\w-]+)$/);if(interviewPageRoute&&request.method==='GET'){await interviews.get(actor,interviewPageRoute[1]);return interviewPage(interviewPageRoute[1]);}
     const candidateStatusPageRoute=path.match(/^\/jobs\/applications\/([\w-]+)$/);if(candidateStatusPageRoute&&request.method==='GET'){await recruitment.candidateCase(actor,candidateStatusPageRoute[1]);return candidateStatusPage(candidateStatusPageRoute[1]);}
     const dashboardPageRoute=path.match(/^\/jobs\/recruitment\/companies\/([\w-]+)$/);if(dashboardPageRoute&&request.method==='GET'){await recruitment.dashboard(actor,dashboardPageRoute[1]);return recruiterDashboardPage(dashboardPageRoute[1]);}
     const applicantsPageRoute=path.match(/^\/jobs\/recruitment\/companies\/([\w-]+)\/jobs\/([\w-]+)\/applicants$/);if(applicantsPageRoute&&request.method==='GET'){await recruitment.applicants(actor,applicantsPageRoute[1],applicantsPageRoute[2],new URL(request.url));return applicantsPage(applicantsPageRoute[1],applicantsPageRoute[2]);}
@@ -69,10 +74,15 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     if(path==='/api/jobs/v1/recruitment/discovery'&&request.method==='GET')return reply(200,await recruitment.discover(actor,new URL(request.url)));
     if(path==='/api/jobs/v1/recruitment/notifications'&&request.method==='GET')return reply(200,await recruitment.notifications(actor));
     const notificationRead=path.match(/^\/api\/jobs\/v1\/recruitment\/notifications\/([\w-]+)\/read$/);if(notificationRead&&request.method==='POST')return reply(200,await recruitment.readNotification(actor,notificationRead[1]));
-    const recruitmentCompany=path.match(/^\/api\/jobs\/v1\/recruitment\/companies\/([\w-]+)\/(dashboard|analytics)$/);if(recruitmentCompany&&request.method==='GET')return reply(200,recruitmentCompany[2]==='dashboard'?await recruitment.dashboard(actor,recruitmentCompany[1]):await recruitment.analytics(actor,recruitmentCompany[1],new URL(request.url)));
+    const recruitmentCompany=path.match(/^\/api\/jobs\/v1\/recruitment\/companies\/([\w-]+)\/(dashboard|analytics)$/);if(recruitmentCompany&&request.method==='GET'){if(recruitmentCompany[2]==='dashboard')return reply(200,await recruitment.dashboard(actor,recruitmentCompany[1]));const url=new URL(request.url),days=Number(url.searchParams.get('days')||30);return reply(200,{...(await recruitment.analytics(actor,recruitmentCompany[1],url)),interviews:await interviews.analytics(actor,recruitmentCompany[1],days)});}
     const assignmentRoute=path.match(/^\/api\/jobs\/v1\/recruitment\/companies\/([\w-]+)\/jobs\/([\w-]+)\/assignments$/);if(assignmentRoute){if(request.method==='GET')return reply(200,await recruitment.assignments(actor,assignmentRoute[1],assignmentRoute[2]));if(request.method==='POST')return reply(200,await recruitment.assign(actor,assignmentRoute[1],assignmentRoute[2],await readBody(request,2048)));}
     const recruiterApplications=path.match(/^\/api\/jobs\/v1\/recruitment\/companies\/([\w-]+)\/jobs\/([\w-]+)\/applications$/);if(recruiterApplications&&request.method==='GET')return reply(200,await recruitment.applicants(actor,recruiterApplications[1],recruiterApplications[2],new URL(request.url)));
     const recruitmentApplication=path.match(/^\/api\/jobs\/v1\/recruitment\/applications\/([\w-]+)(?:\/(candidate|transition|notes|match))?$/);if(recruitmentApplication){const [,id,action]=recruitmentApplication;if(!action&&request.method==='GET')return reply(200,await recruitment.review(actor,id));if(action==='candidate'&&request.method==='GET')return reply(200,await recruitment.candidateCase(actor,id));if(action==='transition'&&request.method==='POST')return reply(200,await recruitment.transition(actor,id,await readBody(request,4096)));if(action==='notes'&&request.method==='GET')return reply(200,await recruitment.notes(actor,id));if(action==='notes'&&request.method==='POST')return reply(201,await recruitment.addNote(actor,id,await readBody(request,4096)));if(action==='match'&&request.method==='POST')return reply(200,await recruitment.match(actor,id,await readBody(request,2048)));}
+    const createInterview=path.match(/^\/api\/jobs\/v1\/recruitment\/applications\/([\w-]+)\/interviews$/);if(createInterview&&request.method==='POST')return reply(201,await interviews.create(actor,createInterview[1],await readBody(request,32768)));
+    if(path==='/api/jobs/v1/interviews/preparation'&&request.method==='GET')return reply(200,interviews.preparation());
+    if(path==='/api/jobs/v1/interviews'&&request.method==='GET')return reply(200,await interviews.list(actor,new URL(request.url)));
+    const calendarRoute=path.match(/^\/api\/jobs\/v1\/interviews\/([\w-]+)\/calendar\.ics$/);if(calendarRoute&&request.method==='GET')return new Response(await interviews.calendar(actor,calendarRoute[1]),{headers:{'Content-Type':'text/calendar; charset=utf-8','Content-Disposition':`attachment; filename="billionjobs-interview-${calendarRoute[1]}.ics"`,'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','X-Content-Type-Options':'nosniff'}});
+    const interviewApi=path.match(/^\/api\/jobs\/v1\/interviews\/([\w-]+)(?:\/(commands|slots|join|feedback|reconcile))?$/);if(interviewApi){const [,id,action]=interviewApi;if(!action&&request.method==='GET')return reply(200,await interviews.get(actor,id));if(action==='commands'&&request.method==='POST')return reply(200,await interviews.command(actor,id,await readBody(request,4096)));if(action==='slots'&&request.method==='POST')return reply(200,await interviews.addRescheduleSlots(actor,id,await readBody(request,8192)));if(action==='join'&&request.method==='POST'){const input=await readBody(request,512) as {displayName?:unknown};return reply(200,await interviews.join(actor,id,input?.displayName as string));}if(action==='feedback'&&request.method==='GET')return reply(200,await interviews.feedback(actor,id));if(action==='feedback'&&request.method==='POST')return reply(200,await interviews.submitFeedback(actor,id,await readBody(request,16384)));if(action==='reconcile'&&request.method==='POST'){await interviews.get(actor,id);return reply(200,await interviews.reconcile(3));}}
     if (path === '/jobs/saved' && request.method === 'GET') return candidateJobsPage('saved');
     if (path === '/jobs/applications' && request.method === 'GET') return candidateJobsPage('applications');
     const jobsManagementPage=path.match(/^\/jobs\/companies\/([\w-]+)\/jobs$/);

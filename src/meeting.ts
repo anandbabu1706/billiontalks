@@ -112,6 +112,8 @@ export type Meeting = {
   accessMode: MeetingAccessMode;
   participants: MeetingParticipant[];
   accessRequests: MeetingAdmissionRequest[];
+  /** Private integration policy. API projections must not expose its allowlist. */
+  integration?: { version: "jobs-interview.v1"; ref: string; authorizedUserIds: string[] };
 };
 
 export type MeetingRecordingMetadata = {
@@ -1022,6 +1024,7 @@ export type CreateMeetingInput = {
   hostUserId: string;
   meetingId?: string;
   accessMode?: MeetingAccessMode | string;
+  integration?: { version: "jobs-interview.v1"; ref: string; authorizedUserIds: string[] };
 };
 
 export type JoinMeetingInput = {
@@ -1044,6 +1047,12 @@ export class MeetingService {
     );
     const meetingId = input.meetingId ?? generateMeetingId();
     if (!/^btm_[A-Za-z0-9_-]{8,64}$/.test(meetingId)) throw new Error("Meeting identifier is invalid.");
+    if (input.integration && (input.integration.version !== "jobs-interview.v1" || !/^[A-Za-z0-9_-]{1,80}$/.test(input.integration.ref) || !Array.isArray(input.integration.authorizedUserIds) || input.integration.authorizedUserIds.length < 2 || input.integration.authorizedUserIds.length > 25 || input.integration.authorizedUserIds.some((value) => typeof value !== "string" || !value.trim()))) throw new Error("Meeting integration policy is invalid.");
+    const existing = input.integration ? await this.repository.getMeeting(meetingId) : undefined;
+    if (existing) {
+      if (existing.integration?.ref !== input.integration?.ref || existing.hostId !== hostUserId) throw new Error("Meeting integration reference conflict.");
+      return existing;
+    }
     const hostParticipantId = generateParticipantId(meetingId, hostUserId);
 
     const hostParticipant: MeetingParticipant = {
@@ -1065,6 +1074,7 @@ export class MeetingService {
       accessMode,
       participants: [hostParticipant],
       accessRequests: [],
+      ...(input.integration ? { integration: { ...input.integration, authorizedUserIds: [...new Set(input.integration.authorizedUserIds)] } } : {}),
     };
 
     const result = await this.mediaProvider.createParticipantMediaConnection(
@@ -1101,6 +1111,7 @@ export class MeetingService {
   ): Promise<MeetingAdmissionRequest> {
     const meeting = await this.getRequiredMeeting(meetingId);
 
+    if (meeting.integration) throw new Error("Use the authorized interview flow to join this meeting.");
     if (meeting.status !== MeetingStatus.ACTIVE) {
       throw new Error("Meeting is not active.");
     }
@@ -1299,6 +1310,7 @@ export class MeetingService {
 
   async joinMeeting(meetingId: string, input: JoinMeetingInput): Promise<MeetingParticipant> {
     const meeting = await this.getRequiredMeeting(meetingId);
+    if (meeting.integration) throw new Error("Use the authorized interview flow to join this meeting.");
     meeting.participants = this.deduplicateParticipants(meeting.participants);
 
     if (meeting.status !== MeetingStatus.ACTIVE) {
@@ -1452,6 +1464,26 @@ export class MeetingService {
       createdAt: new Date().toISOString(),
     });
 
+    return participant;
+  }
+
+  async joinIntegratedMeeting(meetingId: string, integrationRef: string, input: JoinMeetingInput): Promise<MeetingParticipant> {
+    const meeting = await this.getRequiredMeeting(meetingId);
+    if (!meeting.integration || meeting.integration.version !== "jobs-interview.v1" || meeting.integration.ref !== integrationRef) throw new Error("Interview meeting authorization failed.");
+    if (meeting.status !== MeetingStatus.ACTIVE) throw new Error("Meeting is not active.");
+    const userId = normalizeRequiredString(input.userId, "Participant userId");
+    const displayName = normalizeRequiredString(input.displayName, "Participant displayName");
+    if (!meeting.integration.authorizedUserIds.includes(userId)) throw new Error("Interview participant is not authorized.");
+    const existing = meeting.participants.find((participant) => participant.userId === userId);
+    if (existing) {
+      if (existing.state === ParticipantState.REMOVED) throw new Error("You were removed from this meeting.");
+      existing.state = ParticipantState.JOINED; existing.leftAt = undefined; existing.displayName = displayName;
+      await this.repository.saveMeeting(meeting); return existing;
+    }
+    const participant: MeetingParticipant = { id: generateParticipantId(meetingId,userId),meetingId,userId,displayName,role: ParticipantRole.PARTICIPANT,state: ParticipantState.JOINED,joinedAt:new Date().toISOString() };
+    const result=await this.mediaProvider.createParticipantMediaConnection(meeting.id,participant.id);
+    meeting.participants.push(participant);await this.repository.saveMeeting(meeting);
+    await this.repository.setMediaConnection({id:`${meeting.id}:${participant.id}`,meetingId:meeting.id,participantId:participant.id,provider:result.provider,providerSessionId:result.providerSessionId,createdAt:new Date().toISOString()});
     return participant;
   }
 

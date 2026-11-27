@@ -1,5 +1,6 @@
 import { meetingAppearance, meetingLogo } from "./meeting-appearance";
 import { handleJobs, isJobsPath } from "./jobs/api";
+import { JobsMeetingsAdapter } from "./integrations/jobs-meetings";
 import { jobsIdentity } from "./account/jobs-identity";
 import type { JobsDatabase } from "./jobs/contracts";
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
@@ -178,8 +179,9 @@ function meetingSnapshotForViewer(meeting: Meeting, userId: string): Meeting {
   const ownParticipant = ownParticipants.find((participant) => participant.state !== ParticipantState.LEFT);
   const isJoinedMember = ownParticipant?.state === ParticipantState.JOINED;
   const isHost = meeting.hostId === userId && ownParticipant?.role === "HOST";
+  const { integration: _privateIntegration, ...publicMeeting } = meeting;
   return {
-    ...meeting,
+    ...publicMeeting,
     participants: isJoinedMember || isHost ? meeting.participants : ownParticipants,
     accessRequests: isHost ? meeting.accessRequests : ownRequests,
   };
@@ -6421,7 +6423,7 @@ function meetingUiTemplate(): string {
 const routeHandler = {
   async fetch(request: Request, env: WorkerEnv = {}, waitUntil?: (promise: Promise<void>) => void): Promise<Response> {
     const url = new URL(request.url);
-    if (isJobsPath(url.pathname)) return handleJobs(request, env.JOBS_ENABLED === "true", env.JOBS_DB, jobsIdentity(env.ACCOUNT_DB));
+    if (isJobsPath(url.pathname)) return handleJobs(request, env.JOBS_ENABLED === "true", env.JOBS_DB, jobsIdentity(env.ACCOUNT_DB),env.MEETING_STORE?new JobsMeetingsAdapter(getMeetingService(env)):undefined);
     if (url.hostname.toLowerCase() === "www.billiontalks.com") {
       url.protocol = "https:";
       url.hostname = "billiontalks.com";
@@ -7756,7 +7758,7 @@ const routeHandler = {
       try {
         const meeting = await getMeetingService(env).removeParticipant(removalMatch[1], session.userId, body.targetUserId);
         await cleanupSfuParticipant(env, removalMatch[1], body.targetUserId);
-        return withSessionCookie(jsonResponse({ ok: true, data: meeting }), request, session);
+        return withSessionCookie(jsonResponse({ ok: true, data: meetingSnapshotForViewer(meeting, session.userId) }), request, session);
       } catch (error) {
         return withSessionCookie(jsonResponse({ ok: false, error: error instanceof Error ? error.message : "Unable to remove participant." }, 403), request, session);
       }
@@ -7924,7 +7926,7 @@ const routeHandler = {
             );
           }
         }
-        return withSessionCookie(jsonResponse({ ok: true, data: meeting }), request, session);
+        return withSessionCookie(jsonResponse({ ok: true, data: meetingSnapshotForViewer(meeting, session.userId) }), request, session);
       } catch (error) {
         return withSessionCookie(
           jsonResponse(

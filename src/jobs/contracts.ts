@@ -8,6 +8,16 @@ export type Statement = {
   run(): Promise<unknown>;
 };
 export type JobsDatabase = { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<unknown[]> };
+/** Versioned anti-corruption boundary. Jobs receives opaque meeting references only. */
+export type InterviewMeetingActivation = {
+  interviewRef: string; title: string; hostSubject: string; participantSubjects: string[];
+};
+export interface MeetingsAdapterV1 {
+  readonly version: "billiontalks-meetings.v1";
+  activate(input: InterviewMeetingActivation): Promise<{ meetingRef: string; joinPath: string }>;
+  authorizeJoin(meetingRef: string, interviewRef: string, subject: string, displayName: string): Promise<{ joinPath: string }>;
+  revoke(meetingRef: string, interviewRef: string, hostSubject: string): Promise<void>;
+}
 export class JobsError extends Error {
   constructor(public readonly status: number, public readonly code: string) { super(code); }
 }

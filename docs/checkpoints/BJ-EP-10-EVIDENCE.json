@@ -1,0 +1,56 @@
+{
+  "execution": "EP-10 / BJ-V1-005",
+  "date": "2026-11-27",
+  "timezone": "Asia/Calcutta",
+  "branch": "bj-ep-10-interview-integration",
+  "baseline": "bccfe899e272aada5a74af09d8800690ca368906",
+  "documentationBaseline": "7e7a4eb95c171b1f3849c0a346907916fe7444a8",
+  "commands": [
+    "npm run typecheck",
+    "npm run build",
+    "npm test -- tests/jobs-interviews.test.ts --reporter=verbose",
+    "npm test -- tests/jobs-foundation.test.ts tests/jobs-profiles.test.ts tests/jobs-companies.test.ts tests/jobs-marketplace.test.ts tests/jobs-recruitment.test.ts tests/jobs-interviews.test.ts --reporter=json --outputFile=ep10-jobs-tests.json",
+    "npm test -- tests/browser-ui.test.ts tests/calendar-v1-004.test.ts --reporter=verbose",
+    "npm test -- --reporter=json --outputFile=ep10-full-tests.json",
+    "git diff --check"
+  ],
+  "typecheck": "PASS",
+  "dryRunBuild": "PASS_NO_DEPLOYMENT",
+  "focusedTests": {"total": 13, "passed": 13, "failed": 0},
+  "jobsTests": {"total": 95, "passed": 95, "failed": 0},
+  "fullTests": {
+    "total": 522,
+    "passed": 520,
+    "failed": 2,
+    "skipped": 0,
+    "failures": [
+      "BillionTalks browser UI regression tests allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state",
+      "BT-V1-004 calendar and time zones renders authorized schedule records across month, week, and day navigation"
+    ],
+    "comparison": "Exactly the two pre-existing Meetings failures; 13 EP-10 tests added and no new failure."
+  },
+  "changedFiles": [
+    "docs/checkpoints/BJ-EP-10-BENCHMARK.md",
+    "docs/checkpoints/BJ-EP-10-EVIDENCE.json",
+    "docs/checkpoints/BJ-EP-10-LOCAL.md",
+    "docs/checkpoints/BJ-EP-10-MEETINGS-DEFECTS.md",
+    "migrations/jobs/0006_interviews.sql",
+    "scripts/jobs-runtime.mjs",
+    "src/index.ts",
+    "src/integrations/jobs-meetings.ts",
+    "src/jobs/api.ts",
+    "src/jobs/contracts.ts",
+    "src/jobs/intelligence.ts",
+    "src/jobs/interview-ui.ts",
+    "src/jobs/interviews.ts",
+    "src/meeting.ts",
+    "tests/jobs-interviews.test.ts",
+    "tests/jobs-profiles.test.ts"
+  ],
+  "meetingsAdapter": "jobs-meetings-v1",
+  "aiProviderCalls": 0,
+  "emailsSent": 0,
+  "externalNotifications": 0,
+  "additionalCashINR": 0,
+  "remoteOperations": []
+}
