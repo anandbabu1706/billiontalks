@@ -1,0 +1,54 @@
+{
+  "execution": "EP-08 / BJ-V1-004",
+  "date": "2026-11-27",
+  "timezone": "Asia/Calcutta",
+  "branch": "bj-ep-08-recruiter-workspace",
+  "baseline": "ddce9f16e483e07848cd7bd30b9c00c0570972d8",
+  "documentationBaseline": "657f793e1f39cb4ad01f86606c8caa0b66788c0e",
+  "commands": [
+    "npm run typecheck",
+    "npm run build",
+    "npm test -- tests/jobs-recruitment.test.ts --reporter=dot",
+    "npm run test:jobs -- --reporter=dot",
+    "npm test -- --reporter=json --outputFile=ep08-final-tests.json",
+    "git diff --check"
+  ],
+  "typecheck": "PASS",
+  "dryRunBuild": "PASS_NO_DEPLOYMENT",
+  "focusedTests": {"total": 15, "passed": 15, "failed": 0},
+  "jobsTests": {"total": 82, "passed": 82, "failed": 0},
+  "fullTests": {
+    "total": 509,
+    "passed": 507,
+    "failed": 2,
+    "skipped": 0,
+    "failures": [
+      "BillionTalks browser UI regression tests allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state",
+      "BT-V1-004 calendar and time zones renders authorized schedule records across month, week, and day navigation"
+    ],
+    "comparison": "Exactly the two EP-07 pre-existing Meetings failures; 15 EP-08 tests added and no new failure."
+  },
+  "changedFiles": [
+    "docs/checkpoints/BJ-EP-08-BENCHMARK.md",
+    "docs/checkpoints/BJ-EP-08-EVIDENCE.json",
+    "docs/checkpoints/BJ-EP-08-LOCAL.md",
+    "migrations/jobs/0005_recruiter_workspace.sql",
+    "package.json",
+    "scripts/jobs-runtime.mjs",
+    "src/jobs/api.ts",
+    "src/jobs/company-ui.ts",
+    "src/jobs/intelligence.ts",
+    "src/jobs/marketplace-ui.ts",
+    "src/jobs/marketplace.ts",
+    "src/jobs/privacy.ts",
+    "src/jobs/profile-ui.ts",
+    "src/jobs/profiles.ts",
+    "src/jobs/recruiter-ui.ts",
+    "src/jobs/recruitment.ts",
+    "tests/jobs-profiles.test.ts",
+    "tests/jobs-recruitment.test.ts"
+  ],
+  "aiProviderCalls": 0,
+  "additionalCashINR": 0,
+  "remoteOperations": []
+}

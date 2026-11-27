@@ -1,7 +1,7 @@
 import { DAY, JobsError, type Identity, type JobsDatabase } from "./contracts";
 import { requireAssigned, requireEligible, requirePrivacyOperator } from "./permissions";
 
-const PUBLIC_FIELDS = ["name", "headline", "summary", "location", "experience", "education", "skills", "certifications", "photo", "currentEmployer", "openToWork"] as const;
+const PUBLIC_FIELDS = ["name", "headline", "summary", "location", "experience", "education", "skills", "certifications", "photo", "currentEmployer", "openToWork", "preferences"] as const;
 export type ProfileFields = Partial<Record<typeof PUBLIC_FIELDS[number] | "email" | "phone" | "salary" | "savedJobs" | "applications" | "interviews", unknown>>;
 
 /** Allowlist projection. Application snapshots need their own assigned-listing authorization;

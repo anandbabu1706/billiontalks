@@ -99,7 +99,7 @@ describe('EP-05 local synthetic profile workflows',()=>{
     expect(await db.prepare("SELECT payload FROM retained_records WHERE id='application'").first()).toEqual({payload:'{"private":"submission"}'});
   });
   it('rejects foreign ownership, private-field disclosure, unknown fields and invalid dates',async()=>{
-    const bad:unknown[]=[{...input(),subject:'other'},{...input(),visibleFields:['preferences']},{...input(),indexing:true},{...input(),data:{...input().data,email:'private@example.invalid'}},{...input(),data:{...input().data,name:' '}},{...input(),data:{...input().data,experience:[{...input().data.experience[0],end:'2019-12'}]}},{...input(),data:{...input().data,skills:['SQL','sql']}},{...input(),data:{...input().data,experience:Array(21).fill(input().data.experience[0])}}];
+    const bad:unknown[]=[{...input(),subject:'other'},{...input(),visibleFields:['salary']},{...input(),indexing:true},{...input(),data:{...input().data,email:'private@example.invalid'}},{...input(),data:{...input().data,name:' '}},{...input(),data:{...input().data,experience:[{...input().data.experience[0],end:'2019-12'}]}},{...input(),data:{...input().data,skills:['SQL','sql']}},{...input(),data:{...input().data,experience:Array(21).fill(input().data.experience[0])}}];
     for(const body of bad)expect((await request(undefined,'PUT',body)).status).toBe(400);
     expect(await service.get(candidate)).toBeNull();
   });
@@ -175,7 +175,7 @@ describe('EP-05 local synthetic profile workflows',()=>{
       const saved=await new Profiles(instance.jobs).save({subject:'restart'},input());
       await instance.mf.dispose();instance=await createJobsRuntime({enabled:true,localState});
       expect(await new Profiles(instance.jobs).get({subject:'restart'})).toEqual(saved);
-      expect(await instance.jobs.prepare('SELECT COUNT(*) AS n FROM local_migrations').first()).toEqual({n:4});
+      expect(await instance.jobs.prepare('SELECT COUNT(*) AS n FROM local_migrations').first()).toEqual({n:5});
     } finally {await instance.mf.dispose();}
     await expect(createJobsRuntime({localState:'../outside'})).rejects.toThrow('Invalid synthetic state');
   },60000);

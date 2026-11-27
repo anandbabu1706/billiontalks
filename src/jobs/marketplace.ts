@@ -4,7 +4,7 @@ import { PostingQuota, type PostingAction } from './quota';
 
 const EMPLOYMENT = ['FULL_TIME','PART_TIME','CONTRACT','INTERNSHIP','TEMPORARY'] as const;
 const ARRANGEMENT = ['ONSITE','HYBRID','REMOTE'] as const;
-const APPLICATION_FIELDS = ['name','headline','summary','location','experience','education','skills','certifications','openToWork'] as const;
+const APPLICATION_FIELDS = ['name','headline','summary','location','experience','education','skills','certifications','openToWork','preferences'] as const;
 type Employment = typeof EMPLOYMENT[number];
 type Arrangement = typeof ARRANGEMENT[number];
 
@@ -256,7 +256,7 @@ export class Marketplace {
 
   async history(actor:Identity) {
     await this.verified(actor);
-    const rows=await this.db.prepare(`SELECT a.*,json_extract(d.data,'$.title') AS title,json_extract(c.data,'$.name') AS company_name FROM applications a JOIN listing_details d ON d.company=a.company AND d.id=a.listing JOIN companies c ON c.id=a.company WHERE a.candidate=? AND a.restricted=0 AND NOT EXISTS(SELECT 1 FROM deletion_ledger WHERE record_id=a.id) ORDER BY a.created_at DESC,a.id LIMIT 200`).bind(actor.subject).all<ApplicationRow>();
+    const rows=await this.db.prepare(`SELECT a.*,r.status AS recruitment_status,r.revision AS recruitment_revision,json_extract(d.data,'$.title') AS title,json_extract(c.data,'$.name') AS company_name FROM applications a JOIN recruitment_cases r ON r.application=a.id JOIN listing_details d ON d.company=a.company AND d.id=a.listing JOIN companies c ON c.id=a.company WHERE a.candidate=? AND a.restricted=0 AND NOT EXISTS(SELECT 1 FROM deletion_ledger WHERE record_id=a.id) ORDER BY a.created_at DESC,a.id LIMIT 200`).bind(actor.subject).all<ApplicationRow>();
     return rows.results.map(row=>({...row,snapshot:JSON.parse(row.snapshot)}));
   }
 

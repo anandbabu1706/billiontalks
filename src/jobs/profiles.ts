@@ -2,7 +2,7 @@ import { JobsError, type Identity, type JobsDatabase } from './contracts';
 import { requireEligible } from './permissions';
 import { projectProfile } from './privacy';
 
-export const disclosureFields = ['name','headline','summary','location','experience','education','skills','certifications','openToWork'] as const;
+export const disclosureFields = ['name','headline','summary','location','experience','education','skills','certifications','openToWork','preferences'] as const;
 export type Entry = { title: string; organization: string; start: string; end: string; description: string };
 export type ProfileData = {
   name: string; headline: string; summary: string; location: string;
