@@ -1,0 +1,17 @@
+{
+  "executionId": "EP-11 / BJ-V1-007",
+  "date": "2026-11-27",
+  "applicationBaseline": "c08591f970a4c977c98286f045145bda58a27474",
+  "documentationBaseline": "bab49f794fea22a64f62fba6f0f9a2741bf86fec",
+  "scope": "local synthetic development only",
+  "milestoneComplete": false,
+  "focusedGovernanceTests": {"passed": 12, "total": 12},
+  "focusedProfileTests": {"passed": 19, "total": 19},
+  "typescript": "passed",
+  "bundle": "wrangler deploy --dry-run passed; no deployment",
+  "fullRegression": {"passed": 534, "total": 534, "testFilesPassed": 24, "testFilesTotal": 24},
+  "meetingsFixtureCorrections": ["prejoin camera lifecycle assertions", "calendar explicit month navigation"],
+  "localGitHousekeeping": {"exclude": ".git/info/exclude: /.worktrees/", "readmePreserved": true, "preExistingWorktreesPreserved": 7},
+  "releaseBlockers": ["trusted privileged MFA and reauthentication", "administrator bootstrap and complete workflows", "legal/operational qualification", "remote persistence and scheduler qualification", "manual accessibility and security qualification"],
+  "additionalDevelopmentCashINR": 0
+}

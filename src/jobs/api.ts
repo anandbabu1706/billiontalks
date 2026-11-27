@@ -11,6 +11,8 @@ import { Recruitment } from './recruitment';
 import { applicantReviewPage, applicantsPage, candidateStatusPage, discoveryPage, notificationsPage, recruiterDashboardPage } from './recruiter-ui';
 import { Interviews } from './interviews';
 import { interviewPage, interviewsPage } from './interview-ui';
+import { JobsGovernance } from './governance';
+import { administrationPage } from './governance-ui';
 
 export function isJobsPath(path: string): boolean { return path === "/jobs" || path.startsWith("/jobs/") || path === "/api/jobs/v1" || path.startsWith("/api/jobs/v1/"); }
 function reply(status: number, body: unknown): Response {
@@ -61,7 +63,21 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
       await requireEligible(db, actor);
       return reply(200, { eligible: true });
     }
+    const governance=new JobsGovernance(db);
+    const appealRoute=path.match(/^\/api\/jobs\/v1\/enforcement\/([\w-]+)\/appeals$/);
+    if(appealRoute&&request.method==='POST'){const input=await readBody(request,2048) as {reason?:unknown};return reply(201,await governance.appeal(actor,appealRoute[1],input?.reason as string));}
+    const ownCase=path.match(/^\/api\/jobs\/v1\/reports\/([\w-]+)$/);
+    if(ownCase&&request.method==='GET')return reply(200,await governance.ownCase(actor,ownCase[1]));
     await requireEligible(db, actor);
+    if(path==='/api/jobs/v1/reports'&&request.method==='POST')return reply(201,await governance.report(actor,await readBody(request,4096)));
+    if(path==='/jobs/admin'&&request.method==='GET'){await governance.authorize(actor,'DASHBOARD');return administrationPage();}
+    if(path==='/api/jobs/v1/admin/dashboard'&&request.method==='GET')return reply(200,await governance.dashboard(actor));
+    if(path==='/api/jobs/v1/admin/cases'&&request.method==='GET')return reply(200,await governance.cases(actor,new URL(request.url)));
+    if(path==='/api/jobs/v1/admin/audit'&&request.method==='GET')return reply(200,await governance.auditPage(actor,new URL(request.url)));
+    if(path==='/api/jobs/v1/admin/users'&&request.method==='GET')return reply(200,await governance.users(actor,new URL(request.url)));
+    if(path==='/api/jobs/v1/admin/companies'&&request.method==='GET')return reply(200,await governance.companies(actor,new URL(request.url)));
+    if(path==='/api/jobs/v1/admin/operations'&&request.method==='GET')return reply(200,await governance.operationalQueue(actor,new URL(request.url)));
+    if(path==='/api/jobs/v1/admin/analytics'&&request.method==='GET')return reply(200,await governance.operationalAnalytics(actor,Number(new URL(request.url).searchParams.get('days')||30)));
     if (path === "/api/jobs/v1/closure" && request.method === "POST") { await new JobsPrivacy(db).close(actor); return reply(200, { closed: true }); }
     if(path==='/jobs/recruitment/discovery'&&request.method==='GET'){await recruitment.discover(actor,new URL(request.url));return discoveryPage();}
     if(path==='/jobs/notifications'&&request.method==='GET')return notificationsPage();

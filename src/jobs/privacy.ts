@@ -51,6 +51,20 @@ export class JobsPrivacy {
       this.db.prepare("INSERT INTO privacy_audit(actor,action,at) VALUES(?,'JOBS_CLOSED',?)").bind(actor.subject, now),
     ]);
   }
+  /** Caller must supply a trusted recent account reauthentication claim. No recruiter notes,
+   * investigation evidence, other products or shared account credentials are exported. */
+  async exportOwn(actor:Identity){
+    const now=this.clock();if(!actor.reauthenticatedAt||actor.reauthenticatedAt>now||now-actor.reauthenticatedAt>5*60_000)throw new JobsError(403,'reauthentication_required');
+    const approved=await this.db.prepare("SELECT id FROM privacy_requests WHERE subject=? AND kind='EXPORT' AND status='REVIEWING' ORDER BY requested_at DESC LIMIT 1").bind(actor.subject).first();
+    if(!approved)throw new JobsError(403,'export_review_required');
+    const profile=await this.db.prepare('SELECT data,visibility,indexing,updated_at FROM jobs_profiles WHERE subject=?').bind(actor.subject).first<{data:string;visibility:string;indexing:number;updated_at:number}>();
+    const applications=(await this.db.prepare('SELECT id,company,listing,status,snapshot,created_at,updated_at FROM applications WHERE candidate=? ORDER BY created_at DESC LIMIT 1000').bind(actor.subject).all<{id:string;company:string;listing:string;status:string;snapshot:string;created_at:number;updated_at:number}>()).results;
+    const interviews=(await this.db.prepare("SELECT i.id,i.application,i.state,i.confirmed_slot,i.created_at,i.updated_at FROM interviews i JOIN interview_participants p ON p.interview=i.id WHERE p.subject=? ORDER BY i.created_at DESC LIMIT 1000").bind(actor.subject).all()).results;
+    await this.db.prepare("INSERT INTO privacy_audit(actor,action,at) VALUES(?,'EXPORT',?)").bind(actor.subject,now).run();
+    await this.db.prepare("UPDATE privacy_requests SET status='COMPLETED',completed_at=? WHERE subject=? AND kind='EXPORT' AND status='REVIEWING'").bind(now,actor.subject).run();
+    return {product:'BILLIONJOBS',subject:actor.subject,generatedAt:now,profile:profile?{data:JSON.parse(profile.data),visibility:profile.visibility,indexing:!!profile.indexing,updatedAt:profile.updated_at}:null,
+      applications:applications.map(a=>({...a,snapshot:JSON.parse(a.snapshot)})),interviews};
+  }
   async restrict(actor: Identity, record: string, hold: boolean, retainUntil: number | null, reason: string): Promise<void> {
     await requirePrivacyOperator(this.db, actor);
     if (!["LEGAL_HOLD", "STATUTORY_RETENTION", "DISPUTE"].includes(reason) || (retainUntil !== null && !Number.isSafeInteger(retainUntil))) throw new JobsError(400, "invalid_exception");
@@ -63,12 +77,19 @@ export class JobsPrivacy {
   async purge(actor: Identity): Promise<void> {
     await requirePrivacyOperator(this.db, actor);
     const now = this.clock();
+    const policies=(await this.db.prepare("SELECT key,value FROM jobs_policy_versions WHERE key IN ('retention_application_days','retention_moderation_days')").all<{key:string;value:string}>()).results;
+    const configured=Object.fromEntries(policies.map(p=>[p.key,Number(JSON.parse(p.value))]));
+    const applicationDays=configured.retention_application_days??this.days.APPLICATION;
+    const moderationDays=configured.retention_moderation_days??this.days.MODERATION;
+    if(configured.retention_application_days!==undefined&&(!Number.isSafeInteger(applicationDays)||applicationDays<180)||
+      configured.retention_moderation_days!==undefined&&(!Number.isSafeInteger(moderationDays)||moderationDays<30))throw new JobsError(503,'invalid_retention_policy');
     await this.db.batch([
       this.db.prepare(`INSERT OR IGNORE INTO deletion_ledger(record_id,subject,deleted_at)
        SELECT r.id,r.subject,? FROM retained_records r LEFT JOIN retention_exceptions e ON e.record_id=r.id
        WHERE r.ended_at + CASE r.kind WHEN 'APPLICATION' THEN ? WHEN 'CLOSURE' THEN ? ELSE ? END <= ?
-       AND COALESCE(e.hold,0)=0 AND COALESCE(e.retain_until,0)<=?`)
-        .bind(now, this.days.APPLICATION * DAY, this.days.CLOSURE * DAY, this.days.MODERATION * DAY, now, now),
+       AND COALESCE(e.hold,0)=0 AND COALESCE(e.retain_until,0)<=?
+       AND NOT EXISTS(SELECT 1 FROM legal_holds h WHERE h.subject=r.subject AND h.released_at IS NULL)`)
+        .bind(now, applicationDays * DAY, this.days.CLOSURE * DAY, moderationDays * DAY, now, now),
       this.db.prepare("DELETE FROM retention_exceptions WHERE record_id IN (SELECT record_id FROM deletion_ledger) AND hold=0 AND COALESCE(retain_until,0)<=?").bind(now),
       this.db.prepare("DELETE FROM retained_records WHERE id IN (SELECT record_id FROM deletion_ledger) AND NOT EXISTS (SELECT 1 FROM retention_exceptions e WHERE e.record_id=retained_records.id)"),
       this.db.prepare("INSERT INTO privacy_audit(actor,action,at) VALUES(?,'PURGE',?)").bind(actor.subject, now),

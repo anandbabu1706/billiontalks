@@ -2463,7 +2463,7 @@ describe("BillionTalks browser UI regression tests", () => {
   });
 
   it("allows camera cycles ON → OFF → ON repeatedly with live tracks and preview state", async () => {
-    const { document, getUserMediaMock } = await loadRenderedPage();
+    const { document, getUserMediaMock, cameraStreams } = await loadRenderedPage();
 
     document.getElementById("toggleCameraBtn")?.click();
     await flush();
@@ -2483,7 +2483,10 @@ describe("BillionTalks browser UI regression tests", () => {
     await flush();
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
     expect((document.getElementById("toggleCameraBtn") as HTMLButtonElement).textContent).toContain("On");
-    expect(document.querySelector("video.local-preview")).not.toBeNull();
+    // This fixture remains before join: the self tile appears only in the joined room.
+    expect(document.querySelector(".tile.self")).toBeNull();
+    expect(cameraStreams[0].getVideoTracks()[0].stop).toHaveBeenCalled();
+    expect(cameraStreams[1].getVideoTracks()[0].readyState).toBe("live");
   });
 
   it("removes only the selected simulated participant and keeps the rest stable", async () => {

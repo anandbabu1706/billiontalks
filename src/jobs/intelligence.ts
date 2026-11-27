@@ -45,10 +45,10 @@ export function explainMatch(job:ListingData,profile:Profile,config:MatchConfig=
   return {label:'Rules-based matching — human review required',score:denominator?Math.round(points/denominator*100):null,config,criteria,unknown:criteria.filter(c=>c.status==='UNKNOWN').map(c=>c.name),automaticDecision:false};
 }
 
-export type IntelligencePurpose='MATCH_EXPLANATION'|'NATURAL_LANGUAGE_SEARCH'|'JOB_DESCRIPTION_ASSISTANCE'|'RECRUITER_ASSISTANCE'|'INTERVIEW_PREPARATION'|'INTERVIEW_QUESTION_ASSISTANCE'|'INTERVIEWER_ASSISTANCE'|'MULTILINGUAL_INTERVIEW_ASSISTANCE'|'INTERVIEW_SUMMARY_ASSISTANCE'|'SKILL_GAP_EXPLANATION'|'FEEDBACK_ASSISTANCE';
+export type IntelligencePurpose='MATCH_EXPLANATION'|'NATURAL_LANGUAGE_SEARCH'|'JOB_DESCRIPTION_ASSISTANCE'|'RECRUITER_ASSISTANCE'|'INTERVIEW_PREPARATION'|'INTERVIEW_QUESTION_ASSISTANCE'|'INTERVIEWER_ASSISTANCE'|'MULTILINGUAL_INTERVIEW_ASSISTANCE'|'INTERVIEW_SUMMARY_ASSISTANCE'|'SKILL_GAP_EXPLANATION'|'FEEDBACK_ASSISTANCE'|'SCAM_REVIEW'|'SUSPICIOUS_ACTIVITY_REVIEW'|'COMPLAINT_CATEGORIZATION'|'MULTILINGUAL_MODERATION'|'SECURITY_ALERT_REVIEW'|'INVESTIGATION_SUMMARY'|'MODERATION_ASSISTANCE';
 export type IntelligenceProvider={name:string;model:string;version:string;run(input:{purpose:IntelligencePurpose;data:Record<string,unknown>}):Promise<{text:string;attributes?:Record<string,string|number|boolean>}>};
 export type IntelligenceRequest={purpose:IntelligencePurpose;authorized:boolean;consent:boolean;consentRequired:boolean;data:Record<string,unknown>;timeoutMs:number};
-const PURPOSES:IntelligencePurpose[]=['MATCH_EXPLANATION','NATURAL_LANGUAGE_SEARCH','JOB_DESCRIPTION_ASSISTANCE','RECRUITER_ASSISTANCE','INTERVIEW_PREPARATION','INTERVIEW_QUESTION_ASSISTANCE','INTERVIEWER_ASSISTANCE','MULTILINGUAL_INTERVIEW_ASSISTANCE','INTERVIEW_SUMMARY_ASSISTANCE','SKILL_GAP_EXPLANATION','FEEDBACK_ASSISTANCE'];
+const PURPOSES:IntelligencePurpose[]=['MATCH_EXPLANATION','NATURAL_LANGUAGE_SEARCH','JOB_DESCRIPTION_ASSISTANCE','RECRUITER_ASSISTANCE','INTERVIEW_PREPARATION','INTERVIEW_QUESTION_ASSISTANCE','INTERVIEWER_ASSISTANCE','MULTILINGUAL_INTERVIEW_ASSISTANCE','INTERVIEW_SUMMARY_ASSISTANCE','SKILL_GAP_EXPLANATION','FEEDBACK_ASSISTANCE','SCAM_REVIEW','SUSPICIOUS_ACTIVITY_REVIEW','COMPLAINT_CATEGORIZATION','MULTILINGUAL_MODERATION','SECURITY_ALERT_REVIEW','INVESTIGATION_SUMMARY','MODERATION_ASSISTANCE'];
 const FORBIDDEN=/(aadhaar|date.?of.?birth|dob|religion|caste|gender|marital|disability|health|email|phone|address)/i;
 export async function executeRecruitmentExtension(request:IntelligenceRequest,provider?:IntelligenceProvider) {
   if(!PURPOSES.includes(request.purpose)||request.authorized!==true||(request.consentRequired&&request.consent!==true)||!Number.isSafeInteger(request.timeoutMs)||request.timeoutMs<50||request.timeoutMs>2000||!request.data||typeof request.data!=='object'||Array.isArray(request.data))throw new JobsError(403,'intelligence_not_authorized');
@@ -64,4 +64,13 @@ export async function executeRecruitmentExtension(request:IntelligenceRequest,pr
     if(!result||typeof result.text!=='string'||!result.text.trim()||result.text.length>4000||result.attributes&&Object.values(result.attributes).some(value=>!['string','number','boolean'].includes(typeof value)))return {purpose:request.purpose,audit,limits,fallback};
     return {purpose:request.purpose,audit,limits,output:{text:result.text.trim(),attributes:result.attributes||{},provenance:{provider:provider.name,model:provider.model,version:provider.version},humanApprovalRequired:true,automaticAction:false},fallback:null};
   }catch{return {purpose:request.purpose,audit:{requestId,consentRecorded:request.consent,provider:{name:provider.name,model:provider.model,version:provider.version}},limits,fallback};}finally{if(timer!==undefined)clearTimeout(timer);}
+}
+
+export type GovernancePurpose=Extract<IntelligencePurpose,'SCAM_REVIEW'|'SUSPICIOUS_ACTIVITY_REVIEW'|'COMPLAINT_CATEGORIZATION'|'MULTILINGUAL_MODERATION'|'SECURITY_ALERT_REVIEW'|'INVESTIGATION_SUMMARY'|'MODERATION_ASSISTANCE'>;
+const GOVERNANCE_FIELDS=new Set(['ruleIds','category','severity','publicListingExcerpt','redactedCaseSummary','language','signalCount']);
+/** BJ-AI-014/015/019 contract. No provider is wired into Jobs routes. */
+export async function executeGovernanceExtension(input:{purpose:GovernancePurpose;authorized:boolean;caseRef:string;data:Record<string,unknown>},provider?:IntelligenceProvider){
+  if(!input.authorized||!/^[\w-]{1,80}$/.test(input.caseRef)||!input.data||Object.keys(input.data).some(key=>!GOVERNANCE_FIELDS.has(key)))throw new JobsError(403,'governance_intelligence_forbidden');
+  const result=await executeRecruitmentExtension({purpose:input.purpose,authorized:true,consent:false,consentRequired:false,data:input.data,timeoutMs:1000},provider);
+  return {...result,product:'BILLIONJOBS',caseRef:input.caseRef,automaticDecision:false,humanReviewRequired:true};
 }

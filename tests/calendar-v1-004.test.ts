@@ -112,6 +112,13 @@ describe("BT-V1-004 calendar and time zones", () => {
     zoneSelect.value = "America/Los_Angeles";
     zoneSelect.dispatchEvent(new Event("change", { bubbles: true }));
 
+    // Navigate the synthetic October fixture into view from the actual current month.
+    const localMonth = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles', year: 'numeric', month: 'numeric',
+    }).formatToParts(new Date()).map(part => [part.type, Number(part.value)]));
+    const offset = 2026 * 12 + 9 - (localMonth.year * 12 + localMonth.month - 1);
+    for (let step = 0; step < Math.abs(offset); step += 1) click(offset < 0 ? '#previousPeriod' : '#nextPeriod');
+
     const selectedDate = document.querySelector<HTMLButtonElement>('#monthView [data-date="2026-10-13"]');
     expect(selectedDate?.textContent).toContain("International planning");
     expect(selectedDate?.textContent).toContain("Cancelled planning");
