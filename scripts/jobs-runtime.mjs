@@ -29,7 +29,7 @@ export async function createJobsRuntime({ enabled = false, port = 0, localState 
     const accounts = await mf.getD1Database('ACCOUNT_DB'); const jobs = await mf.getD1Database('JOBS_DB');
     for (const [db, files, separator] of [
       [accounts, ['migrations/0001_accounts.sql','migrations/0003_account_sessions.sql'], /;\s*(?:\r?\n|$)/],
-      [jobs, ['migrations/jobs/0001_foundation.sql','migrations/jobs/0002_profiles.sql','migrations/jobs/0003_companies.sql','migrations/jobs/0004_marketplace.sql','migrations/jobs/0005_recruiter_workspace.sql','migrations/jobs/0006_interviews.sql','migrations/jobs/0007_governance.sql'], /-- break\s*\r?\n/],
+      [jobs, ['migrations/jobs/0001_foundation.sql','migrations/jobs/0002_profiles.sql','migrations/jobs/0003_companies.sql','migrations/jobs/0004_marketplace.sql','migrations/jobs/0005_recruiter_workspace.sql','migrations/jobs/0006_interviews.sql','migrations/jobs/0007_governance.sql','migrations/jobs/0008_available_owners.sql'], /-- break\s*\r?\n/],
     ]) {
       await db.prepare('CREATE TABLE IF NOT EXISTS local_migrations(name TEXT PRIMARY KEY)').run();
       for (const file of files) {
@@ -38,7 +38,22 @@ export async function createJobsRuntime({ enabled = false, port = 0, localState 
         await db.batch([...sql.split(separator).filter(s=>s.trim()).map(s=>db.prepare(s)), db.prepare('INSERT INTO local_migrations VALUES(?)').bind(file)]);
       }
     }
-    return { mf, accounts, jobs };
+    // The bootstrap handle exists only on this in-process Miniflare fixture.
+    async function bootstrapOwner(subject) {
+      const account = await accounts.prepare("SELECT id FROM accounts WHERE id=? AND email_normalized=? AND status='ACTIVE' AND email_verified_at IS NOT NULL")
+        .bind(subject, subject + '@example.invalid').first();
+      if (!account) throw new Error('Synthetic verified account required');
+      const now = Date.now();
+      const result = await jobs.batch([
+        jobs.prepare(`INSERT INTO admin_grants SELECT subject,'BILLIONJOBS','PLATFORM_OWNER','local_fixture',?,NULL FROM jobs_users
+          WHERE subject=? AND eligible=1 AND restricted=0 AND closed_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM admin_grants WHERE product='BILLIONJOBS' AND role='PLATFORM_OWNER')`).bind(now,subject),
+        jobs.prepare(`INSERT INTO admin_audit SELECT ?,?,'BILLIONJOBS','ROLE_MANAGEMENT','USER',?,'LOCAL_BOOTSTRAP','SUCCESS',NULL,? WHERE changes()=1`)
+          .bind(crypto.randomUUID(),subject,subject,now)
+      ]);
+      if (result[0].meta.changes !== 1) throw new Error('Local owner bootstrap unavailable');
+    }
+    return { mf, accounts, jobs, bootstrapOwner };
   } catch (error) { await mf.dispose(); throw error; }
 }
 export async function seedIdentity(db, id = 'synthetic_candidate', token = 's'.repeat(43)) {

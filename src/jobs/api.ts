@@ -11,8 +11,8 @@ import { Recruitment } from './recruitment';
 import { applicantReviewPage, applicantsPage, candidateStatusPage, discoveryPage, notificationsPage, recruiterDashboardPage } from './recruiter-ui';
 import { Interviews } from './interviews';
 import { interviewPage, interviewsPage } from './interview-ui';
-import { JobsGovernance } from './governance';
-import { administrationPage } from './governance-ui';
+import { JobsGovernance, type AdminRole } from './governance';
+import { administrationPage, directoryPage, employerVerificationPage, roleManagementPage } from './governance-ui';
 
 export function isJobsPath(path: string): boolean { return path === "/jobs" || path.startsWith("/jobs/") || path === "/api/jobs/v1" || path.startsWith("/api/jobs/v1/"); }
 function reply(status: number, body: unknown): Response {
@@ -72,7 +72,42 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     if(companyCase&&request.method==='GET')return reply(200,await governance.companyCaseStatus(actor,companyCase[1],companyCase[2]));
     await requireEligible(db, actor);
     if(path==='/api/jobs/v1/reports'&&request.method==='POST')return reply(201,await governance.report(actor,await readBody(request,4096)));
-    if(path==='/jobs/admin'&&request.method==='GET'){await governance.authorize(actor,'DASHBOARD');return administrationPage();}
+    if(path==='/jobs/admin'&&request.method==='GET'){const allowed=await governance.authorize(actor,'DASHBOARD');return administrationPage(allowed.has('CASE_READ'),allowed.has('ROLE_GRANT'));}
+    if((path==='/jobs/admin/users'||path==='/jobs/admin/companies') && request.method==='GET'){
+      const allowed=await governance.authorize(actor,'DASHBOARD');
+      return directoryPage(path.endsWith('/users')?'users':'companies',allowed.has('CASE_DECIDE'));
+    }
+    const employerEvidence=path.match(/^\/api\/jobs\/v1\/companies\/([\w-]+)\/verification$/);
+    const verificationPage=path.match(/^\/jobs\/(admin\/)?companies\/([\w-]+)\/verification$/);
+    if(verificationPage && request.method==='GET'){
+      await governance.employerEvidence(actor,verificationPage[2],!!verificationPage[1]);
+      return employerVerificationPage(verificationPage[2],!!verificationPage[1]);
+    }
+    if(employerEvidence && request.method==='GET')return reply(200,await governance.employerEvidence(actor,employerEvidence[1],false));
+    if(employerEvidence && request.method==='POST')return reply(200,await governance.submitEmployerEvidence(actor,employerEvidence[1],await readBody(request,1024)));
+    const employerReview=path.match(/^\/api\/jobs\/v1\/admin\/companies\/([\w-]+)\/verification$/);
+    if(employerReview && request.method==='GET')return reply(200,await governance.employerEvidence(actor,employerReview[1],true));
+    if(employerReview && request.method==='POST'){
+      const body=await readBody(request,1024) as {state:'IN_REVIEW'|'VERIFIED'|'REJECTED'|'EXPIRED';reference:string;revision:number};
+      if(!body || typeof body!=='object')throw new JobsError(400,'invalid_verification');
+      return reply(200,await governance.reviewEmployerVerification(actor,employerReview[1],body.state,body.reference,body.revision));
+    }
+    if(path==='/jobs/admin/roles' && request.method==='GET'){
+      await governance.authorize(actor,'ROLE_GRANT');
+      return roleManagementPage();
+    }
+    if(path==='/api/jobs/v1/admin/roles'){
+      if(request.method==='GET')return reply(200,await governance.roleDirectory(actor,new URL(request.url)));
+      if(request.method==='POST'){
+        const body=await readBody(request,1024) as Record<string,unknown>;
+        if(!body || typeof body.subject!=='string' || typeof body.role!=='string' ||
+          Object.keys(body).some(key=>!['subject','role','action'].includes(key)))throw new JobsError(400,'invalid_role_command');
+        if(body.action==='grant')await governance.grantRole(actor,body.subject,body.role as AdminRole);
+        else if(body.action==='revoke')await governance.revokeRole(actor,body.subject,body.role as AdminRole);
+        else throw new JobsError(400,'invalid_role_command');
+        return reply(200,{subject:body.subject,role:body.role,action:body.action});
+      }
+    }
     if(path==='/api/jobs/v1/admin/dashboard'&&request.method==='GET')return reply(200,await governance.dashboard(actor));
     if(path==='/api/jobs/v1/admin/cases'&&request.method==='GET')return reply(200,await governance.cases(actor,new URL(request.url)));
     if(path==='/api/jobs/v1/admin/audit'&&request.method==='GET')return reply(200,await governance.auditPage(actor,new URL(request.url)));
@@ -170,6 +205,7 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     return reply(404, { error: "not_found" });
   } catch (error) {
     // Never log raw database errors, request bodies, cookies or account details.
+    if(String(error).includes('final_owner_protected'))return reply(409,{error:'final_owner_protected'});
     const code = String(error).match(/company_(owner_protected|forbidden|conflict|restricted|duplicate_invitation|invalid_invitation|already_member|rate_limit)\b/)?.[0];
     if (code) return reply(code === 'company_rate_limit' ? 429 : ['company_forbidden','company_restricted'].includes(code) ? 403 : code === 'company_invalid_invitation' ? 404 : 409, {error:code});
     return error instanceof JobsError ? reply(error.status, { error: error.code }) : reply(503, { error: "jobs_unavailable" });

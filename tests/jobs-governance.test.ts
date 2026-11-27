@@ -21,7 +21,8 @@ beforeAll(async()=>{runtime=await createJobsRuntime({enabled:true});for(const [s
 afterAll(async()=>{await runtime?.mf.dispose();});
 
 it('denies administrative authority without MFA, role and recent reauthentication',async()=>{
-  await runtime.jobs.prepare("INSERT INTO admin_grants VALUES('owner','BILLIONJOBS','PLATFORM_OWNER','synthetic_fixture',?,NULL)").bind(now()).run();
+  await runtime.bootstrapOwner('owner');
+  await expect(runtime.bootstrapOwner('stranger')).rejects.toThrow('bootstrap unavailable');
   await expect(governance.dashboard({subject:'owner'})).rejects.toMatchObject({code:'admin_mfa_required'});
   await expect(governance.dashboard({subject:'stranger',privilegedMfaAt:now()})).rejects.toMatchObject({code:'admin_forbidden'});
   const summary=await governance.dashboard(owner());expect(summary.counts).toMatchObject({users:3,restricted_users:0});
@@ -197,4 +198,95 @@ it('renders a responsive, labeled administration workspace without case details 
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
     expect(html).not.toContain('Synthetic report');
   }finally{dom.window.close();}
+});
+
+it('changes delegated access through the role form, scoped dashboard and real Jobs router',async()=>{
+  const {handleJobs}=await import('../src/jobs/api');
+  await runtime.jobs.prepare("INSERT INTO jobs_users(subject,eligible,attested_at) VALUES('role-reviewer',1,0)").run();
+  const base='http://localhost';
+  // Only this test injects a trusted resolver. The production resolver still reads the shared session.
+  const fetchAs=(subject:string,path:string,init:RequestInit={},recent=true)=>{
+    const headers=new Headers(init.headers);
+    headers.set('Origin',base);
+    const request=new Request(new URL(path,base),{...init,headers});
+    return handleJobs(request,true,runtime.jobs,async()=>({subject,privilegedMfaAt:now(),reauthenticatedAt:recent?now():0}));
+  };
+  const url='/api/jobs/v1/admin/roles';
+  const page=await fetchAs('owner','/jobs/admin/roles');
+  expect(page.status).toBe(200);
+  const dom=new JSDOM(await page.text(),{url:base+'/jobs/admin/roles',runScripts:'outside-only'});
+  try {
+    dom.window.fetch=(path,init)=>fetchAs('owner',String(path),init);
+    dom.window.eval(dom.window.document.querySelector('script')!.textContent!);
+    const doc=dom.window.document;
+    const select=doc.querySelector('select')!;
+    await expect.poll(()=>select.options.length).toBe(7);
+    doc.querySelector('input')!.value='role-reviewer';
+    select.value='AUDITOR';
+    doc.querySelector<HTMLButtonElement>('button[value="grant"]')!.click();
+    await expect.poll(()=>doc.querySelector('ul')!.textContent).toContain('role-reviewer — AUDITOR');
+    for(const [kind,q] of [['users','role-reviewer'],['companies','Synthetic']]){
+      const page=await fetchAs('owner','/jobs/admin/'+kind);
+      expect(page.status).toBe(200);
+      const data=await fetchAs('owner','/api/jobs/v1/admin/'+kind+'?q='+q);
+      expect(data.status).toBe(200);
+      expect((await data.json() as {rows:unknown[]}).rows.length).toBeGreaterThan(0);
+      const literal=await fetchAs('owner','/api/jobs/v1/admin/'+kind+'?q=%25');
+      expect((await literal.json() as {rows:unknown[]}).rows).toEqual([]);
+    }
+    const analytics=await fetchAs('role-reviewer','/api/jobs/v1/admin/analytics');
+    expect(Object.keys((await analytics.json() as {counts:object}).counts)).toEqual(['admin_events']);
+    expect((await fetchAs('role-reviewer','/api/jobs/v1/admin/operations')).status).toBe(403);
+    const dashboard=await fetchAs('role-reviewer','/api/jobs/v1/admin/dashboard');
+    expect(dashboard.status).toBe(200);
+    expect(Object.keys((await dashboard.json() as {counts:object}).counts).sort()).toEqual(['active_jobs','companies','recruiters','users']);
+    expect((await fetchAs('role-reviewer',url)).status).toBe(403);
+    const command={method:'POST',headers:{'X-Jobs-Request':'1','Content-Type':'application/json'},body:JSON.stringify({action:'revoke',subject:'role-reviewer',role:'AUDITOR'})};
+    expect((await fetchAs('owner',url,command,false)).status).toBe(403);
+    select.value='AUDITOR';
+    doc.querySelector<HTMLButtonElement>('button[value="revoke"]')!.click();
+    await expect.poll(()=>doc.querySelector('ul')!.textContent).not.toContain('role-reviewer — AUDITOR');
+    expect((await fetchAs('role-reviewer','/api/jobs/v1/admin/dashboard')).status).toBe(403);
+  } finally {dom.window.close();}
+});
+
+it('binds employer evidence to the company and serializes competing verification decisions',async()=>{
+  const {handleJobs}=await import('../src/jobs/api');
+  const companyId=crypto.randomUUID();
+  await runtime.jobs.prepare("INSERT INTO jobs_users(subject,eligible,attested_at) VALUES('evidence-owner',1,0)").run();
+  await runtime.jobs.prepare("INSERT INTO companies(id,owner,data,created_at) VALUES(?,'evidence-owner','{}',?)").bind(companyId,now()).run();
+  const path='companies/'+companyId+'/verification', reference='synthetic:employer-document';
+  async function call(subject:string,route:string,data?:object){
+    const req=new Request('http://localhost/api/jobs/v1/'+route,{method:data?'POST':'GET',headers:{Origin:'http://localhost','X-Jobs-Request':'1','Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
+    return handleJobs(req,true,runtime.jobs,async()=>({subject,privilegedMfaAt:now(),reauthenticatedAt:now()}));
+  }
+  const review=(state:string,revision:number)=>call('owner','admin/'+path,{state,reference,revision});
+  expect((await call('owner',path)).status).toBe(403);
+  expect((await call('evidence-owner',path,{reference,revision:0})).status).toBe(200);
+  expect((await call('evidence-owner','admin/'+path)).status).toBe(403);
+  expect((await review('VERIFIED',1)).status).toBe(409);
+  expect((await review('IN_REVIEW',1)).status).toBe(200);
+  const outcomes=await Promise.all([review('VERIFIED',2),review('VERIFIED',2)]);
+  expect(outcomes.map(r=>r.status).sort()).toEqual([200,409]);
+  expect((await review('UNVERIFIED',3)).status).toBe(200);
+  expect((await call('evidence-owner',path,{reference,revision:4})).status).toBe(200);
+  expect((await review('IN_REVIEW',5)).status).toBe(200);
+  expect((await review('REJECTED',6)).status).toBe(200);
+  expect(await (await call('evidence-owner',path)).json()).toMatchObject({state:'REJECTED',revision:7});
+});
+
+it('preserves an available owner across simultaneous suspensions, closure and grant revocation',async()=>{
+  const db=runtime.jobs;
+  const other='backup-owner';
+  await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(other).run();
+  await governance.grantRole(owner(),other,'PLATFORM_OWNER');
+  const cases=await Promise.all(['owner',other].map(subject=>governance.report({subject:other},{kind:'CANDIDATE',targetRef:subject,category:'ABUSE',detail:'Synthetic fixture'})));
+  const suspended=await Promise.allSettled(cases.map((c,i)=>governance.enforce(owner(),{caseId:c.id,targetKind:'USER',targetRef:i?other:'owner',kind:'JOBS_TEMP',reasonCode:'REVIEW',expiresAt:now()+60000})));
+  expect(suspended.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+  const rows=(await db.prepare('SELECT subject FROM available_jobs_owners').all<{subject:string}>()).results;
+  expect(rows).toHaveLength(1);
+  const remaining=rows[0].subject;
+  await expect(db.prepare('UPDATE jobs_users SET restricted=1 WHERE subject=?').bind(remaining).run()).rejects.toThrow('final_owner_protected');
+  await expect(db.prepare('UPDATE jobs_users SET closed_at=? WHERE subject=?').bind(now(),remaining).run()).rejects.toThrow('final_owner_protected');
+  await expect(db.prepare("UPDATE admin_grants SET revoked_at=? WHERE subject=? AND role='PLATFORM_OWNER'").bind(now(),remaining).run()).rejects.toThrow('final_owner_protected');
 });

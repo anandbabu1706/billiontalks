@@ -1,5 +1,5 @@
 import { identifier, JobsError, type Identity, type JobsDatabase } from './contracts';
-import { requireEligible } from './permissions';
+import { requireCompany, requireEligible } from './permissions';
 import { digest } from './companies';
 
 export type AdminRole='PLATFORM_OWNER'|'PRODUCT_ADMIN'|'SECURITY_ADMIN'|'MODERATOR'|'SUPPORT'|'PRIVACY_ADMIN'|'AUDITOR';
@@ -28,10 +28,12 @@ export class JobsGovernance {
     if(!fresh(actor.privilegedMfaAt,this.clock(),15*60_000))throw new JobsError(403,'admin_mfa_required');
     if(highImpact&&!fresh(actor.reauthenticatedAt,this.clock(),5*60_000))throw new JobsError(403,'admin_reauthentication_required');
     const grants=(await this.db.prepare("SELECT role FROM admin_grants WHERE subject=? AND product='BILLIONJOBS' AND revoked_at IS NULL").bind(actor.subject).all<{role:AdminRole}>()).results;
-    if(!grants.some(g=>permissions[g.role]?.includes(permission)))throw new JobsError(403,'admin_forbidden');
+    const allowed = new Set(grants.flatMap(grant => permissions[grant.role] || []));
+    if (!allowed.has(permission)) throw new JobsError(403,'admin_forbidden');
+    return allowed;
   }
   async dashboard(actor:Identity){
-    await this.authorize(actor,'DASHBOARD');
+    const allowed = await this.authorize(actor,'DASHBOARD');
     const counts=await this.db.prepare(`SELECT
       (SELECT count(*) FROM jobs_users WHERE eligible=1 AND closed_at IS NULL) users,
       (SELECT count(*) FROM jobs_users WHERE restricted=1 AND closed_at IS NULL) restricted_users,
@@ -46,7 +48,15 @@ export class JobsGovernance {
       (SELECT count(*) FROM legal_holds WHERE released_at IS NULL AND review_at<?) overdue_hold_reviews,
       (SELECT count(*) FROM interview_meeting_outbox WHERE status IN ('PENDING','FAILED')) operational_failures,
       (SELECT count(*) FROM fraud_signals WHERE status='OPEN') fraud_signals`).bind(this.clock(),this.clock(),this.clock()).first();
-    await this.audit(actor,'OPERATIONS','DASHBOARD','BILLIONJOBS','READ');return {asOf:this.clock(),counts};
+    const required:Record<string,AdminPermission> = {
+      users:'DASHBOARD', companies:'DASHBOARD', recruiters:'DASHBOARD', active_jobs:'DASHBOARD',
+      restricted_users:'ENFORCE', pending_cases:'CASE_READ', pending_appeals:'APPEAL_REVIEW',
+      privacy_requests:'PRIVACY_REVIEW', overdue_hold_reviews:'PRIVACY_REVIEW',
+      incidents:'INCIDENT', overdue_incident_reviews:'INCIDENT', operational_failures:'INCIDENT', fraud_signals:'CASE_DECIDE'
+    };
+    const visible = Object.fromEntries(Object.entries(counts || {}).filter(([key]) => allowed.has(required[key])));
+    await this.audit(actor,'OPERATIONS','DASHBOARD','BILLIONJOBS','READ');
+    return {asOf:this.clock(),counts:visible};
   }
   async cases(actor:Identity,url:URL){await this.authorize(actor,'CASE_READ');const {limit,offset}=page(url);const status=url.searchParams.get('status')||'';
     if(status&&!['OPEN','ASSIGNED','WAITING','RESOLVED','CLOSED'].includes(status))throw new JobsError(400,'invalid_status');
@@ -160,21 +170,59 @@ export class JobsGovernance {
     ]);
     await this.audit(actor,'OWNERSHIP','COMPANY',companyId,'RETIRE');return {company:companyId,retired:true};
   }
+  async roleDirectory(actor:Identity,url:URL) {
+    await this.authorize(actor,'ROLE_GRANT');
+    const {limit,offset}=page(url);
+    const rows=(await this.db.prepare(`SELECT subject,role,granted_at FROM admin_grants
+      WHERE product='BILLIONJOBS' AND revoked_at IS NULL
+      ORDER BY subject,role LIMIT ? OFFSET ?`).bind(limit,offset).all()).results;
+    await this.audit(actor,'ROLE_MANAGEMENT','GRANTS','BILLIONJOBS','LIST');
+    return {rows,limit,offset,roles:permissions};
+  }
+  private eligibleOwners() {
+    return `SELECT g.subject FROM admin_grants g JOIN jobs_users u ON g.subject=u.subject
+      WHERE g.product='BILLIONJOBS' AND g.role='PLATFORM_OWNER' AND g.revoked_at IS NULL
+      AND u.eligible=1 AND u.restricted=0 AND u.closed_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM enforcement_actions e WHERE e.target_kind='USER' AND e.target_ref=g.subject
+        AND e.kind IN ('JOBS_TEMP','JOBS_PERMANENT','EMERGENCY') AND e.revoked_at IS NULL
+        AND e.starts_at<=? AND (e.expires_at IS NULL OR e.expires_at>?))`;
+  }
   async grantRole(actor:Identity,subject:string,role:AdminRole){
-    await this.authorize(actor,'ROLE_GRANT',true);identifier(subject);if(subject===actor.subject)throw new JobsError(403,'self_grant_forbidden');
-    if(!(role in permissions))throw new JobsError(400,'invalid_role');
-    const target=await this.db.prepare('SELECT subject FROM jobs_users WHERE subject=? AND eligible=1 AND restricted=0 AND closed_at IS NULL').bind(subject).first();if(!target)throw new JobsError(404,'subject_not_found');
-    await this.db.prepare("INSERT INTO admin_grants VALUES(?,'BILLIONJOBS',?,?,?,NULL) ON CONFLICT(subject,product,role) DO UPDATE SET granted_by=excluded.granted_by,granted_at=excluded.granted_at,revoked_at=NULL").bind(subject,role,actor.subject,this.clock()).run();
-    await this.audit(actor,'ROLE_MANAGEMENT','USER',subject,'GRANT_'+role);
+    await this.authorize(actor,'ROLE_GRANT',true);
+    identifier(subject);
+    if(subject===actor.subject)throw new JobsError(403,'self_grant_forbidden');
+    if(typeof role!=='string'||!Object.prototype.hasOwnProperty.call(permissions,role))throw new JobsError(400,'invalid_role');
+    const now=this.clock();
+    const target=await this.db.prepare('SELECT subject FROM jobs_users WHERE subject=? AND eligible=1 AND restricted=0 AND closed_at IS NULL').bind(subject).first();
+    if(!target)throw new JobsError(404,'subject_not_found');
+    const grant=this.db.prepare(`INSERT INTO admin_grants(subject,product,role,granted_by,granted_at,revoked_at)
+      SELECT subject,'BILLIONJOBS',?,?,?,NULL FROM jobs_users WHERE subject=? AND eligible=1 AND restricted=0 AND closed_at IS NULL
+      AND ? IN (${this.eligibleOwners()})
+      ON CONFLICT(subject,product,role) DO UPDATE SET granted_by=excluded.granted_by,granted_at=excluded.granted_at,revoked_at=NULL
+      WHERE admin_grants.revoked_at IS NOT NULL`).bind(role,actor.subject,now,subject,actor.subject,now,now);
+    await this.db.batch([grant,this.roleAudit(actor,subject,'GRANT_'+role,now)]);
+    await this.authorize(actor,'ROLE_GRANT',true);
+  }
+  private roleAudit(actor:Identity,subject:string,action:string,at:number){
+    return this.db.prepare(`INSERT INTO admin_audit
+      SELECT ?,?,'BILLIONJOBS','ROLE_MANAGEMENT','USER',?,?,'SUCCESS',NULL,? WHERE changes()>0`)
+      .bind(crypto.randomUUID(),actor.subject,subject,action,at);
   }
   async revokeRole(actor:Identity,subject:string,role:AdminRole){
-    await this.authorize(actor,'ROLE_GRANT',true);identifier(subject);if(!(role in permissions))throw new JobsError(400,'invalid_role');
-    if(role==='PLATFORM_OWNER'){
-      const owners=await this.db.prepare("SELECT count(*) n FROM admin_grants WHERE product='BILLIONJOBS' AND role='PLATFORM_OWNER' AND revoked_at IS NULL").first<{n:number}>();
-      if((owners?.n||0)<=1)throw new JobsError(409,'final_owner_protected');
+    await this.authorize(actor,'ROLE_GRANT',true);
+    identifier(subject);
+    if(typeof role!=='string'||!Object.prototype.hasOwnProperty.call(permissions,role))throw new JobsError(400,'invalid_role');
+    const now=this.clock(),owners=this.eligibleOwners();
+    const revoke=this.db.prepare(`UPDATE admin_grants SET revoked_at=?
+      WHERE subject=? AND product='BILLIONJOBS' AND role=? AND revoked_at IS NULL AND ? IN (${owners})
+      AND (role<>'PLATFORM_OWNER' OR EXISTS (SELECT 1 FROM (${owners}) remaining WHERE remaining.subject<>?))`)
+      .bind(now,subject,role,actor.subject,now,now,now,now,subject);
+    await this.db.batch([revoke,this.roleAudit(actor,subject,'REVOKE_'+role,now)]);
+    const active=await this.db.prepare("SELECT subject FROM admin_grants WHERE subject=? AND product='BILLIONJOBS' AND role=? AND revoked_at IS NULL").bind(subject,role).first();
+    if(active){
+      await this.authorize(actor,'ROLE_GRANT',true);
+      throw new JobsError(409,role==='PLATFORM_OWNER'?'final_owner_protected':'role_conflict');
     }
-    await this.db.prepare("UPDATE admin_grants SET revoked_at=? WHERE subject=? AND product='BILLIONJOBS' AND role=? AND revoked_at IS NULL").bind(this.clock(),subject,role).run();
-    await this.audit(actor,'ROLE_MANAGEMENT','USER',subject,'REVOKE_'+role);
   }
   async requestPrivacy(actor:Identity,kind:'EXPORT'|'DELETE'){
     await requireEligible(this.db,actor);if(!fresh(actor.reauthenticatedAt,this.clock(),5*60_000))throw new JobsError(403,'reauthentication_required');
@@ -283,7 +331,7 @@ export class JobsGovernance {
     const result=await this.db.prepare('UPDATE fraud_signals SET status=?,reviewed_by=?,reviewed_at=? WHERE id=? AND status=\'OPEN\' RETURNING target_kind,target_ref').bind(refer?'REFERRED':'DISMISSED',actor.subject,this.clock(),id).first<{target_kind:string;target_ref:string}>();
     if(!result)throw new JobsError(409,'signal_conflict');await this.audit(actor,'FRAUD_REVIEW',result.target_kind,result.target_ref,refer?'REFER':'DISMISS');return {id,status:refer?'REFERRED':'DISMISSED'};
   }
-  async operationalQueue(actor:Identity,url:URL){await this.authorize(actor,'DASHBOARD');const {limit,offset}=page(url);
+  async operationalQueue(actor:Identity,url:URL){await this.authorize(actor,'INCIDENT');const {limit,offset}=page(url);
     const rows=(await this.db.prepare("SELECT id,interview,operation,status,attempts,next_attempt_at,last_error,updated_at FROM interview_meeting_outbox WHERE status IN ('PENDING','FAILED') ORDER BY updated_at DESC,id LIMIT ? OFFSET ?").bind(limit,offset).all()).results;
     await this.audit(actor,'OPERATIONS','OUTBOX','BILLIONJOBS','LIST');return {rows,limit,offset};
   }
@@ -295,10 +343,10 @@ export class JobsGovernance {
     const rows=(await this.db.prepare(`SELECT subject,eligible,restricted,closed_at,visibility,indexing,
       (SELECT count(*) FROM enforcement_actions e WHERE e.target_kind='USER' AND e.target_ref=u.subject AND e.revoked_at IS NULL
       AND e.starts_at<=? AND (e.expires_at IS NULL OR e.expires_at>?)) active_actions
-      FROM jobs_users u WHERE (?='*' OR subject LIKE ? ESCAPE '\') ORDER BY subject LIMIT ? OFFSET ?`).bind(this.clock(),this.clock(),query,'%'+query.replace(/[\\%_]/g,'\\$&')+'%',limit,offset).all()).results;
+      FROM jobs_users u WHERE (?='*' OR subject LIKE ? ESCAPE '\\') ORDER BY subject LIMIT ? OFFSET ?`).bind(this.clock(),this.clock(),query,'%'+query.replace(/[\\%_]/g,'\\$&')+'%',limit,offset).all()).results;
     await this.audit(actor,'ACCOUNT_ADMIN','USER_DIRECTORY','BILLIONJOBS','LIST');return {rows,limit,offset,scope:'BILLIONJOBS',sharedAccountStatus:'outside_jobs_scope'};
   }
-  async operationalAnalytics(actor:Identity,days:number){await this.authorize(actor,'DASHBOARD');if(!Number.isSafeInteger(days)||days<1||days>90)throw new JobsError(400,'invalid_period');
+  async operationalAnalytics(actor:Identity,days:number){const allowed=await this.authorize(actor,'DASHBOARD');if(!Number.isSafeInteger(days)||days<1||days>90)throw new JobsError(400,'invalid_period');
     const end=this.clock(),start=end-days*86400000;
     const counts=await this.db.prepare(`SELECT
       (SELECT count(*) FROM moderation_cases WHERE created_at>=? AND created_at<?) reported,
@@ -310,23 +358,56 @@ export class JobsGovernance {
       (SELECT count(*) FROM admin_audit WHERE product='BILLIONJOBS' AND at>=? AND at<?) admin_events`)
       .bind(start,end,start,end,start,end,start,end,start,end,start,end,start,end).first<Record<string,number>>();
     await this.audit(actor,'ANALYTICS','BILLIONJOBS','OPERATIONS','READ');
-    const safe=Object.fromEntries(Object.entries(counts||{}).map(([key,value])=>[key,value<5?null:value]));
+    const metricPermissions:Record<string,AdminPermission>={reported:'CASE_READ',resolved:'CASE_READ',appeals:'APPEAL_REVIEW',overturned:'APPEAL_REVIEW',signals:'CASE_DECIDE',privacy_requests:'PRIVACY_REVIEW',admin_events:'AUDIT_READ'};
+    const safe=Object.fromEntries(Object.entries(counts||{}).filter(([key])=>allowed.has(metricPermissions[key])).map(([key,value])=>[key,value<5?null:value]));
     return {period:{start,end,days},counts:safe,suppression:'Counts below 5 are hidden.',denominators:{reported:'cases created in period',resolved:'cases resolved in period',appeals:'appeals created in period',overturned:'appeals overturned in period',signals:'signals created in period',privacy_requests:'requests created in period',admin_events:'audit events created in period'}};
   }
   async companies(actor:Identity,url:URL){await this.authorize(actor,'DASHBOARD');const {limit,offset}=page(url),query=bounded(url.searchParams.get('q')||'*',80);
     const rows=(await this.db.prepare(`SELECT c.id,json_extract(c.data,'$.name') name,c.owner,c.restricted,c.revision,
       COALESCE(v.state,'UNVERIFIED') employer_verification FROM companies c LEFT JOIN employer_verifications v ON v.company=c.id
-      WHERE (?='*' OR json_extract(c.data,'$.name') LIKE ? ESCAPE '\') ORDER BY c.created_at DESC,c.id LIMIT ? OFFSET ?`).bind(query,'%'+query.replace(/[\\%_]/g,'\\$&')+'%',limit,offset).all()).results;
+      WHERE (?='*' OR json_extract(c.data,'$.name') LIKE ? ESCAPE '\\') ORDER BY c.created_at DESC,c.id LIMIT ? OFFSET ?`).bind(query,'%'+query.replace(/[\\%_]/g,'\\$&')+'%',limit,offset).all()).results;
     await this.audit(actor,'EMPLOYER_ADMIN','COMPANY_DIRECTORY','BILLIONJOBS','LIST');return {rows,limit,offset,registration:'email_verified_free',employerVerification:'optional'};
   }
-  async reviewEmployerVerification(actor:Identity,companyId:string,state:'IN_REVIEW'|'VERIFIED'|'REJECTED'|'EXPIRED',evidenceRef:string,revision:number){
-    await this.authorize(actor,'CASE_DECIDE',true);identifier(companyId);if(!['IN_REVIEW','VERIFIED','REJECTED','EXPIRED'].includes(state))throw new JobsError(400,'invalid_verification');
-    const evidence=bounded(evidenceRef,200);if(!/^[A-Za-z0-9_:/.-]+$/.test(evidence))throw new JobsError(400,'invalid_evidence_ref');
+  async employerEvidence(actor:Identity,companyId:string,admin:boolean){
+    identifier(companyId);
+    if(admin)await this.authorize(actor,'CASE_DECIDE');
+    else await requireCompany(this.db,actor,companyId,true);
+    const row=await this.db.prepare(`SELECT c.id,COALESCE(v.state,'UNVERIFIED') state,COALESCE(v.revision,0) revision,v.evidence_ref reference
+      FROM companies c LEFT JOIN employer_verifications v ON v.company=c.id WHERE c.id=?`).bind(companyId).first();
+    if(!row)throw new JobsError(404,'company_not_found');
+    if(admin)await this.audit(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,'READ');
+    return row;
+  }
+  async submitEmployerEvidence(actor:Identity,companyId:string,input:unknown) {
+    identifier(companyId);
+    await requireCompany(this.db,actor,companyId,true);
+    const body=input as {reference?:unknown;revision?:unknown};
+    if(!body || typeof body!=='object' || !Number.isSafeInteger(body.revision) || Number(body.revision)<0)
+      throw new JobsError(400,'invalid_revision');
+    const reference=bounded(body.reference,200);
+    if(!/^[A-Za-z0-9_:/.-]+$/.test(reference))throw new JobsError(400,'invalid_evidence_ref');
+    const revision=Number(body.revision);
     const existing=await this.db.prepare('SELECT revision FROM employer_verifications WHERE company=?').bind(companyId).first<{revision:number}>();
     if((existing?.revision||0)!==revision)throw new JobsError(409,'verification_conflict');
-    if(existing)await this.db.prepare('UPDATE employer_verifications SET state=?,evidence_ref=?,reviewer=?,reviewed_at=?,revision=revision+1 WHERE company=? AND revision=?').bind(state,evidence,actor.subject,this.clock(),companyId,revision).run();
-    else await this.db.prepare('INSERT INTO employer_verifications(company,state,evidence_ref,reviewer,reviewed_at) VALUES(?,?,?,?,?)').bind(companyId,state,evidence,actor.subject,this.clock()).run();
-    await this.audit(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,state,'SUCCESS',revision+1);return {company:companyId,state,revision:revision+1};
+    const write=existing?this.db.prepare(`UPDATE employer_verifications SET state='EVIDENCE_PENDING',evidence_ref=?,
+      reviewer=NULL,reviewed_at=NULL,expires_at=NULL,revision=revision+1 WHERE company=? AND revision=? AND state IN ('UNVERIFIED','REJECTED','EXPIRED') RETURNING revision`)
+      .bind(reference,companyId,revision):this.db.prepare(`INSERT INTO employer_verifications(company,state,evidence_ref)
+      VALUES(?,'EVIDENCE_PENDING',?) ON CONFLICT DO NOTHING RETURNING revision`).bind(companyId,reference);
+    const result=await write.first<{revision:number}>();
+    if(!result)throw new JobsError(409,'verification_conflict');
+    await this.audit(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,'SUBMIT','SUCCESS',result.revision);
+    return {state:'EVIDENCE_PENDING',revision:result.revision};
+  }
+  async reviewEmployerVerification(actor:Identity,companyId:string,state:'IN_REVIEW'|'VERIFIED'|'REJECTED'|'EXPIRED'|'UNVERIFIED',evidenceRef:string,revision:number){
+    await this.authorize(actor,'CASE_DECIDE',true);identifier(companyId);if(!['IN_REVIEW','VERIFIED','REJECTED','EXPIRED','UNVERIFIED'].includes(state))throw new JobsError(400,'invalid_verification');
+    const evidence=bounded(evidenceRef,200);if(!/^[A-Za-z0-9_:/.-]+$/.test(evidence))throw new JobsError(400,'invalid_evidence_ref');
+    const previous=state==='IN_REVIEW'?'EVIDENCE_PENDING':(state==='EXPIRED'||state==='UNVERIFIED')?'VERIFIED':'IN_REVIEW';
+    const result=await this.db.prepare(`UPDATE employer_verifications SET state=?,reviewer=?,reviewed_at=?,revision=revision+1
+      WHERE company=? AND revision=? AND evidence_ref=? AND state=? RETURNING revision`)
+      .bind(state,actor.subject,this.clock(),companyId,finiteRevision(revision),evidence,previous).first<{revision:number}>();
+    if(!result)throw new JobsError(409,'verification_conflict');
+    await this.audit(actor,'EMPLOYER_VERIFICATION','COMPANY',companyId,state,'SUCCESS',result.revision);
+    return {company:companyId,state,revision:result.revision};
   }
   async purgeModerationEvidence(actor:Identity){await this.authorize(actor,'PRIVACY_REVIEW',true);
     const configured=await this.db.prepare("SELECT value FROM jobs_policy_versions WHERE key='retention_moderation_days'").first<{value:string}>();

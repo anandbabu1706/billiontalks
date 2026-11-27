@@ -14,7 +14,7 @@ export function companyPage() {
 <label>Business email<input name="businessEmail" type="email" maxlength="254"></label>
 <button>Save company</button></fieldset></form>
 <section id="workspace" hidden><h2>Recruitment workspace</h2><p><a id="manage-jobs">Manage job listings</a> · <a id="recruiter-workspace">Recruiter dashboard</a></p><p id="quota"></p>
-<div id="management" hidden><h3>Members</h3><ul id="members"></ul><h3>Invitations</h3><ul id="invitations"></ul>
+<div id="management" hidden><p><a id="verification">Employer verification</a></p><h3>Members</h3><ul id="members"></ul><h3>Invitations</h3><ul id="invitations"></ul>
 <form id="invite"><label>Recipient email<input name="email" type="email" required></label><label>Role<select name="role"><option value="RECRUITER">Recruiter</option><option value="COMPANY_ADMIN">Administrator</option></select></label><button>Create synthetic invitation</button></form>
 <label id="handoff" hidden>Synthetic invitation code<input readonly id="code"></label></div></section>
 <form id="accept"><fieldset><legend>Accept an invitation</legend><label>Invitation code<input name="code" required maxlength="101" autocomplete="off"></label><button>Accept invitation</button></fieldset></form>
@@ -54,6 +54,7 @@ const script = `(() => {
     get('workspace').hidden=false; get('manage-jobs').href='/jobs/companies/'+encodeURIComponent(id)+'/jobs'; get('recruiter-workspace').href='/jobs/recruitment/companies/'+encodeURIComponent(id);
     const base='companies/'+id, current=company;
     get('quota').textContent=current.restricted?'Company restricted. Recruitment access is suspended.':'Free plan: 10 postings per IST day, 30 active listings, 30-day listing validity.';
+    get('verification').href='/jobs/companies/'+encodeURIComponent(id)+'/verification';
     get('management').hidden=current.role==='RECRUITER'||current.restricted;
     get('invite').elements.role.options[1].disabled=current.role!=='OWNER';
     get('members').replaceChildren(); get('invitations').replaceChildren();

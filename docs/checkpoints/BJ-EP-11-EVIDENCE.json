@@ -13,5 +13,44 @@
   "meetingsFixtureCorrections": ["prejoin camera lifecycle assertions", "calendar explicit month navigation"],
   "localGitHousekeeping": {"exclude": ".git/info/exclude: /.worktrees/", "readmePreserved": true, "preExistingWorktreesPreserved": 7},
   "releaseBlockers": ["trusted privileged MFA and reauthentication", "administrator bootstrap and complete workflows", "legal/operational qualification", "remote persistence and scheduler qualification", "manual accessibility and security qualification"],
-  "additionalDevelopmentCashINR": 0
+  "additionalDevelopmentCashINR": 0,
+  "continuation": {
+    "applicationBaseline": "35ca767a2c978a704e9ee9c1ae04ed6fdb174468",
+    "documentationBaseline": "227c339f5ad706cd57186cb6d302bc008923d1c0",
+    "section": "EP-11-A partial",
+    "milestoneComplete": false,
+    "locallyAcceptedComponents": [],
+    "fullRegression": {
+      "passed": 539,
+      "total": 539,
+      "testFiles": 24
+    },
+    "governance": {
+      "passed": 17,
+      "total": 17
+    },
+    "profilesAndPersistence": {
+      "passed": 19,
+      "total": 19,
+      "jobsMigrations": 8
+    },
+    "typecheck": "passed",
+    "bundle": "Wrangler 4.149.0 dry-run passed",
+    "browser": {
+      "runner": "scripts/jobs-admin-browser.mjs",
+      "engine": "local headless Chrome",
+      "widths": [
+        375,
+        1280
+      ],
+      "verified": [
+        "role form grant and revoke through Jobs router and local D1",
+        "initial Tab focus",
+        "horizontal page fit"
+      ]
+    },
+    "additionalDevelopmentCashINR": 0,
+    "deployment": false,
+    "mainMerge": false
+  }
 }
