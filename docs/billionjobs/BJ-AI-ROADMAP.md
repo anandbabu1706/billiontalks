@@ -34,3 +34,7 @@ EP-11 extends that contract with scam, suspicious-activity, complaint categoriza
 ## EP-11-A continuation checkpoint
 
 The EP-11-A continuation adds no provider integration. ADM-05 and ADM-17 still require local false-positive review, provenance, minimized input and bounded-output acceptance before any provider decision.
+
+## 2026-11-28 EP-11 qualification
+
+Local case assistance now records a case audit reference. Synthetic tests cover minimization, invalid provider responses, deterministic fallback and human review. Live provider selection and activation remain release decisions. See [the component acceptance register](BJ-EP-11-MILESTONE.md).

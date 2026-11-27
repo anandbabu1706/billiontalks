@@ -136,3 +136,7 @@ Operational analytics use recorded events and defined periods, suppressing small
 ## EP-11-A continuation checkpoint
 
 The EP-11-A checkpoint adds role-scoped metrics, user/company directories, owner grant management and company evidence review. The approved ADM-01 through ADM-20 acceptance criteria remain open as detailed in the application continuation register.
+
+## 2026-11-28 EP-11 qualification
+
+The administration workflows and integrated acceptance evidence are mapped by ADM identifier. The remaining local requirements cover the cross-surface enforcement matrix, full restore and deletion replay, sensitive-action audit failure handling and recovery after an adapter success. See [the component acceptance register](BJ-EP-11-MILESTONE.md).

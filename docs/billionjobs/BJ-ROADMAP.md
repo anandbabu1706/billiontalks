@@ -64,3 +64,7 @@ EP-11 is authorized for isolated local synthetic implementation and has a govern
 ## EP-11-A continuation checkpoint
 
 EP-11 remains in progress. Role management, available-owner protection and employer-verification operations advanced in section A. Later milestones retain their existing order.
+
+## 2026-11-28 EP-11 qualification
+
+EP-11 local workflows now span all 20 administration components. The acceptance register identifies open local qualifications before milestone closure. BT-WEB and subsequent phases remain pending. See [the component acceptance register](BJ-EP-11-MILESTONE.md).

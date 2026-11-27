@@ -96,26 +96,26 @@ All ADM items below are owner-approved for local synthetic implementation. “Lo
 
 | ID | Status | Local evidence / open boundary |
 |---|---|---|
-| ADM-01 | PARTIAL | Recorded-event dashboard; privileged access gate and complete workspace remain. |
-| ADM-02 | PARTIAL | Jobs-only user directory/restrictions; account workflows remain. |
-| ADM-03 | PARTIAL | Company directory, membership revocation, optional verification states; review workflow remains. |
-| ADM-04 | PARTIAL | Report/case and discovery removal; full moderation policy coverage remains. |
-| ADM-05 | PARTIAL | Fee, claim, frequency, duplicate, complaint, recruiter and interview volume signals; evaluation remains. |
-| ADM-06 | PARTIAL | Confidential reporter cases and company-visible public status; assignment/targets remain. |
-| ADM-07 | PARTIAL | Typed reason-coded actions and active restriction checks; full transitions remain. |
-| ADM-08 | PARTIAL | User, company and owned-listing appeals with human resolution; independent coverage remains. |
-| ADM-09 | LOCAL FOUNDATION | Transfer, expiry/replay/concurrency, retirement and owner closure tested; exceptional recovery remains. |
-| ADM-10 | PARTIAL | Seven scoped roles, denial, revocation and final owner; production MFA/bootstrap remain. |
-| ADM-11 | PARTIAL | Versioned Jobs notice/optional consent events; complete policy/rights UI remains. |
-| ADM-12 | PARTIAL | Reviewed local requester export and Jobs closure; full delivery/deletion propagation remains. |
-| ADM-13 | PARTIAL | Hold guard and configurable defaults; legal/replay matrix remains. |
-| ADM-14 | LOCAL FOUNDATION | Append-oriented metadata audit with access control; external integrity qualification remains. |
-| ADM-15 | PARTIAL | Incident state/timeline/corrective actions and review target; legal clocks and operations remain. |
-| ADM-16 | PARTIAL | Period-defined counts and small-count suppression; full workload analysis remains. |
-| ADM-17 | LOCAL FOUNDATION | Deterministic signals and bounded provider-neutral contract; no live AI. |
-| ADM-18 | PARTIAL | Bounded versioned moderation/retention settings; quota remains fixed and atomic. |
-| ADM-19 | PARTIAL | Existing activation and new reminder outboxes; production dispatcher/monitoring remain. |
-| ADM-20 | PARTIAL | Synthetic tests and fixture corrections; remote/security/manual accessibility gates remain. |
+| ADM-01 | Local workflow verified | Auditor router and dashboard-to-case Chrome navigation |
+| ADM-02 | Local workflow verified | Fresh-session and owner guards, Chrome warning through closure |
+| ADM-03 | Local workflow verified | Conflicting revisions, cross-company denial, Chrome approval through expiry |
+| ADM-04 | Local workflow verified | Scoped discovery test and Chrome investigation through resolution |
+| ADM-05 | Local workflow verified | Threshold and deduplication tests with synthetic signals |
+| ADM-06 | Local workflow verified | Legacy company/listing intake and restricted case detail tests |
+| ADM-07 | Partial acceptance (see below) | Overlapping sanctions, scoped listing removal, owner protection and Chrome warning revocation |
+| ADM-08 | Local workflow verified | Separate appellant and reviewer complete an information request and decision in Chrome |
+| ADM-09 | Local workflow verified | Concurrent acceptance, expiry, requester and independent recovery reviewer tests |
+| ADM-10 | Local workflow verified | Seven-role boundary tests, simultaneous owner changes and Chrome role changes |
+| ADM-11 | Local workflow verified | Chrome notice publication, candidate history and withdrawal |
+| ADM-12 | Partial acceptance (see below) | Concurrent export and wrong requester tests, Chrome delivery confirmation, held deletion test |
+| ADM-13 | Partial acceptance (see below) | Retention delay and hold, replay of restored consent and Jobs profile persistence tests |
+| ADM-14 | Partial acceptance (see below) | Scope and delivery audit tests, role transaction and forbidden-read tests |
+| ADM-15 | Local workflow verified | Incident service tests and Chrome containment through resolution |
+| ADM-16 | Local workflow verified | Auditor-scoped period response and Chrome analytics navigation |
+| ADM-17 | Local workflow verified | Maliciously structured inputs, invalid provider response and case audit reference tests |
+| ADM-18 | Local workflow verified | Concurrent posting, replay, IST midnight, active ceiling and validity tests, Chrome policy edit |
+| ADM-19 | Partial acceptance (see below) | Restart with pending lease, concurrent reconciliation and dispatch, stale reminder tests |
+| ADM-20 | Partial acceptance (see below) | 24 regression files, 14 migrations and 14 Chrome routes at two widths |
 
 ## D. Mandatory verification on every milestone
 
@@ -149,3 +149,7 @@ All ADM items below are owner-approved for local synthetic implementation. “Lo
 ## EP-11-A continuation checkpoint
 
 EP-11 remains IN PROGRESS. ADM-01, 02, 03 and 10 have additional API or interface evidence. ADM-07, 14, 16, 19 and 20 have narrower security or test coverage. All twenty components still require local acceptance. See the continuation register in the EP-11 milestone for the outstanding work per component.
+
+## 2026-11-28 acceptance review
+
+The component table above reflects the latest synthetic local checks. EP-11 remains open on the enforcement matrix, complete deletion replay, audit failure handling and meeting reconciliation interruption. See [the current evidence register](BJ-EP-11-MILESTONE.md).

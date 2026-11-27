@@ -120,3 +120,7 @@ Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement re
 ## EP-11-A continuation checkpoint
 
 The seven-role Jobs model now has a tested owner grant/revoke form. The first synthetic owner is seeded through an in-process Miniflare handle that rejects a second bootstrap. Trusted production identity and accountable production initialization remain release decisions.
+
+## 2026-11-28 EP-11 qualification
+
+Approved listing defaults remain 10 daily, 30 active and 30 days. Effective-dated policy changes can tighten these limits within their approved ceilings. Database checks enforce them atomically at the IST boundary. Independent synthetic review is available for appeals and ownership recovery. See [the component acceptance register](BJ-EP-11-MILESTONE.md).
