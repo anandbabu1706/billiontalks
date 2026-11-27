@@ -2,7 +2,7 @@
 
 **Document ID:** BJ-TRACK-001  
 **Review date:** 2026-11-27
-**Status:** Revision 1.7, EP-05 local profiles completed and pushed; release gates remain
+**Status:** Revision 1.8, EP-06 local company and recruiter management completed
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
@@ -76,7 +76,7 @@
 | ID | Deliverable | Status | Required completion evidence |
 |---|---|---|---|
 | BJ-V1-001 | Professional profiles | COMPLETED (EP-05 local synthetic) | [Evidence and limitations](BJ-EP-05-MILESTONE.md); 474/476 suite, two unchanged Meetings failures; device and real-data qualification pending. |
-| BJ-V1-002 | Companies, memberships and recruiter roles | NOT STARTED | Permission tests, membership revocation and tenant isolation |
+| BJ-V1-002 | Company and recruiter management | COMPLETED (local synthetic) | [EP-06 evidence](BJ-EP-06-MILESTONE.md), 723f89bd2a0a0101a0776cf1c7d10616648c6d70 |
 | BJ-V1-003 | Job search, postings and applications | NOT STARTED | Quota, workflow and authorization tests |
 | BJ-V1-004 | Recruiter application workspace | NOT STARTED | Application lifecycle, tenant isolation and tests |
 | BJ-V1-005 | Interview scheduling and Meetings integration | NOT STARTED | Admission, retries, time zones and Meetings regression |
@@ -107,5 +107,6 @@
 | 2026-11-26 | 1.5 | Recorded authenticated setup and the exact live-read blocker. No live closure, technical implementation, legal validation or release sign-off. |
 | 2026-11-27 | 1.6 | BJ-V0-001A live metadata and sampled usage, billing limitation, EP-04/setup evidence, completed parent design and after-EP-11 redesign sequence reconciled; documentation only. |
 | 2026-11-27 | 1.7 | Authorized EP-05 completed on isolated branch; exact commit, 15-file inventory and test evidence recorded. Minimal Jobs access only; EP-06 not started; release gates retained. |
+| 2026-11-27 | 1.8 | Recorded EP-06 local completion, verified source and regression evidence. EP-07 awaits separate authorization. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.

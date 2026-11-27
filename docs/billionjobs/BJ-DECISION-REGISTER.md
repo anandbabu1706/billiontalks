@@ -2,7 +2,7 @@
 
 Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
 
-**Register revision 1.9 — updated 2026-11-27.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
+**Register revision 1.10 — updated 2026-11-27.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -49,6 +49,7 @@ These entries preserve earlier approval history and supersede historical stateme
 | BJ-D34 | APPROVED (permanent execution rules) | Owner instruction, BJ-V0-001A: preserve BillionTalks Meetings identity, URLs and data; support an ecosystem without a fixed subdivision limit; commit/push completed development milestones only to authorized branches and maintain documentation/tracking. No automatic next-milestone implementation, production changes or spending. |
 | BJ-D35 | VERIFIED (scoped milestones) | EP-04 authorized local foundation completed at 82e2c8c1cc6812931e62a58b459465cb77a6df10 on bj-ep-04-foundation; 455/457 tests and 30/30 Jobs tests passed, two unchanged Meetings failures. BT-CF-SETUP-001 connectivity works. Evidence and exact boundaries are in the dated audit; no remote deployment or real-data qualification implied. |
 | BJ-D36 | PARTIALLY VERIFIED (BJ-D28 gate remains) | BJ-V0-001A live metadata establishes production version/source, separate Meetings environment storage and sampled usage. Billing APIs lack billing:read; exact subscriptions/cost/monthly capacity and outbound email capacity remain unverified. MFA protections are absent in inspected metadata. Continue isolated synthetic development; shared sensitive staging/production require separate readiness evidence and authorization. No permission expansion or hardening was performed. |
+| BJ-D37 | APPROVED (interview scheduling scope) | EP-06 owner authorization dated 2026-11-27. EP-10 uses request-and-confirm on existing BillionTalks Meetings. Candidate availability calendars are optional. Google Calendar, Microsoft Outlook and other external integrations wait for sufficient demand and require independent consent and configuration. Existing BJ-D23 admission and revocation gates remain. |
 
 ## Review and revision history
 
@@ -65,6 +66,7 @@ These entries preserve earlier approval history and supersede historical stateme
 | 2026-11-26 | 1.7 | EP-03 owner approvals and evidence review | Append BJ-D30–D32, retain legal and live infrastructure gates; no implementation or release authorization. |
 | 2026-11-26 | 1.8 | BJ-V0-001A follow-up | OAuth sign-in confirmed. Live Cloudflare metadata blocked by the noninteractive Codex tool approval gate. BJ-D28 remains pending live verification. No policy changes. |
 | 2026-11-27 | 1.9 | BJ-V0-001A authorized live reads and milestone reconciliation | Append BJ-D33-D36; record EP-04 completion, actual metadata, remaining financial/security gates and full redesign deferral after EP-11. |
+| 2026-11-27 | 1.10 | EP-06 owner authorization | Added BJ-D37 for EP-10 scheduling and external calendar deferral. |
 
 ### Reconciliation notes
 
@@ -101,3 +103,7 @@ The statuses below describe each integration proposal, not approval of its paren
 ### Future extension design placeholder (not approved implementation)
 
 Complete when an extension advances: **ID · business objective · provider/data owner · consumer · API/version policy · authorization/data scope · failure and rollback · privacy and cost evidence · extraction trigger · milestone dependencies · owner approval/date**. Until then, keep fields explicitly pending.
+
+## EP-10 interview scheduling decision
+
+Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement request-and-confirm interview scheduling on the existing BillionTalks meeting infrastructure. Candidates can respond to an interview request without maintaining an availability calendar. Optional external calendar integrations, including Google Calendar and Microsoft Outlook, are deferred until sufficient customer demand exists. Each integration must be consent-based and independently configurable. Existing admission, revocation and Meetings regression gates continue to apply.

@@ -100,3 +100,7 @@ Test validation and field errors, loading/empty/offline, expired/revoked access,
 | Entitlements and quality | No checkout, payment collection or paid gates for core recruitment. Validate keyboard navigation, focus, labels/error recovery, privacy controls and accessible status updates with automated plus manual checks. |
 
 **REQUIRES VERIFICATION:** Visibility/indexing, retention/deletion, rights operations, actual test results, production baseline, performance, reviewer coverage and email qualification.
+
+## EP-10 interview scheduling decision
+
+Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement request-and-confirm interview scheduling on the existing BillionTalks meeting infrastructure. Candidates can respond to an interview request without maintaining an availability calendar. Optional external calendar integrations, including Google Calendar and Microsoft Outlook, are deferred until sufficient customer demand exists. Each integration must be consent-based and independently configurable. Existing admission, revocation and Meetings regression gates continue to apply.

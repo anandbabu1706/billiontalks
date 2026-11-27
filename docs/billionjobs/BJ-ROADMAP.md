@@ -13,7 +13,7 @@
 | BJ-DOC-003 | COMPLETED on verified introducing commit | Documentation only; see [tracked evidence](BJ-TRACK-001-ACTION-TRACKER.md). |
 | BJ-V0-001A | ACCESSIBLE LIVE INSPECTION COMPLETE / QUALIFICATION PARTIAL | Dated audit verifies deployment, isolation and sampled usage; billing, complete headroom and release qualification remain open. |
 | BJ-V1-001 | COMPLETED (EP-05 local synthetic) | [Professional profiles evidence](BJ-EP-05-MILESTONE.md), f5e671faf48678c231b5a7e98f00d11be9ac3823; no real-data or release approval. |
-| BJ-V1-002 | BLOCKED | Company management: company profile, membership, delegation and revocation. |
+| BJ-V1-002 | COMPLETED (local synthetic) | [EP-06 milestone](BJ-EP-06-MILESTONE.md). Shared environment qualification remains open. |
 | BJ-V1-003 | BLOCKED | Jobs and applications: publish, discover, save, apply, quotas and status. |
 | BJ-V1-004 | BLOCKED | Recruitment workspace: applicant review and status actions; prove tenant separation. |
 | BJ-V1-005 | BLOCKED | Interview integration after recruiting acceptance; prove Meetings access, recovery and regression. |
@@ -42,3 +42,9 @@
 ## EP-05 closeout sequencing - 2026-11-27
 
 EP-05 is committed and pushed; EP-06/company modules remain not started and require separate authorization. Minimal Jobs profile access is included; full parent redesign remains deferred until after EP-11. See [EP-05 milestone](BJ-EP-05-MILESTONE.md) for exact source, tests, inventory and minimum next dependencies. Historical policy/decision records are retained; local completion does not waive release gates.
+
+## EP-10 interview scheduling decision
+
+Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement request-and-confirm interview scheduling on the existing BillionTalks meeting infrastructure. Candidates can respond to an interview request without maintaining an availability calendar. Optional external calendar integrations, including Google Calendar and Microsoft Outlook, are deferred until sufficient customer demand exists. Each integration must be consent-based and independently configurable. Existing admission, revocation and Meetings regression gates continue to apply.
+
+EP-06 is complete for local synthetic development. EP-07 depends on the company tenant guard, restriction checks and existing IST quota enforcement. Full parent redesign remains deferred until after EP-11.
