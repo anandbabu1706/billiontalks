@@ -1,6 +1,6 @@
 # BillionJobs Roadmap & Release Gates
 
-**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 and EP-05 local synthetic milestones are completed; see the current tracker and EP-05 evidence. Owners must discuss results before opening a follow-on prompt or workstream.
+**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 through EP-07 authorized local synthetic milestones are completed; see the current tracker and milestone evidence. Owners must discuss results before opening a follow-on prompt or workstream.
 
 | Milestone | Status | Scope or exit evidence |
 |---|---|---|
@@ -14,7 +14,7 @@
 | BJ-V0-001A | ACCESSIBLE LIVE INSPECTION COMPLETE / QUALIFICATION PARTIAL | Dated audit verifies deployment, isolation and sampled usage; billing, complete headroom and release qualification remain open. |
 | BJ-V1-001 | COMPLETED (EP-05 local synthetic) | [Professional profiles evidence](BJ-EP-05-MILESTONE.md), f5e671faf48678c231b5a7e98f00d11be9ac3823; no real-data or release approval. |
 | BJ-V1-002 | COMPLETED (local synthetic) | [EP-06 milestone](BJ-EP-06-MILESTONE.md). Shared environment qualification remains open. |
-| BJ-V1-003 | BLOCKED | Jobs and applications: publish, discover, save, apply, quotas and status. |
+| BJ-V1-003 | COMPLETED (EP-07 local synthetic) | [EP-07 milestone](BJ-EP-07-MILESTONE.md): publish/discover/save/apply/lifecycle, assigned-access foundation and retention evidence; no deployment or real-data qualification. |
 | BJ-V1-004 | BLOCKED | Recruitment workspace: applicant review and status actions; prove tenant separation. |
 | BJ-V1-005 | BLOCKED | Interview integration after recruiting acceptance; prove Meetings access, recovery and regression. |
 | BJ-V1-006 | DEFERRED | Networking: connections, posts, discussions and reporting. |
@@ -47,4 +47,6 @@ EP-05 is committed and pushed; EP-06/company modules remain not started and requ
 
 Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement request-and-confirm interview scheduling on the existing BillionTalks meeting infrastructure. Candidates can respond to an interview request without maintaining an availability calendar. Optional external calendar integrations, including Google Calendar and Microsoft Outlook, are deferred until sufficient customer demand exists. Each integration must be consent-based and independently configurable. Existing admission, revocation and Meetings regression gates continue to apply.
 
-EP-06 is complete for local synthetic development. EP-07 depends on the company tenant guard, restriction checks and existing IST quota enforcement. Full parent redesign remains deferred until after EP-11.
+## EP-07 closeout sequencing - 2026-11-27
+
+EP-07 is committed and pushed on its authorized isolated branch. EP-08 is the next roadmap dependency but is not authorized or started: it must build the full recruiter workspace on current assignment checks, immutable application snapshots and event history, without giving company administrators an applicant bypass. Shared staging, production, real applicant data, deployment and merge remain separately gated. Full parent redesign remains deferred until after EP-11.

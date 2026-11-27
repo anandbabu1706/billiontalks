@@ -41,7 +41,7 @@ Source of truth for approval state. **APPROVED** = directly confirmed by the own
 
 ## Current execution decisions - 2026-11-27
 
-These entries preserve earlier approval history and supersede historical statements that EP-04 has not been authorized or live reads cannot proceed. They do not grant EP-05, production or expenditure authorization.
+These entries preserve earlier approval history and record execution-specific authority without granting later milestones, production, real-data use or expenditure.
 
 | ID | Status | Decision and provenance |
 |---|---|---|
@@ -50,6 +50,7 @@ These entries preserve earlier approval history and supersede historical stateme
 | BJ-D35 | VERIFIED (scoped milestones) | EP-04 authorized local foundation completed at 82e2c8c1cc6812931e62a58b459465cb77a6df10 on bj-ep-04-foundation; 455/457 tests and 30/30 Jobs tests passed, two unchanged Meetings failures. BT-CF-SETUP-001 connectivity works. Evidence and exact boundaries are in the dated audit; no remote deployment or real-data qualification implied. |
 | BJ-D36 | PARTIALLY VERIFIED (BJ-D28 gate remains) | BJ-V0-001A live metadata establishes production version/source, separate Meetings environment storage and sampled usage. Billing APIs lack billing:read; exact subscriptions/cost/monthly capacity and outbound email capacity remain unverified. MFA protections are absent in inspected metadata. Continue isolated synthetic development; shared sensitive staging/production require separate readiness evidence and authorization. No permission expansion or hardening was performed. |
 | BJ-D37 | APPROVED (interview scheduling scope) | EP-06 owner authorization dated 2026-11-27. EP-10 uses request-and-confirm on existing BillionTalks Meetings. Candidate availability calendars are optional. Google Calendar, Microsoft Outlook and other external integrations wait for sufficient demand and require independent consent and configuration. Existing BJ-D23 admission and revocation gates remain. |
+| BJ-D38 | VERIFIED (EP-07 local implementation) | Owner authorization EP-07 / BJ-V1-003 dated 2026-11-27 permitted isolated local synthetic implementation only. Final branch commit `ddce9f16e483e07848cd7bd30b9c00c0570972d8` implements listing lifecycle/discovery, saved jobs, immutable candidate-selected application snapshots, withdrawal/reapplication, assigned access, reporting and retention tests. 492/494 full-suite tests passed with exactly the two pre-existing Meetings failures. EP-08, deployment, merge, production resources, real data and expenditure remain unauthorized. |
 
 ## Review and revision history
 
@@ -67,6 +68,7 @@ These entries preserve earlier approval history and supersede historical stateme
 | 2026-11-26 | 1.8 | BJ-V0-001A follow-up | OAuth sign-in confirmed. Live Cloudflare metadata blocked by the noninteractive Codex tool approval gate. BJ-D28 remains pending live verification. No policy changes. |
 | 2026-11-27 | 1.9 | BJ-V0-001A authorized live reads and milestone reconciliation | Append BJ-D33-D36; record EP-04 completion, actual metadata, remaining financial/security gates and full redesign deferral after EP-11. |
 | 2026-11-27 | 1.10 | EP-06 owner authorization | Added BJ-D37 for EP-10 scheduling and external calendar deferral. |
+| 2026-11-27 | 1.11 | EP-07 owner authorization and verified pushed evidence | Added BJ-D38; records local completion only and preserves EP-08 and release gates. |
 
 ### Reconciliation notes
 

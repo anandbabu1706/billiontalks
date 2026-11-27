@@ -88,7 +88,7 @@ Keep eligible email-verified publishing without mandatory manual first-post clea
 
 Test validation and field errors, loading/empty/offline, expired/revoked access, stale edits, throttling, safe retry, and conflict recovery without losing drafts. Require all critical journeys and cross-tenant/field-level denial tests to pass, no known high/critical security defects, and keyboard/focus/screen-reader support to [WCAG 2.2 AA](https://www.w3.org/TR/WCAG22/). Agreed-load acceptance targets: Jobs list/detail p95 ≤500 ms, non-interview writes ≤1 s, no material degradation in matched Meetings regression. No uploads, offer-letter screens, social expansion, subscriptions or checkout in the initial release.
 
-## Approved acceptance design (execution pending)
+## Approved acceptance design and execution status
 
 | Journey | Observable outcome |
 |---|---|
@@ -100,6 +100,10 @@ Test validation and field errors, loading/empty/offline, expired/revoked access,
 | Entitlements and quality | No checkout, payment collection or paid gates for core recruitment. Validate keyboard navigation, focus, labels/error recovery, privacy controls and accessible status updates with automated plus manual checks. |
 
 **REQUIRES VERIFICATION:** Visibility/indexing, retention/deletion, rights operations, actual test results, production baseline, performance, reviewer coverage and email qualification.
+
+### EP-07 local implementation evidence - 2026-11-27
+
+The job-listing and candidate-application subset is completed for local synthetic development at `ddce9f16e483e07848cd7bd30b9c00c0570972d8` on `bj-ep-07-jobs-applications`; see the [milestone report](BJ-EP-07-MILESTONE.md). Evidence covers verified-email and tenant gates, the existing IST quota/lifecycle rules, public bounded discovery, saved jobs, trusted candidate-selected snapshots, one active application, voluntary-withdrawal wait/reapplication, no reapplication after rejection, assignment-only applicant access, immediate revocation, listing reports, Jobs-only closure and 180-day application purge. Full recruiter review/status workflow remains EP-08. This local result does not satisfy production, performance, manual WCAG, legal, real-data, recovery, email or operating-owner gates.
 
 ## EP-10 interview scheduling decision
 
