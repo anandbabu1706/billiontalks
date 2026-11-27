@@ -114,3 +114,9 @@ Candidate discovery may filter only candidate-authorized recruiter/public fields
 ## EP-10 interview scheduling decision
 
 Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement request-and-confirm interview scheduling on the existing BillionTalks meeting infrastructure. Candidates can respond to an interview request without maintaining an availability calendar. Optional external calendar integrations, including Google Calendar and Microsoft Outlook, are deferred until sufficient customer demand exists. Each integration must be consent-based and independently configurable. Existing admission, revocation and Meetings regression gates continue to apply.
+
+### EP-10 local implementation evidence — 2026-11-27
+
+The authorized local implementation is complete at `c08591f970a4c977c98286f045145bda58a27474` on `bj-ep-10-interview-integration`; see the [milestone](BJ-EP-10-MILESTONE.md). It implements multi-round request/confirm/decline/alternative/reschedule/cancel/complete/no-show workflows, panels, internal conflict checks, UTC/IANA time handling, `.ics`, preparation, feedback, in-app notices, bounded reminders and recorded-event analytics. A versioned opaque adapter activates and revokes allowlisted Meetings rooms while keeping Jobs and Meetings storage separate. No external calendar, email, recording, transcription, live AI or automatic decision is enabled.
+
+This is local synthetic evidence only: 95/95 Jobs tests and 520/522 overall passed, with exactly the two pre-existing Meetings fixture failures. Durable outbox/reminder execution, remote D1/DO behavior, media/device, performance, accessibility, legal/privacy, recovery and operating-owner qualification remain mandatory before genuine applicant data or pilot participation.
