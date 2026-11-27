@@ -8,7 +8,7 @@ EP-11 has a substantial **local synthetic foundation, not full milestone complet
 | ADM-02 | PARTIAL | Product-scoped user search, restrictions and Jobs closure foundations; no complete account-management UI or shared-account powers. |
 | ADM-03 | PARTIAL | Company directory, membership revocation and optional verification states; review UI and evidence operations remain. |
 | ADM-04 | PARTIAL | Reporting/case flow and listing discovery removal; full policy categorization and restoration UI remain. |
-| ADM-05 | PARTIAL | Deterministic fee, frequency, duplicate and complaint signals; other approved rule families and evaluation remain. |
+| ADM-05 | PARTIAL | Deterministic fee, misleading-claim, frequency, duplicate, complaint, recruiter-volume and interview-volume signals; validation and further evaluation remain. |
 | ADM-06 | PARTIAL | Confidential reporter case IDs, queue, status and notes; company-visible public status exists, while assignment workflow and targets remain. |
 | ADM-07 | PARTIAL | Reason-coded actions, active/expiring restrictions and sensitive-path checks; complete action transitions and UI remain. |
 | ADM-08 | PARTIAL | User, company and owned-listing appeals, resolution and restriction revocation; independent review coverage remains. |
@@ -18,7 +18,7 @@ EP-11 has a substantial **local synthetic foundation, not full milestone complet
 | ADM-12 | PARTIAL | Reviewed local requester-scoped export and Jobs closure; full request delivery and deletion propagation remain. |
 | ADM-13 | PARTIAL | Legal-hold records and purge guard, configurable retention and evidence redaction; legal mapping and restore matrix remain. |
 | ADM-14 | LOCAL FOUNDATION | Append-oriented, scoped audit with paged reads and metadata minimization; external integrity/retention qualification remains. |
-| ADM-15 | PARTIAL | Incident states, timeline and corrective actions; escalation and regulatory clock qualification remain. |
+| ADM-15 | PARTIAL | Incident states, timeline, corrective actions and configurable review target; regulatory clock qualification remains. |
 | ADM-16 | PARTIAL | Period-defined operational counts with small-count suppression; workload/drill-down qualification remains. |
 | ADM-17 | LOCAL FOUNDATION | Bounded provider-neutral governance purposes and human-review fallback; no live AI. |
 | ADM-18 | PARTIAL | Versioned bounded moderation/retention settings; quota policy remains fixed in atomic enforcement. |

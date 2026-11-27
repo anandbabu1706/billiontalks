@@ -32,6 +32,9 @@ it('keeps reporter cases confidential, audits review, and requires human enforce
   const {id}=await created.json() as {id:string};
   expect((await request('reports/'+id,'recipient')).status).toBe(404);
   const queue=await governance.cases(owner(),new URL('http://localhost/?status=OPEN'));expect(queue.rows).toEqual(expect.arrayContaining([expect.objectContaining({id})]));
+  await governance.addCaseEvidence(owner(),id,'synthetic:document-1','Bounded local evidence reference');
+  const privateCase=await governance.caseDetail(owner(),id);expect(privateCase.history).toEqual(expect.arrayContaining([expect.objectContaining({evidence_ref:'synthetic:document-1'})]));
+  expect(JSON.stringify(await governance.ownCase({subject:'owner'},id))).not.toContain('synthetic:document-1');
   const result=await governance.decideCase(owner(),id,{revision:1,status:'RESOLVED',note:'Synthetic review'});expect(result.revision).toBe(2);
   await expect(governance.enforce(owner(),{caseId:id,targetKind:'USER',targetRef:'recipient',kind:'JOBS_TEMP',reasonCode:'WRONG_TARGET'})).rejects.toMatchObject({code:'case_target_mismatch'});
   const action=await governance.enforce(owner(),{caseId:id,targetKind:'USER',targetRef:'stranger',kind:'JOBS_TEMP',reasonCode:'SUBSTANTIATED',expiresAt:now()+86400000});
@@ -68,7 +71,7 @@ it('rechecks role grants, preserves a final owner, and respects overlapping rest
   await runtime.jobs.prepare('UPDATE enforcement_actions SET expires_at=0 WHERE id=?').bind(short.id).run();
   expect(await governance.activeRestrictions('USER','stranger')).toEqual([expect.objectContaining({id:long.id})]);
   expect((await request('status','stranger')).status).toBe(403);
-  await runtime.jobs.prepare('UPDATE enforcement_actions SET revoked_at=? WHERE id=?').bind(now(),long.id).run();
+  expect((await governance.revokeEnforcement(owner(),long.id,1,'REVIEWED')).remaining).toHaveLength(0);
 });
 it('requires active legal holds to be released before completing deletion review',async()=>{
   await runtime.jobs.prepare("INSERT INTO admin_grants VALUES('owner','BILLIONJOBS','PRIVACY_ADMIN','synthetic_fixture',?,NULL)").bind(now()).run();
@@ -125,7 +128,9 @@ it('versions operational policy and records incident containment without exporti
   expect(updated.revision).toBe(1);
   await expect(governance.updatePolicy(owner(),'moderation_daily_signal_threshold',7,0)).rejects.toMatchObject({code:'policy_conflict'});
   await expect(governance.updatePolicy(owner(),'retention_application_days',30,0)).rejects.toMatchObject({code:'invalid_policy'});
+  await governance.updatePolicy(owner(),'incident_escalation_hours',2,0);
   const incident=await governance.createIncident(owner(),'HIGH','Synthetic service interruption');
+  expect(incident.reviewDueAt-now()).toBeGreaterThan(7190_000);
   await expect(governance.incidentTransition(owner(),incident.id,1,'RESOLVED','Skipped recovery')).rejects.toMatchObject({code:'incident_conflict'});
   const contained=await governance.incidentTransition(owner(),incident.id,1,'CONTAINED','Synthetic containment');
   expect(contained.revision).toBe(2);

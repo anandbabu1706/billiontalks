@@ -42,14 +42,27 @@ export class JobsGovernance {
       (SELECT count(*) FROM enforcement_appeals WHERE status IN ('SUBMITTED','ACKNOWLEDGED','REVIEWING','MORE_INFO')) pending_appeals,
       (SELECT count(*) FROM privacy_requests WHERE status IN ('SUBMITTED','REVIEWING')) privacy_requests,
       (SELECT count(*) FROM security_incidents WHERE status<>'RESOLVED') incidents,
+      (SELECT count(*) FROM security_incidents WHERE status<>'RESOLVED' AND review_due_at IS NOT NULL AND review_due_at<?) overdue_incident_reviews,
+      (SELECT count(*) FROM legal_holds WHERE released_at IS NULL AND review_at<?) overdue_hold_reviews,
       (SELECT count(*) FROM interview_meeting_outbox WHERE status IN ('PENDING','FAILED')) operational_failures,
-      (SELECT count(*) FROM fraud_signals WHERE status='OPEN') fraud_signals`).bind(this.clock()).first();
+      (SELECT count(*) FROM fraud_signals WHERE status='OPEN') fraud_signals`).bind(this.clock(),this.clock(),this.clock()).first();
     await this.audit(actor,'OPERATIONS','DASHBOARD','BILLIONJOBS','READ');return {asOf:this.clock(),counts};
   }
   async cases(actor:Identity,url:URL){await this.authorize(actor,'CASE_READ');const {limit,offset}=page(url);const status=url.searchParams.get('status')||'';
     if(status&&!['OPEN','ASSIGNED','WAITING','RESOLVED','CLOSED'].includes(status))throw new JobsError(400,'invalid_status');
     const rows=(await this.db.prepare('SELECT id,kind,target_ref,category,severity,status,assignee,created_at,updated_at,revision FROM moderation_cases WHERE (?=\'\' OR status=?) ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?').bind(status,status,limit,offset).all()).results;
     await this.audit(actor,'MODERATION','CASE_QUEUE','BILLIONJOBS','LIST');return {rows,limit,offset};
+  }
+  async caseDetail(actor:Identity,id:string){await this.authorize(actor,'CASE_READ');identifier(id);
+    const record=await this.db.prepare('SELECT * FROM moderation_cases WHERE id=?').bind(id).first();if(!record)throw new JobsError(404,'case_not_found');
+    const history=(await this.db.prepare('SELECT actor,action,public_status,internal_note,evidence_ref,at FROM moderation_events WHERE case_id=? ORDER BY at,id LIMIT 200').bind(id).all()).results;
+    await this.audit(actor,'MODERATION','CASE',id,'READ');return {record,history};
+  }
+  async addCaseEvidence(actor:Identity,id:string,evidenceRef:string,note:string){await this.authorize(actor,'CASE_DECIDE');identifier(id);
+    const ref=bounded(evidenceRef,200);if(!/^[A-Za-z0-9_:/.-]+$/.test(ref))throw new JobsError(400,'invalid_evidence_ref');
+    const record=await this.db.prepare('SELECT id FROM moderation_cases WHERE id=? AND status NOT IN (\'RESOLVED\',\'CLOSED\')').bind(id).first();if(!record)throw new JobsError(409,'case_closed');
+    await this.db.prepare('INSERT INTO moderation_events VALUES(?,?,?,?,?,?,?,?)').bind(crypto.randomUUID(),id,actor.subject,'EVIDENCE',null,bounded(note,2000),ref,this.clock()).run();
+    await this.audit(actor,'MODERATION','CASE',id,'ADD_EVIDENCE');return {id,evidenceRef:ref};
   }
   async report(actor:Identity,input:unknown){await requireEligible(this.db,actor);const x=input as Record<string,unknown>;
     if(!x||typeof x!=='object'||Array.isArray(x)||Object.keys(x).some(k=>!['kind','targetRef','category','detail'].includes(k)))throw new JobsError(400,'invalid_report');
@@ -89,6 +102,12 @@ export class JobsGovernance {
     await this.audit(actor,'ENFORCEMENT',input.targetKind,targetRef,input.kind,'SUCCESS',1);return {id};
   }
   async activeRestrictions(targetKind:string,targetRef:string){const rows=(await this.db.prepare('SELECT id,kind,reason_code,expires_at FROM enforcement_actions WHERE target_kind=? AND target_ref=? AND revoked_at IS NULL AND starts_at<=? AND (expires_at IS NULL OR expires_at>?)').bind(targetKind,targetRef,this.clock(),this.clock()).all()).results;return rows;}
+  async revokeEnforcement(actor:Identity,id:string,revision:number,reason:string){await this.authorize(actor,'ENFORCE',true);identifier(id);
+    const action=await this.db.prepare('UPDATE enforcement_actions SET revoked_at=?,revision=revision+1 WHERE id=? AND revision=? AND revoked_at IS NULL RETURNING target_kind,target_ref,revision').bind(this.clock(),id,finiteRevision(revision)).first<{target_kind:string;target_ref:string;revision:number}>();
+    if(!action)throw new JobsError(409,'action_conflict');
+    await this.audit(actor,'ENFORCEMENT',action.target_kind,action.target_ref,'REVOKE_'+bounded(reason,80),'SUCCESS',action.revision);
+    return {id,revision:action.revision,remaining:await this.activeRestrictions(action.target_kind,action.target_ref)};
+  }
   async appeal(actor:Identity,actionId:string,reason:string){identifier(actionId);const enrolled=await this.db.prepare('SELECT subject FROM jobs_users WHERE subject=? AND eligible=1 AND closed_at IS NULL').bind(actor.subject).first();if(!enrolled)throw new JobsError(403,'jobs_ineligible');const action=await this.db.prepare('SELECT target_kind,target_ref FROM enforcement_actions WHERE id=?').bind(actionId).first<{target_kind:string;target_ref:string}>();if(!action)throw new JobsError(404,'action_not_found');
     let allowed=action.target_kind==='USER'&&action.target_ref===actor.subject;
     if(action.target_kind==='COMPANY'||action.target_kind==='LISTING'){
@@ -205,9 +224,11 @@ export class JobsGovernance {
   }
   async createIncident(actor:Identity,severity:'LOW'|'MEDIUM'|'HIGH'|'CRITICAL',summary:string){await this.authorize(actor,'INCIDENT',true);
     if(!['LOW','MEDIUM','HIGH','CRITICAL'].includes(severity))throw new JobsError(400,'invalid_severity');const id=crypto.randomUUID(),now=this.clock();
-    await this.db.batch([this.db.prepare("INSERT INTO security_incidents(id,severity,status,owner,summary,created_at,updated_at) VALUES(?,?,'OPEN',?,?,?,?)").bind(id,severity,actor.subject,bounded(summary,500),now,now),
+    const escalation=await this.db.prepare("SELECT value FROM jobs_policy_versions WHERE key='incident_escalation_hours'").first<{value:string}>();
+    const reviewDue=now+(escalation?Number(JSON.parse(escalation.value)):24)*3600_000;
+    await this.db.batch([this.db.prepare("INSERT INTO security_incidents(id,severity,status,owner,summary,created_at,updated_at,review_due_at) VALUES(?,?,'OPEN',?,?,?,?,?)").bind(id,severity,actor.subject,bounded(summary,500),now,now,reviewDue),
       this.db.prepare("INSERT INTO incident_events(id,incident,actor,action,at) VALUES(?,?,?,'OPEN',?)").bind(crypto.randomUUID(),id,actor.subject,now)]);
-    await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',id,'OPEN');return {id,status:'OPEN'};
+    await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',id,'OPEN');return {id,status:'OPEN',reviewDueAt:reviewDue};
   }
   async incidentTransition(actor:Identity,id:string,revision:number,status:'CONTAINED'|'RECOVERING'|'RESOLVED',note:string,evidenceRef?:string){
     await this.authorize(actor,'INCIDENT',true);identifier(id);const allowed:Record<string,string[]>={OPEN:['CONTAINED'],CONTAINED:['RECOVERING'],RECOVERING:['RESOLVED']};
@@ -225,7 +246,7 @@ export class JobsGovernance {
     await this.audit(actor,'SECURITY_INCIDENT','INCIDENT',incidentId,'CORRECTIVE_ACTION');return {id};
   }
   async updatePolicy(actor:Identity,key:string,value:number,revision:number){await this.authorize(actor,'POLICY',true);
-    const bounds:Record<string,[number,number]>={moderation_daily_signal_threshold:[2,100],complaint_response_target_days:[1,30],retention_moderation_days:[30,365],retention_application_days:[180,3650]};
+    const bounds:Record<string,[number,number]>={moderation_daily_signal_threshold:[2,100],complaint_response_target_days:[1,30],incident_escalation_hours:[1,72],retention_moderation_days:[30,365],retention_application_days:[180,3650]};
     if(!bounds[key]||!Number.isSafeInteger(value)||value<bounds[key][0]||value>bounds[key][1])throw new JobsError(400,'invalid_policy');
     const current=await this.db.prepare('SELECT revision FROM jobs_policy_versions WHERE key=?').bind(key).first<{revision:number}>();
     if((current?.revision||0)!==revision)throw new JobsError(409,'policy_conflict');
@@ -239,14 +260,19 @@ export class JobsGovernance {
     const actions=await this.db.prepare("SELECT count(*) n FROM posting_actions WHERE company=? AND at>?").bind(companyId,this.clock()-86400000).first<{n:number}>();
     const threshold=await this.db.prepare("SELECT value FROM jobs_policy_versions WHERE key='moderation_daily_signal_threshold'").first<{value:string}>();
     const complaints=await this.db.prepare("SELECT count(*) n FROM moderation_cases WHERE kind IN ('JOB','COMPANY','RECRUITER','SCAM') AND target_ref=? AND status='RESOLVED'").bind(companyId).first<{n:number}>();
+    const recruiterCommands=await this.db.prepare('SELECT count(*) n FROM recruitment_commands rc JOIN applications a ON a.id=rc.application WHERE a.company=? AND rc.at>?').bind(companyId,this.clock()-86400000).first<{n:number}>();
+    const interviewCommands=await this.db.prepare("SELECT count(*) n FROM interview_commands ic JOIN interviews i ON i.id=ic.interview WHERE i.company=? AND ic.at>?").bind(companyId,this.clock()-86400000).first<{n:number}>();
     const indicators:{rule:string;target:string;severity:string}[]=[];
     if((actions?.n||0)>=(threshold?Number(JSON.parse(threshold.value)):8))indicators.push({rule:'POSTING_FREQUENCY',target:companyId,severity:'MEDIUM'});
     if((complaints?.n||0)>=3)indicators.push({rule:'REPEATED_COMPLAINTS',target:companyId,severity:'HIGH'});
+    if((recruiterCommands?.n||0)>=50)indicators.push({rule:'RECRUITER_ACTIVITY_VOLUME',target:companyId,severity:'MEDIUM'});
+    if((interviewCommands?.n||0)>=30)indicators.push({rule:'INTERVIEW_WORKFLOW_VOLUME',target:companyId,severity:'MEDIUM'});
     const fingerprints=new Map<string,number>();
     for(const listing of listings){
       let data:Record<string,unknown>;try{data=JSON.parse(listing.data) as Record<string,unknown>;}catch{continue;}
       const content=JSON.stringify(data).slice(0,16000).toLowerCase();
       if(/(?:registration|processing|training|security)\s+fee|pay\s+(?:us|a\s+fee)|refundable\s+(?:deposit|fee)/i.test(content))indicators.push({rule:'POTENTIAL_RECRUITMENT_FEE',target:companyId+'/'+listing.id,severity:'HIGH'});
+      if(/(?:guaranteed|assured)\s+(?:job|placement)|(?:official|verified)\s+(?:government|employer)/i.test(content))indicators.push({rule:'MISLEADING_CLAIM',target:companyId+'/'+listing.id,severity:'MEDIUM'});
       const fingerprint=String(data.title||'').trim().toLowerCase()+'|'+String(data.location||'').trim().toLowerCase();
       if(fingerprint!=='|'){fingerprints.set(fingerprint,(fingerprints.get(fingerprint)||0)+1);if(fingerprints.get(fingerprint)===3)indicators.push({rule:'REPEATED_DUPLICATE',target:companyId,severity:'MEDIUM'});}
     }
