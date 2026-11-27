@@ -1,7 +1,7 @@
 import { jobsPage } from './profile-ui';
 
 export function companyPage() {
-  return jobsPage(`<h1>Companies</h1><p>Registration is free. Account email verification does not verify a company.</p>
+  return jobsPage(`<h1>Companies</h1><a href="/jobs/ownership">Ownership transfers and retirement</a><p>Registration is free. Account email verification does not verify a company.</p>
 <p id="message" role="status"></p>
 <label for="company">Company workspace</label><select id="company"><option value="">Register a company</option></select>
 <form id="company-form"><fieldset disabled><legend>Company profile</legend>
@@ -53,7 +53,7 @@ const script = `(() => {
     if(!company)return;
     get('workspace').hidden=false; get('manage-jobs').href='/jobs/companies/'+encodeURIComponent(id)+'/jobs'; get('recruiter-workspace').href='/jobs/recruitment/companies/'+encodeURIComponent(id);
     const base='companies/'+id, current=company;
-    get('quota').textContent=current.restricted?'Company restricted. Recruitment access is suspended.':'Free plan: 10 postings per IST day, 30 active listings, 30-day listing validity.';
+    get('quota').textContent=current.restricted?'Company restricted. Recruitment access is suspended.':'Posting limits reset at midnight IST. Open Manage job listings to see available slots.';
     get('verification').href='/jobs/companies/'+encodeURIComponent(id)+'/verification';
     get('management').hidden=current.role==='RECRUITER'||current.restricted;
     get('invite').elements.role.options[1].disabled=current.role!=='OWNER';

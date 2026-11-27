@@ -61,7 +61,7 @@ export async function executeRecruitmentExtension(request:IntelligenceRequest,pr
   try{
     const result=await Promise.race([provider.run({purpose:request.purpose,data:JSON.parse(encoded)}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('timeout')),request.timeoutMs);})]);
     const audit={requestId,consentRecorded:request.consent,provider:{name:provider.name,model:provider.model,version:provider.version}};
-    if(!result||typeof result.text!=='string'||!result.text.trim()||result.text.length>4000||result.attributes&&Object.values(result.attributes).some(value=>!['string','number','boolean'].includes(typeof value)))return {purpose:request.purpose,audit,limits,fallback};
+    if(!result||typeof result.text!=='string'||!result.text.trim()||result.text.length>4000||result.attributes&&(Array.isArray(result.attributes)||typeof result.attributes!=='object'||Object.keys(result.attributes).length>16||JSON.stringify(result.attributes).length>2000||Object.values(result.attributes).some(value=>!['string','number','boolean'].includes(typeof value))))return {purpose:request.purpose,audit,limits,fallback};
     return {purpose:request.purpose,audit,limits,output:{text:result.text.trim(),attributes:result.attributes||{},provenance:{provider:provider.name,model:provider.model,version:provider.version},humanApprovalRequired:true,automaticAction:false},fallback:null};
   }catch{return {purpose:request.purpose,audit:{requestId,consentRecorded:request.consent,provider:{name:provider.name,model:provider.model,version:provider.version}},limits,fallback};}finally{if(timer!==undefined)clearTimeout(timer);}
 }
@@ -70,7 +70,17 @@ export type GovernancePurpose=Extract<IntelligencePurpose,'SCAM_REVIEW'|'SUSPICI
 const GOVERNANCE_FIELDS=new Set(['ruleIds','category','severity','publicListingExcerpt','redactedCaseSummary','language','signalCount']);
 /** BJ-AI-014/015/019 contract. No provider is wired into Jobs routes. */
 export async function executeGovernanceExtension(input:{purpose:GovernancePurpose;authorized:boolean;caseRef:string;data:Record<string,unknown>},provider?:IntelligenceProvider){
-  if(!input.authorized||!/^[\w-]{1,80}$/.test(input.caseRef)||!input.data||Object.keys(input.data).some(key=>!GOVERNANCE_FIELDS.has(key)))throw new JobsError(403,'governance_intelligence_forbidden');
+  const purposes:GovernancePurpose[]=['SCAM_REVIEW','SUSPICIOUS_ACTIVITY_REVIEW','COMPLAINT_CATEGORIZATION','MULTILINGUAL_MODERATION','SECURITY_ALERT_REVIEW','INVESTIGATION_SUMMARY','MODERATION_ASSISTANCE'];
+  if(input.authorized!==true||!purposes.includes(input.purpose)||!/^\w[\w-]{0,79}$/.test(input.caseRef)||!input.data||typeof input.data!=='object'||Array.isArray(input.data))
+    throw new JobsError(403,'governance_intelligence_forbidden');
+  for(const [key,value] of Object.entries(input.data)){
+    let valid=GOVERNANCE_FIELDS.has(key);
+    if(key==='ruleIds')valid=Array.isArray(value)&&value.length<=32&&value.every(rule=>typeof rule==='string'&&/^[A-Z0-9_]{1,64}$/.test(rule));
+    else if(key==='signalCount')valid=Number.isSafeInteger(value)&&Number(value)>=0&&Number(value)<=100000;
+    else if(key==='severity')valid=typeof value==='string'&&['LOW','MEDIUM','HIGH','CRITICAL'].includes(value);
+    else if(valid)valid=typeof value==='string'&&value.length<=1000&&!/[\u0000-\u001f@]/.test(value)&&!/(?:\d[ -]?){10,}/.test(value);
+    if(!valid)throw new JobsError(403,'governance_intelligence_forbidden');
+  }
   const result=await executeRecruitmentExtension({purpose:input.purpose,authorized:true,consent:false,consentRequired:false,data:input.data,timeoutMs:1000},provider);
   return {...result,product:'BILLIONJOBS',caseRef:input.caseRef,automaticDecision:false,humanReviewRequired:true};
 }

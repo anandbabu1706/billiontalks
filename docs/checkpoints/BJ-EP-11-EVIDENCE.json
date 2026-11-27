@@ -5,14 +5,38 @@
   "documentationBaseline": "bab49f794fea22a64f62fba6f0f9a2741bf86fec",
   "scope": "local synthetic development only",
   "milestoneComplete": false,
-  "focusedGovernanceTests": {"passed": 14, "total": 14},
-  "focusedProfileTests": {"passed": 19, "total": 19},
+  "focusedGovernanceTests": {
+    "passed": 14,
+    "total": 14
+  },
+  "focusedProfileTests": {
+    "passed": 19,
+    "total": 19
+  },
   "typescript": "passed",
   "bundle": "wrangler deploy --dry-run passed; no deployment",
-  "fullRegression": {"passed": 536, "total": 536, "testFilesPassed": 24, "testFilesTotal": 24},
-  "meetingsFixtureCorrections": ["prejoin camera lifecycle assertions", "calendar explicit month navigation"],
-  "localGitHousekeeping": {"exclude": ".git/info/exclude: /.worktrees/", "readmePreserved": true, "preExistingWorktreesPreserved": 7},
-  "releaseBlockers": ["trusted privileged MFA and reauthentication", "administrator bootstrap and complete workflows", "legal/operational qualification", "remote persistence and scheduler qualification", "manual accessibility and security qualification"],
+  "fullRegression": {
+    "passed": 536,
+    "total": 536,
+    "testFilesPassed": 24,
+    "testFilesTotal": 24
+  },
+  "meetingsFixtureCorrections": [
+    "prejoin camera lifecycle assertions",
+    "calendar explicit month navigation"
+  ],
+  "localGitHousekeeping": {
+    "exclude": ".git/info/exclude: /.worktrees/",
+    "readmePreserved": true,
+    "preExistingWorktreesPreserved": 7
+  },
+  "releaseBlockers": [
+    "trusted privileged MFA and reauthentication",
+    "administrator bootstrap and complete workflows",
+    "legal/operational qualification",
+    "remote persistence and scheduler qualification",
+    "manual accessibility and security qualification"
+  ],
   "additionalDevelopmentCashINR": 0,
   "continuation": {
     "applicationBaseline": "35ca767a2c978a704e9ee9c1ae04ed6fdb174468",
@@ -52,5 +76,94 @@
     "additionalDevelopmentCashINR": 0,
     "deployment": false,
     "mainMerge": false
+  },
+  "localReview20261128": {
+    "baselineCommit": "f3902d7f61d141fb17bffb34b22e5b74c5133538",
+    "milestoneComplete": false,
+    "regression": {
+      "passed": 553,
+      "failed": 0,
+      "skipped": 0,
+      "files": {
+        "account-foundation.test.ts": 54,
+        "account-v1-email-ui.test.ts": 11,
+        "browser-ui.test.ts": 138,
+        "calendar-v1-004.test.ts": 3,
+        "contacts-invitations-v1-005.test.ts": 5,
+        "dashboard-v1-002.test.ts": 6,
+        "feedback-growth.test.ts": 57,
+        "homepage-routing.test.ts": 4,
+        "host-management.test.ts": 7,
+        "jobs-companies.test.ts": 5,
+        "jobs-foundation.test.ts": 30,
+        "jobs-governance.test.ts": 31,
+        "jobs-interviews.test.ts": 13,
+        "jobs-marketplace.test.ts": 13,
+        "jobs-profiles.test.ts": 19,
+        "jobs-recruitment.test.ts": 15,
+        "meeting-foundation.test.ts": 79,
+        "realtime-client.test.ts": 6,
+        "scheduler-time-zone-selector.test.ts": 11,
+        "scheduler-v1-003-api.test.ts": 6,
+        "scheduler-v1-003-visual.test.ts": 3,
+        "settings-v1-007.test.ts": 4,
+        "ui-state.test.ts": 12,
+        "website-growth.test.ts": 21
+      }
+    },
+    "governanceCases": [
+      "denies administrative authority without MFA, role and recent reauthentication",
+      "keeps reporter cases confidential, audits review, and requires human enforcement",
+      "transfers ownership only by expiring single-use acceptance and permits retirement before closure",
+      "rechecks role grants, preserves a final owner, and respects overlapping restrictions",
+      "requires active legal holds to be released before completing deletion review",
+      "keeps governance AI assistance optional, bounded and human reviewed",
+      "exports only requester-owned Jobs records after recent reauthentication",
+      "deduplicates explainable fraud indicators without enforcing automatically",
+      "expires transfer requests and permits only one concurrent recipient acceptance",
+      "versions operational policy and records incident containment without exporting case evidence",
+      "removes only the intended company listing from public discovery",
+      "persists and deduplicates in-app reminder dispatch and skips stale interview revisions",
+      "keeps Jobs consent versioned and independent of shared account data",
+      "renders a responsive, labeled administration workspace without case details in the document",
+      "changes delegated access through the role form, scoped dashboard and real Jobs router",
+      "binds employer evidence to the company and serializes competing verification decisions",
+      "preserves an available owner across simultaneous suspensions, closure and grant revocation",
+      "revokes only the selected company membership and rejects conflicting administrative requests",
+      "requires a matching case and a fresh privileged session for Jobs account decisions",
+      "limits investigation evidence and reporter identity to authorized investigators",
+      "revalidates the seven product roles at privileged read and write boundaries",
+      "limits transfer cancellation to the sender and decline to the bound recipient",
+      "delivers exactly one approved export per request and scopes audit search to its actor",
+      "keeps deletion under review through retention and legal hold and replays subject cleanup after restoration",
+      "atomically enforces effective listing policy revisions through retries and IST rollover",
+      "keeps disputed ownership within case review and prevents self-review or a direct owner change",
+      "records local assistance without sending report text and rejects nested or oversized provider data",
+      "recovers persisted meeting and reminder work after interruption without duplicate activation or notification",
+      "explains every approved deterministic indicator and preserves below-threshold decisions",
+      "bridges existing listing and company reports into confidential case tracking",
+      "enforces timed employer verification on the directory, review and resubmission surfaces"
+    ],
+    "jobsMigrations": 14,
+    "typescript": "passed",
+    "bundle": "wrangler deploy --dry-run passed",
+    "browser": {
+      "widths": [
+        375,
+        1280
+      ],
+      "navigationRoutes": 14,
+      "workflowEvidence": "scripts/jobs-admin-browser.mjs"
+    },
+    "localAcceptanceRegister": "BJ-EP-11-MILESTONE.md",
+    "openLocalQualification": [
+      "ADM-07",
+      "ADM-12",
+      "ADM-13",
+      "ADM-14",
+      "ADM-19",
+      "ADM-20"
+    ],
+    "additionalCashINR": 0
   }
 }

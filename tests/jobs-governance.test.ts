@@ -41,7 +41,10 @@ it('keeps reporter cases confidential, audits review, and requires human enforce
   const action=await governance.enforce(owner(),{caseId:id,targetKind:'USER',targetRef:'stranger',kind:'JOBS_TEMP',reasonCode:'SUBSTANTIATED',expiresAt:now()+86400000});
   expect(await governance.activeRestrictions('USER','stranger')).toEqual([expect.objectContaining({id:action.id})]);
   const appeal=await request('enforcement/'+action.id+'/appeals','stranger','POST',{reason:'Synthetic dispute'});expect(appeal.status).toBe(201);
-  const appealId=(await appeal.json() as {id:string}).id;await governance.resolveAppeal(owner(),appealId,1,true,'Reviewed evidence');
+  const appealId=(await appeal.json() as {id:string}).id;await expect(governance.resolveAppeal(owner(),appealId,1,true,'Reviewed evidence')).rejects.toMatchObject({code:'independent_reviewer_required'});
+  await governance.grantRole(owner(),'recipient','MODERATOR');
+  await governance.resolveAppeal({...owner(),subject:'recipient'},appealId,1,true,'Reviewed evidence');
+  await governance.revokeRole(owner(),'recipient','MODERATOR');
   expect(await governance.activeRestrictions('USER','stranger')).toHaveLength(0);
   const audit=await governance.auditPage(owner(),new URL('http://localhost/'));expect(audit.rows.length).toBeGreaterThan(0);
   await expect(runtime.jobs.prepare('DELETE FROM admin_audit').run()).rejects.toThrow();
@@ -112,6 +115,12 @@ it('deduplicates explainable fraud indicators without enforcing automatically',a
   const again=await governance.scanCompany(owner(),c.id);expect(again.created).toBe(0);
   const signal=await runtime.jobs.prepare("SELECT id FROM fraud_signals WHERE rule='POTENTIAL_RECRUITMENT_FEE' AND target_ref=?").bind(c.id+'/synthetic_fee_listing').first<{id:string}>();
   await governance.reviewSignal(owner(),signal!.id,false);
+  expect((await governance.scanCompany(owner(),c.id)).created).toBe(0);
+  await runtime.jobs.prepare("UPDATE listing_details SET data=json_set(data,'$.description','Registration fee required before interview') WHERE company=?").bind(c.id).run();
+  expect((await governance.scanCompany(owner(),c.id)).created).toBe(1);
+  const next=await runtime.jobs.prepare("SELECT id FROM fraud_signals WHERE target_ref=? AND status='OPEN'").bind(c.id+'/synthetic_fee_listing').first<{id:string}>();
+  const referral=await governance.reviewSignal(owner(),next!.id,true);
+  expect((await governance.caseDetail(owner(),referral.caseId!)).record).toMatchObject({kind:'JOB',category:'POTENTIAL_RECRUITMENT_FEE'});
   expect((await runtime.jobs.prepare("SELECT count(*) n FROM enforcement_actions WHERE target_ref=?").bind(c.id+'/synthetic_fee_listing').first<{n:number}>())?.n).toBe(0);
 });
 it('expires transfer requests and permits only one concurrent recipient acceptance',async()=>{
@@ -160,6 +169,15 @@ it('removes only the intended company listing from public discovery',async()=>{
   const search=await market.search(new URL('http://localhost/jobs/search'));
   expect(search.items.some(item=>item.company===first.id&&item.id===listing)).toBe(false);
   expect(search.items.some(item=>item.company===second.id&&item.id===listing)).toBe(true);
+  await expect(runtime.jobs.prepare("INSERT INTO application_requests(candidate,company,listing,request_key,payload,at) VALUES(?,?,?,?,?,?)")
+    .bind('stranger',first.id,listing,'blocked','{}',now()).run()).rejects.toThrow('application_forbidden');
+  await governance.revokeEnforcement(owner(),action.id,1,'RESTORE');
+  expect((await market.publicListing(first.id,listing)).id).toBe(listing);
+  const limited=await governance.moderateListing(owner(),report.id,{kind:'FEATURE',reasonCode:'APPLICATION_REVIEW'});
+  expect((await market.publicListing(first.id,listing)).id).toBe(listing);
+  await expect(runtime.jobs.prepare("INSERT INTO application_requests(candidate,company,listing,request_key,payload,at) VALUES(?,?,?,?,?,?)")
+    .bind('stranger',first.id,listing,'blocked-again','{}',now()).run()).rejects.toThrow('application_forbidden');
+  await governance.revokeEnforcement(owner(),limited.id,1,'RESTORE');
 });
 it('persists and deduplicates in-app reminder dispatch and skips stale interview revisions',async()=>{
   const c=await company(),id='synthetic_reminder_interview',application='synthetic_reminder_application';
@@ -289,4 +307,309 @@ it('preserves an available owner across simultaneous suspensions, closure and gr
   await expect(db.prepare('UPDATE jobs_users SET restricted=1 WHERE subject=?').bind(remaining).run()).rejects.toThrow('final_owner_protected');
   await expect(db.prepare('UPDATE jobs_users SET closed_at=? WHERE subject=?').bind(now(),remaining).run()).rejects.toThrow('final_owner_protected');
   await expect(db.prepare("UPDATE admin_grants SET revoked_at=? WHERE subject=? AND role='PLATFORM_OWNER'").bind(now(),remaining).run()).rejects.toThrow('final_owner_protected');
+});
+
+it('revokes only the selected company membership and rejects conflicting administrative requests',async()=>{
+  const {handleJobs}=await import('../src/jobs/api');
+  const db=runtime.jobs;
+  for(const subject of ['member-reviewer','member-owner','member-target']){
+    await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject).run();
+  }
+  await db.prepare("INSERT INTO admin_grants VALUES('member-reviewer','BILLIONJOBS','PRODUCT_ADMIN','fixture',?,NULL)").bind(now()).run();
+  const companies=[crypto.randomUUID(),crypto.randomUUID()];
+  for(const id of companies){
+    await db.prepare("INSERT INTO companies(id,owner,data,created_at) VALUES(?,'member-owner','{}',?)").bind(id,now()).run();
+    await db.prepare("INSERT INTO memberships VALUES(?,'member-target','RECRUITER',NULL)").bind(id).run();
+    await db.prepare("INSERT INTO company_invitations(id,company,recipient_hash,token_hash,role,issuer,expires_at) VALUES(?,?,?,?,'RECRUITER','member-target',?)")
+      .bind(crypto.randomUUID(),id,'synthetic',crypto.randomUUID(),now()+60000).run();
+  }
+  async function call(company:string,target='',subject='member-reviewer',fresh=true){
+    const path='/api/jobs/v1/admin/companies/'+company+'/members'+(target?'/'+target:'');
+    const req=new Request('http://localhost'+path,{method:target?'DELETE':'GET',headers:{Origin:'http://localhost','X-Jobs-Request':'1','Content-Type':'application/json'},body:target?JSON.stringify({revision:1}):undefined});
+    return handleJobs(req,true,db,async()=>({subject,privilegedMfaAt:now(),reauthenticatedAt:fresh?now():0}));
+  }
+  expect((await call(companies[0],'','member-owner')).status).toBe(403);
+  expect((await call(companies[0],'member-target','member-reviewer',false)).status).toBe(403);
+  expect((await call(companies[0],'member-owner')).status).toBe(409);
+  expect((await call(companies[0])).status).toBe(200);
+  const results=await Promise.all([call(companies[0],'member-target'),call(companies[0],'member-target')]);
+  expect(results.map(r=>r.status).sort()).toEqual([200,409]);
+  for(const [i,company] of companies.entries()){
+    const members=await (await call(company)).json() as {rows:{subject:string;revoked_at:number|null}[]};
+    expect(members.rows.find(row=>row.subject==='member-target')?.revoked_at===null).toBe(i===1);
+    const invite=await db.prepare("SELECT revoked_at FROM company_invitations WHERE company=? AND issuer='member-target'").bind(company).first<{revoked_at:number|null}>();
+    expect(invite?.revoked_at===null).toBe(i===1);
+  }
+  expect(await db.prepare("SELECT count(*) n FROM admin_audit WHERE target_ref=? AND action='REVOKE'").bind(companies[0]+'/member-target').first()).toEqual({n:1});
+});
+
+it('requires a matching case and a fresh privileged session for Jobs account decisions',async()=>{
+  const {handleJobs}=await import('../src/jobs/api');
+  const db=runtime.jobs,subject='account-target',reviewer='account-reviewer';
+  await seedIdentity(runtime.accounts,subject,'account-fixture'.padEnd(43,'x'));
+  for(const id of [subject,reviewer])await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(id).run();
+  await db.prepare("INSERT INTO admin_grants VALUES(?,'BILLIONJOBS','PRODUCT_ADMIN','fixture',?,NULL)").bind(reviewer,now()).run();
+  const actor={subject:reviewer,privilegedMfaAt:now(),reauthenticatedAt:now()};
+  const report=await governance.report({subject:reviewer},{kind:'CANDIDATE',targetRef:subject,detail:'Synthetic account case',category:'ABUSE'});
+  const account='users/'+subject;
+  async function call(path:string,data?:object,recent=true){
+    return handleJobs(new Request('http://localhost/api/jobs/v1/admin/'+path,{method:data?'POST':'GET',headers:{Origin:'http://localhost','X-Jobs-Request':'1','Content-Type':'application/json'},body:data?JSON.stringify(data):undefined}),true,db,async()=>({...actor,reauthenticatedAt:recent?now():0}));
+  }
+  expect((await call(account)).status).toBe(200);
+  const command={kind:'JOBS_TEMP',caseId:report.id,reasonCode:'ABUSE',expiresAt:now()+60000};
+  expect((await call(account+'/actions',command,false)).status).toBe(403);
+  expect((await call(account+'/actions',{...command,caseId:'wrong-case'})).status).toBe(409);
+  const action=await call(account+'/actions',command);
+  expect(action.status).toBe(201);
+  const {id}=await action.json() as {id:string};
+  expect((await call('actions/'+id+'/revoke',{revision:1,reason:''})).status).toBe(400);
+  expect(await governance.activeRestrictions('USER',subject)).toHaveLength(1);
+  expect((await call('actions/'+id+'/revoke',{revision:1,reason:'REVIEWED'})).status).toBe(200);
+  expect((await call(account+'/closure',{caseId:report.id})).status).toBe(409);
+  await governance.decideCase(actor,report.id,{revision:1,status:'RESOLVED',note:'Synthetic decision'});
+  await db.prepare("INSERT INTO legal_holds VALUES('account-hold',?,'TEST','CLOSURE',?,?,?,NULL,NULL)").bind(subject,reviewer,now(),now()+60000).run();
+  expect((await call(account+'/closure',{caseId:report.id})).status).toBe(409);
+  await db.prepare("UPDATE legal_holds SET released_at=? WHERE id='account-hold'").bind(now()).run();
+  expect((await call(account+'/closure',{caseId:report.id})).status).toBe(200);
+  expect((await call(account+'/closure',{caseId:report.id})).status).toBe(409);
+  expect(await runtime.accounts.prepare('SELECT status FROM accounts WHERE id=?').bind(subject).first()).toEqual({status:'ACTIVE'});
+});
+
+it('limits investigation evidence and reporter identity to authorized investigators',async()=>{
+  const db=runtime.jobs;
+  for(const [subject,role] of [['case-investigator','MODERATOR'],['case-support','SUPPORT']]){
+    await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject).run();
+    await db.prepare("INSERT INTO admin_grants VALUES(?,'BILLIONJOBS',?,'fixture',?,NULL)").bind(subject,role,now()).run();
+  }
+  const investigator={subject:'case-investigator',privilegedMfaAt:now()};
+  const support={subject:'case-support',privilegedMfaAt:now()};
+  const report=await governance.report(investigator,{kind:'JOB',targetRef:'company/listing',category:'FEE',detail:'Private complaint text'});
+  await governance.addCaseEvidence(investigator,report.id,'synthetic:private','Private case note');
+  const limited=await governance.caseDetail(support,report.id);
+  expect(limited.record).not.toHaveProperty('reporter');
+  expect(JSON.stringify(limited.history)).not.toMatch(/private|case-investigator/i);
+  expect((await governance.caseDetail(investigator,report.id)).record).toHaveProperty('reporter',investigator.subject);
+  const decision={revision:1,status:'RESOLVED' as const,note:'Case decision',category:'RECRUITMENT_FEE',severity:'HIGH'};
+  await expect(governance.decideCase(support,report.id,decision)).rejects.toMatchObject({code:'admin_forbidden'});
+  await expect(governance.decideCase(investigator,report.id,{...decision,assignee:support.subject})).rejects.toMatchObject({code:'case_conflict'});
+  const outcomes=await Promise.allSettled([governance.decideCase(investigator,report.id,decision),governance.decideCase(investigator,report.id,decision)]);
+  expect(outcomes.filter(o=>o.status==='fulfilled')).toHaveLength(1);
+  await expect(governance.addCaseEvidence(investigator,report.id,'synthetic:late','Late')).rejects.toMatchObject({code:'case_closed'});
+});
+
+it('revalidates the seven product roles at privileged read and write boundaries',async()=>{
+  const {handleJobs}=await import('../src/jobs/api');
+  const db=runtime.jobs;
+  const matrix=[
+    ['PLATFORM_OWNER',200,200,200,200,200],
+    ['PRODUCT_ADMIN',200,403,200,200,403],
+    ['SECURITY_ADMIN',403,403,200,200,200],
+    ['MODERATOR',200,403,403,200,403],
+    ['SUPPORT',403,403,403,200,403],
+    ['PRIVACY_ADMIN',403,403,200,200,403],
+    ['AUDITOR',403,403,200,403,403]
+  ] as const;
+  for(const [role,signals,roles,audit,cases,operations] of matrix){
+    const subject='matrix-'+role;
+    await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject).run();
+    await db.prepare("INSERT INTO admin_grants VALUES(?,'BILLIONJOBS',?,'local-fixture',?,NULL)").bind(subject,role,now()).run();
+    const call=(path:string,mfa=true)=>handleJobs(new Request('http://localhost/api/jobs/v1/admin/'+path),true,db,async()=>({subject,privilegedMfaAt:mfa?now():0}));
+    for(const [path,status] of [['signals',signals],['roles',roles],['audit',audit],['cases',cases],['operations',operations]] as const){
+      expect((await call(path)).status,role+' '+path).toBe(status);
+      expect((await call(path,false)).status).toBe(403);
+    }
+    const mutation=new Request('http://localhost/api/jobs/v1/admin/roles',{method:'POST',headers:{Origin:'http://localhost','X-Jobs-Request':'1','Content-Type':'application/json'},body:JSON.stringify({action:'grant',subject,role:'PLATFORM_OWNER'})});
+    expect((await handleJobs(mutation,true,db,async()=>({subject,privilegedMfaAt:now(),reauthenticatedAt:now()}))).status).toBe(403);
+  }
+});
+
+it('limits transfer cancellation to the sender and decline to the bound recipient',async()=>{
+  const db=runtime.jobs,companyId=crypto.randomUUID();
+  for(const subject of ['transfer-owner','transfer-recipient'])await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject).run();
+  await db.prepare("INSERT INTO companies(id,owner,data,created_at) VALUES(?,'transfer-owner','{}',?)").bind(companyId,now()).run();
+  const sender={subject:'transfer-owner',reauthenticatedAt:now()},email='transfer@example.invalid';
+  const receiver={subject:'transfer-recipient',reauthenticatedAt:now(),recipientHash:await digest(email)};
+  const create=()=>governance.requestOwnershipTransfer(sender,companyId,receiver.subject,email,1);
+  const first=await create(),url=new URL('http://localhost');
+  expect(JSON.stringify(await governance.ownershipWorkspace(receiver,url))).not.toContain(first.token);
+  expect((await governance.ownershipWorkspace({...receiver,recipientHash:'other'},url)).requests).toHaveLength(0);
+  await expect(governance.endTransfer(sender,first.id,true)).rejects.toMatchObject({code:'transfer_unavailable'});
+  await expect(governance.endTransfer({...receiver,reauthenticatedAt:0},first.id,true)).rejects.toMatchObject({code:'reauthentication_required'});
+  await governance.endTransfer(receiver,first.id,true);
+  await expect(governance.acceptOwnershipTransfer(receiver,first.id,first.token)).rejects.toMatchObject({code:'transfer_not_found'});
+  const second=await create();
+  await governance.endTransfer(sender,second.id,false);
+  expect(await db.prepare('SELECT owner FROM companies WHERE id=?').bind(companyId).first()).toEqual({owner:sender.subject});
+});
+
+it('delivers exactly one approved export per request and scopes audit search to its actor',async()=>{
+  const user={subject:'case-review-export',reauthenticatedAt:now()};
+  await runtime.jobs.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(user.subject).run();
+  const admin={subject:'matrix-PRIVACY_ADMIN',privilegedMfaAt:now(),reauthenticatedAt:now()};
+  const privacy=new JobsPrivacy(runtime.jobs);
+  const first=await governance.requestPrivacy(user,'EXPORT');
+  await expect(governance.requestPrivacy(user,'EXPORT')).rejects.toMatchObject({code:'request_pending'});
+  const second=await governance.requestPrivacy({subject:'case-support',reauthenticatedAt:now()},'EXPORT');
+  await governance.completePrivacy(admin,first.id,true,'REVIEWED');
+  await governance.completePrivacy(admin,second.id,true,'REVIEWED');
+  await expect(privacy.exportOwn({...user,subject:'case-support'},first.id)).rejects.toMatchObject({code:'export_review_required'});
+  const attempts=await Promise.allSettled([privacy.exportOwn(user,first.id),privacy.exportOwn(user,first.id)]);
+  expect(attempts.filter(a=>a.status==='fulfilled')).toHaveLength(1);
+  expect(await runtime.jobs.prepare('SELECT status FROM privacy_requests WHERE id=?').bind(second.id).first()).toEqual({status:'REVIEWING'});
+  const audit=await governance.auditPage(admin,new URL('http://localhost/?actor='+user.subject+'&action=EXPORT_DELIVERY&target_ref='+first.id));
+  expect(audit.rows).toHaveLength(1);
+});
+
+it('keeps deletion under review through retention and legal hold and replays subject cleanup after restoration',async()=>{
+  const db=runtime.jobs,subject='retention-target',operator='retention-operator',at=now();
+  for(const who of [subject,operator])await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(who).run();
+  await db.prepare("INSERT INTO admin_grants VALUES(?,'BILLIONJOBS','PRIVACY_ADMIN','fixture',?,NULL)").bind(operator,at).run();
+  await db.prepare("INSERT INTO platform_roles VALUES(?,'PRIVACY_OPERATOR',NULL)").bind(operator).run();
+  const gov=new JobsGovernance(db,()=>at),actor={subject:operator,privilegedMfaAt:at,reauthenticatedAt:at};
+  const user={subject,reauthenticatedAt:at};
+  const request=await gov.requestPrivacy(user,'DELETE');
+  await db.prepare("INSERT INTO jobs_consent_events(id,subject,purpose,notice_version,granted,at) VALUES('retention-consent',?,'OPTIONAL_ANALYTICS','BJ-privacy-v1',1,?)").bind(subject,at).run();
+  await gov.completePrivacy(actor,request.id,true,'REQUEST_VERIFIED');
+  await new JobsPrivacy(db,()=>at).purge(actor);
+  expect(await db.prepare('SELECT status FROM privacy_requests WHERE id=?').bind(request.id).first()).toEqual({status:'REVIEWING'});
+  const later=at+31*86400000,privacy=new JobsPrivacy(db,()=>later);
+  const hold=await gov.legalHold(actor,subject,'JOBS','DISPUTE',at+86400000);
+  await privacy.purge(actor);
+  expect(await db.prepare('SELECT id FROM jobs_consent_events WHERE subject=?').bind(subject).first()).not.toBeNull();
+  await gov.releaseHold(actor,hold.id);
+  await privacy.purge(actor);
+  expect(await db.prepare('SELECT status FROM privacy_requests WHERE id=?').bind(request.id).first()).toEqual({status:'COMPLETED'});
+  expect(await db.prepare('SELECT id FROM jobs_consent_events WHERE subject=?').bind(subject).first()).toBeNull();
+  await db.prepare('UPDATE restore_gate SET ready=0 WHERE id=1').run();
+  await db.prepare("INSERT INTO jobs_consent_events(id,subject,purpose,notice_version,granted,at) VALUES('restored-consent',?,'OPTIONAL_ANALYTICS','BJ-privacy-v1',1,?)").bind(subject,at).run();
+  await privacy.replayDeletionLedger(actor,[],[{requestId:request.id,subject,at:later}]);
+  expect(await db.prepare('SELECT id FROM jobs_consent_events WHERE subject=?').bind(subject).first()).toBeNull();
+  expect(await db.prepare('SELECT ready FROM restore_gate WHERE id=1').first()).toEqual({ready:1});
+});
+
+it('atomically enforces effective listing policy revisions through retries and IST rollover',async()=>{
+  const {PostingQuota}=await import('../src/jobs/quota');
+  let at=Date.parse('2026-12-01T18:29:59Z');
+  const db=runtime.jobs,subject='policy-employer',admin={subject:'matrix-PRODUCT_ADMIN',privilegedMfaAt:at,reauthenticatedAt:at};
+  const gov=new JobsGovernance(db,()=>at),quota=new PostingQuota(db,()=>at),company=crypto.randomUUID();
+  await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(subject).run();
+  await db.prepare("INSERT INTO companies(id,owner,data,created_at) VALUES(?,?,'{}',?)").bind(company,subject,at).run();
+  const future=at+1000;
+  await gov.updatePolicy(admin,'listing_daily_limit',2,0,at);
+  await gov.updatePolicy(admin,'listing_validity_days',4,0,future);
+  await gov.updatePolicy(admin,'listing_active_limit',3,0,future);
+  const post=(key:string)=>quota.apply({subject},{company,listing:key,key,operation:'CREATE',revision:0,vacancy:{position:key,location:'X',department:'Y',arrangement:'Z'}});
+  const attempts=await Promise.allSettled(['one','two','three','four'].map(post));
+  expect(attempts.filter(x=>x.status==='fulfilled')).toHaveLength(2);
+  for(const result of attempts)if(result.status==='fulfilled')expect(result.value.expiresAt).toBe(at+30*86400000);
+  at=future;
+  const outcomes=await Promise.allSettled(['five','six'].map(post));
+  expect(outcomes.filter(x=>x.status==='fulfilled')).toHaveLength(1);
+  const accepted=outcomes[0].status==='fulfilled'?'five':'six';
+  expect((await post(accepted)).expiresAt).toBe(at+4*86400000);
+  await expect(post('seven')).rejects.toMatchObject({code:'active_limit'});
+  await expect(gov.updatePolicy(admin,'listing_active_limit',31,1)).rejects.toMatchObject({code:'invalid_policy'});
+});
+
+it('keeps disputed ownership within case review and prevents self-review or a direct owner change',async()=>{
+  const db=runtime.jobs,reviewer={subject:'matrix-PLATFORM_OWNER',privilegedMfaAt:now(),reauthenticatedAt:now()};
+  const member={subject:'transfer-recipient',reauthenticatedAt:now()};
+  const c=await db.prepare("SELECT id FROM companies WHERE owner='transfer-owner' LIMIT 1").first<{id:string}>();
+  await db.prepare("INSERT INTO memberships VALUES(?,?,'RECRUITER',NULL)").bind(c!.id,member.subject).run();
+  const request=await governance.requestRecovery(member,c!.id,'UNAVAILABLE_OWNER','synthetic:record');
+  expect((await governance.ownershipRecovery({subject:'case-support'},false,new URL('http://local'))).rows).toEqual([]);
+  await expect(governance.updateRecovery(member,request.id,{revision:1,status:'CLOSED',note:'Mine'},true)).rejects.toMatchObject({status:403});
+  await governance.updateRecovery(reviewer,request.id,{revision:1,status:'REVIEWING',note:'Case received'},true);
+  await governance.updateRecovery(reviewer,request.id,{revision:2,status:'MORE_INFO',note:'Clarify evidence'},true);
+  await governance.updateRecovery(member,request.id,{revision:3,status:'REVIEWING',note:'synthetic:additional'},false);
+  await governance.updateRecovery(reviewer,request.id,{revision:4,status:'CLOSED',note:'Normal transfer required'},true);
+  expect(await db.prepare('SELECT owner FROM companies WHERE id=?').bind(c!.id).first()).toEqual({owner:'transfer-owner'});
+});
+
+it('records local assistance without sending report text and rejects nested or oversized provider data',async()=>{
+  const reviewer={subject:'case-investigator',privilegedMfaAt:now()};
+  const c=await runtime.jobs.prepare('SELECT id FROM moderation_cases LIMIT 1').first<{id:string}>();
+  const guidance=await governance.assistCase(reviewer,c!.id);
+  expect(guidance).toMatchObject({humanReviewRequired:true,automaticDecision:false});
+  expect(await runtime.jobs.prepare('SELECT target_ref FROM admin_audit WHERE id=?').bind(guidance.auditRef).first()).toEqual({target_ref:c!.id});
+  await expect(governance.assistCase({...reviewer,subject:'case-support'},c!.id)).rejects.toMatchObject({status:403});
+  const base={purpose:'SCAM_REVIEW' as const,caseRef:'synthetic',authorized:true};
+  for(const data of [{ruleIds:[{email:'hidden'}]},{signalCount:-1},{redactedCaseSummary:'test@example.invalid'}]){
+    await expect(executeGovernanceExtension({...base,data})).rejects.toMatchObject({status:403});
+  }
+  const fake={name:'fixture',model:'local',version:'1',run:async()=>({text:'human review',attributes:{oversized:'a'.repeat(2500)}})};
+  expect((await executeGovernanceExtension({...base,data:{severity:'LOW'}},fake)).fallback).toMatchObject({reason:'provider_timeout_or_invalid'});
+});
+
+it('recovers persisted meeting and reminder work after interruption without duplicate activation or notification',async()=>{
+  const {Interviews}=await import('../src/jobs/interviews');
+  const localState='ops-'+crypto.randomUUID().replaceAll('-','').slice(0,10);
+  let instance=await createJobsRuntime({enabled:true,localState});
+  const at=now(),ownerSubject='dispatch-owner',actor={subject:ownerSubject,privilegedMfaAt:at,reauthenticatedAt:at};
+  let activations=0;
+  const adapter={version:'billiontalks-meetings.v1' as const,activate:async()=>{activations++;return {meetingRef:'local-meeting',joinPath:'/local'}},revoke:async()=>{},authorizeJoin:async()=>({meetingRef:'local-meeting',joinPath:'/local'})};
+  try{
+    await seedIdentity(instance.accounts,ownerSubject);
+    const db=instance.jobs;
+    await db.prepare('INSERT INTO jobs_users(subject,eligible,attested_at) VALUES(?,1,0)').bind(ownerSubject).run();
+    await instance.bootstrapOwner(ownerSubject);
+    await db.prepare("INSERT INTO applications(id,candidate,company,listing,attempt,status,snapshot,created_at,updated_at) VALUES('app',?,'co','listing',1,'SUBMITTED','{}',?,?)").bind(ownerSubject,at,at).run();
+    await db.prepare("INSERT INTO interviews(id,application,company,listing,round,title,instructions,duration_minutes,scheduling_timezone,state,revision,created_by,created_at,updated_at) VALUES('interview','app','co','listing',1,'Test','',30,'UTC','CONFIRMED',1,?,?,?)").bind(ownerSubject,at,at).run();
+    await db.prepare("INSERT INTO interview_slots(id,interview,starts_at,ends_at,original_timezone,expires_at,status,created_at) VALUES('slot','interview',?,?,'UTC',?,'CONFIRMED',?)").bind(new Date(at+1800000).toISOString(),new Date(at+3600000).toISOString(),at+86400000,at).run();
+    await db.prepare("UPDATE interviews SET confirmed_slot='slot' WHERE id='interview'").run();
+    await db.prepare("INSERT INTO interview_meeting_outbox VALUES('job','interview',1,'ACTIVATE','{}','PENDING',0,?,NULL,?,?)").bind(at,at,at).run();
+    await db.prepare("INSERT INTO meeting_outbox_leases VALUES('job','interrupted',?)").bind(at+1000).run();
+    expect((await new JobsOperations(db,()=>at).queueReminders(actor)).queued).toBe(2);
+    await instance.mf.dispose();instance=await createJobsRuntime({enabled:true,localState});
+    let clock=at;
+    const interviews=new Interviews(instance.jobs,adapter,()=>clock);
+    expect((await interviews.reconcile()).processed).toBe(0);
+    clock+=1001;
+    await Promise.all([interviews.reconcile(),interviews.reconcile()]);
+    expect(activations).toBe(1);
+    expect(await instance.jobs.prepare("SELECT status,attempts FROM interview_meeting_outbox WHERE id='job'").first()).toEqual({status:'COMPLETED',attempts:1});
+    const operations=new JobsOperations(instance.jobs,()=>clock);
+    const dispatched=await Promise.all([operations.dispatchReminders(actor),operations.dispatchReminders(actor)]);
+    expect(dispatched.reduce((n,r)=>n+r.delivered,0)).toBe(2);
+    expect(await instance.jobs.prepare("SELECT count(*) n FROM jobs_notifications WHERE kind='INTERVIEW_REMINDER'").first()).toEqual({n:2});
+  }finally{await instance.mf.dispose();}
+},60000);
+
+it('explains every approved deterministic indicator and preserves below-threshold decisions',async()=>{
+  const {detectCompanySignals}=await import('../src/jobs/governance');
+  const below={postings:7,complaints:2,recruitment:49,interviews:29};
+  const listing=(id:string,description:string)=>({id,data:JSON.stringify({title:'Engineer',location:'Pune',description})});
+  expect(detectCompanySignals('co',[listing('a','Work on products'),listing('b','Support engineers')],below,8).indicators).toEqual([]);
+  const result=detectCompanySignals('co',[listing('a','Registration fee'),listing('b','Guaranteed placement'),listing('c','Synthetic')],{postings:8,complaints:3,recruitment:50,interviews:30},8);
+  expect(result.indicators.map(x=>x.rule).sort()).toEqual(['POSTING_FREQUENCY','REPEATED_COMPLAINTS','RECRUITER_ACTIVITY_VOLUME','INTERVIEW_WORKFLOW_VOLUME','POTENTIAL_RECRUITMENT_FEE','MISLEADING_CLAIM','REPEATED_DUPLICATE'].sort());
+  expect(result.indicators.find(x=>x.rule==='POTENTIAL_RECRUITMENT_FEE')?.target).toBe('co/a');
+});
+
+it('bridges existing listing and company reports into confidential case tracking',async()=>{
+  const db=runtime.jobs,reporter='case-support';
+  const company=await db.prepare('SELECT id FROM companies LIMIT 1').first<{id:string}>();
+  await db.prepare("INSERT INTO company_reports(id,company,reporter,reason,detail,at) VALUES('legacy-form',?,?,'ABUSE','Company form evidence',?)").bind(company!.id,reporter,now()).run();
+  await db.prepare("INSERT INTO listing_reports(id,company,listing,reporter,reason,detail,at) VALUES('legacy-form',?,'listing',?,'FRAUD','Listing form evidence',?)").bind(company!.id,reporter,now()).run();
+  const cases=await governance.reportedCases({subject:reporter},new URL('http://localhost'));
+  expect(cases.rows).toEqual(expect.arrayContaining([expect.objectContaining({id:'company-legacy-form'}),expect.objectContaining({id:'listing-legacy-form'})]));
+  expect(JSON.stringify(cases)).not.toContain('form evidence');
+  const moderator={subject:'matrix-MODERATOR',privilegedMfaAt:now()};
+  const detail=await governance.caseDetail(moderator,'listing-legacy-form');
+  expect(detail.history).toEqual(expect.arrayContaining([expect.objectContaining({internal_note:'Listing form evidence'})]));
+  await expect(governance.ownCase({subject:'case-investigator'},'company-legacy-form')).rejects.toMatchObject({status:404});
+});
+
+it('enforces timed employer verification on the directory, review and resubmission surfaces',async()=>{
+  const db=runtime.jobs,at=now(),company=crypto.randomUUID();
+  const submitter={subject:'evidence-owner'},reviewer={subject:'matrix-MODERATOR',privilegedMfaAt:at,reauthenticatedAt:at};
+  await db.prepare("INSERT INTO companies(id,owner,data,created_at) VALUES(?,?,'{\"name\":\"Expiry fixture\"}',?)").bind(company,submitter.subject,at).run();
+  let clock=at;
+  const gov=new JobsGovernance(db,()=>clock);
+  await gov.submitEmployerEvidence(submitter,company,{reference:'synthetic:expiry',revision:0});
+  await gov.reviewEmployerVerification(reviewer,company,'IN_REVIEW','synthetic:expiry',1);
+  await gov.reviewEmployerVerification(reviewer,company,'VERIFIED','synthetic:expiry',2,at+1000);
+  clock+=1000;
+  expect(await gov.employerEvidence(submitter,company,false)).toMatchObject({state:'EXPIRED'});
+  expect((await gov.companies(reviewer,new URL('http://local/?q=Expiry'))).rows).toContainEqual(expect.objectContaining({id:company,employer_verification:'EXPIRED'}));
+  expect(await gov.submitEmployerEvidence(submitter,company,{reference:'synthetic:renewal',revision:3})).toMatchObject({revision:4});
 });

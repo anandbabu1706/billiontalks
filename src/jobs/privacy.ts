@@ -1,3 +1,4 @@
+import { JobsGovernance } from './governance';
 import { DAY, JobsError, type Identity, type JobsDatabase } from "./contracts";
 import { requireAssigned, requireEligible, requirePrivacyOperator } from "./permissions";
 
@@ -9,14 +10,14 @@ export type ProfileFields = Partial<Record<typeof PUBLIC_FIELDS[number] | "email
 export async function projectProfile(db: JobsDatabase, owner: string, viewer: Identity | null, fields: ProfileFields, visibleFields: string[], forIndex = false): Promise<ProfileFields> {
   const gate = await db.prepare("SELECT ready FROM restore_gate WHERE id=1").first<{ ready: number }>();
   if (gate?.ready !== 1) return {};
-  const profile = await db.prepare("SELECT visibility,indexing FROM jobs_users WHERE subject=? AND closed_at IS NULL AND restricted=0 AND eligible=1").bind(owner).first<{ visibility: string; indexing: number }>();
+  const profile = await db.prepare("SELECT visibility,indexing FROM jobs_users WHERE subject=? AND closed_at IS NULL AND restricted=0 AND eligible=1 AND NOT EXISTS(SELECT 1 FROM current_jobs_enforcement e WHERE e.target_kind='USER' AND e.target_ref=jobs_users.subject AND e.kind IN ('JOBS_TEMP','JOBS_PERMANENT','EMERGENCY'))").bind(owner).first<{ visibility: string; indexing: number }>();
   if (!profile) return {};
   if (!forIndex && viewer?.subject === owner) return fields;
   if (forIndex && (profile.visibility !== "PUBLIC" || !profile.indexing)) return {};
   if (profile.visibility === "PRIVATE") return {};
   if (profile.visibility === "RECRUITERS_ONLY") {
     if (!viewer) return {};
-    const recruiter = await db.prepare(`SELECT m.subject FROM memberships m JOIN jobs_users u ON u.subject=m.subject WHERE m.subject=? AND m.revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM companies c WHERE c.id=m.company AND c.restricted=1) AND u.eligible=1 AND u.closed_at IS NULL AND u.restricted=0`).bind(viewer.subject).first();
+    const recruiter = await db.prepare(`SELECT m.subject FROM memberships m JOIN jobs_users u ON u.subject=m.subject WHERE m.subject=? AND m.revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM companies c WHERE c.id=m.company AND c.restricted=1) AND u.eligible=1 AND u.closed_at IS NULL AND u.restricted=0 AND NOT EXISTS(SELECT 1 FROM current_jobs_enforcement e WHERE e.target_kind IN ('USER','RECRUITER') AND e.target_ref=m.subject AND e.kind IN ('JOBS_TEMP','JOBS_PERMANENT','EMERGENCY','FEATURE','RECRUITER'))`).bind(viewer.subject).first();
     if (!recruiter) return {};
   }
   return Object.fromEntries(PUBLIC_FIELDS.filter(key => visibleFields.includes(key) && key in fields).map(key => [key, fields[key]]));
@@ -53,15 +54,20 @@ export class JobsPrivacy {
   }
   /** Caller must supply a trusted recent account reauthentication claim. No recruiter notes,
    * investigation evidence, other products or shared account credentials are exported. */
-  async exportOwn(actor:Identity){
+  async exportOwn(actor:Identity,requestId?:string){
     const now=this.clock();if(!actor.reauthenticatedAt||actor.reauthenticatedAt>now||now-actor.reauthenticatedAt>5*60_000)throw new JobsError(403,'reauthentication_required');
-    const approved=await this.db.prepare("SELECT id FROM privacy_requests WHERE subject=? AND kind='EXPORT' AND status='REVIEWING' ORDER BY requested_at DESC LIMIT 1").bind(actor.subject).first();
+    const approved=await this.db.prepare("SELECT id FROM privacy_requests WHERE subject=? AND kind='EXPORT' AND status='REVIEWING' AND (? IS NULL OR id=?) ORDER BY requested_at DESC LIMIT 1").bind(actor.subject,requestId??null,requestId??null).first<{id:string}>();
     if(!approved)throw new JobsError(403,'export_review_required');
     const profile=await this.db.prepare('SELECT data,visibility,indexing,updated_at FROM jobs_profiles WHERE subject=?').bind(actor.subject).first<{data:string;visibility:string;indexing:number;updated_at:number}>();
-    const applications=(await this.db.prepare('SELECT id,company,listing,status,snapshot,created_at,updated_at FROM applications WHERE candidate=? ORDER BY created_at DESC LIMIT 1000').bind(actor.subject).all<{id:string;company:string;listing:string;status:string;snapshot:string;created_at:number;updated_at:number}>()).results;
-    const interviews=(await this.db.prepare("SELECT i.id,i.application,i.state,i.confirmed_slot,i.created_at,i.updated_at FROM interviews i JOIN interview_participants p ON p.interview=i.id WHERE p.subject=? ORDER BY i.created_at DESC LIMIT 1000").bind(actor.subject).all()).results;
-    await this.db.prepare("INSERT INTO privacy_audit(actor,action,at) VALUES(?,'EXPORT',?)").bind(actor.subject,now).run();
-    await this.db.prepare("UPDATE privacy_requests SET status='COMPLETED',completed_at=? WHERE subject=? AND kind='EXPORT' AND status='REVIEWING'").bind(now,actor.subject).run();
+    const applications=(await this.db.prepare('SELECT id,company,listing,status,snapshot,created_at,updated_at FROM applications WHERE candidate=? ORDER BY created_at DESC,id').bind(actor.subject).all<{id:string;company:string;listing:string;status:string;snapshot:string;created_at:number;updated_at:number}>()).results;
+    const interviews=(await this.db.prepare("SELECT i.id,CASE WHEN p.role='CANDIDATE' THEN i.application END application,i.state,i.confirmed_slot,i.created_at,i.updated_at FROM interviews i JOIN interview_participants p ON p.interview=i.id WHERE p.subject=? ORDER BY i.created_at DESC,i.id").bind(actor.subject).all()).results;
+    const audit=crypto.randomUUID();
+    await this.db.batch([
+      this.db.prepare("UPDATE privacy_requests SET status='COMPLETED',completed_at=? WHERE id=? AND subject=? AND status='REVIEWING'").bind(now,approved.id,actor.subject),
+      this.db.prepare(`INSERT INTO admin_audit SELECT ?,?,'BILLIONJOBS','PRIVACY','PRIVACY_REQUEST',?,'EXPORT_DELIVERY','SUCCESS',NULL,? WHERE changes()=1`).bind(audit,actor.subject,approved.id,now),
+      this.db.prepare("INSERT INTO privacy_audit(actor,action,at) SELECT ?,'EXPORT',? WHERE changes()=1").bind(actor.subject,now)
+    ]);
+    if(!await this.db.prepare('SELECT id FROM admin_audit WHERE id=?').bind(audit).first())throw new JobsError(409,'request_conflict');
     return {product:'BILLIONJOBS',subject:actor.subject,generatedAt:now,profile:profile?{data:JSON.parse(profile.data),visibility:profile.visibility,indexing:!!profile.indexing,updatedAt:profile.updated_at}:null,
       applications:applications.map(a=>({...a,snapshot:JSON.parse(a.snapshot)})),interviews};
   }
@@ -76,8 +82,15 @@ export class JobsPrivacy {
   }
   async purge(actor: Identity): Promise<void> {
     await requirePrivacyOperator(this.db, actor);
+    await this.purgeDueRecords(actor);
+  }
+  async purgeDueRecordsForReview(actor:Identity){
+    await new JobsGovernance(this.db,this.clock).authorize(actor,'PRIVACY_REVIEW',true);
+    await this.purgeDueRecords(actor);
+  }
+  private async purgeDueRecords(actor:Identity){
     const now = this.clock();
-    const policies=(await this.db.prepare("SELECT key,value FROM jobs_policy_versions WHERE key IN ('retention_application_days','retention_moderation_days')").all<{key:string;value:string}>()).results;
+    const policies=(await this.db.prepare("SELECT key,value FROM effective_jobs_policies WHERE key IN ('retention_application_days','retention_moderation_days')").all<{key:string;value:string}>()).results;
     const configured=Object.fromEntries(policies.map(p=>[p.key,Number(JSON.parse(p.value))]));
     const applicationDays=configured.retention_application_days??this.days.APPLICATION;
     const moderationDays=configured.retention_moderation_days??this.days.MODERATION;
@@ -88,10 +101,21 @@ export class JobsPrivacy {
        SELECT r.id,r.subject,? FROM retained_records r LEFT JOIN retention_exceptions e ON e.record_id=r.id
        WHERE r.ended_at + CASE r.kind WHEN 'APPLICATION' THEN ? WHEN 'CLOSURE' THEN ? ELSE ? END <= ?
        AND COALESCE(e.hold,0)=0 AND COALESCE(e.retain_until,0)<=?
-       AND NOT EXISTS(SELECT 1 FROM legal_holds h WHERE h.subject=r.subject AND h.released_at IS NULL)`)
+       AND NOT EXISTS(SELECT 1 FROM legal_holds h WHERE h.subject=r.subject AND h.released_at IS NULL AND h.scope IN ('JOBS',r.kind))`)
         .bind(now, applicationDays * DAY, this.days.CLOSURE * DAY, moderationDays * DAY, now, now),
       this.db.prepare("DELETE FROM retention_exceptions WHERE record_id IN (SELECT record_id FROM deletion_ledger) AND hold=0 AND COALESCE(retain_until,0)<=?").bind(now),
       this.db.prepare("DELETE FROM retained_records WHERE id IN (SELECT record_id FROM deletion_ledger) AND NOT EXISTS (SELECT 1 FROM retention_exceptions e WHERE e.record_id=retained_records.id)"),
+      this.db.prepare(`INSERT OR IGNORE INTO jobs_subject_deletions
+        SELECT r.id,r.subject,? FROM privacy_requests r JOIN jobs_users u ON u.subject=r.subject
+        WHERE r.kind='DELETE' AND r.status='REVIEWING' AND u.closed_at<=?
+        AND NOT EXISTS(SELECT 1 FROM retained_records x WHERE x.subject=r.subject)
+        AND NOT EXISTS(SELECT 1 FROM applications a WHERE a.candidate=r.subject)
+        AND NOT EXISTS(SELECT 1 FROM ownership_recovery_cases o WHERE o.requester=r.subject AND o.status<>'CLOSED')
+        AND NOT EXISTS(SELECT 1 FROM legal_holds h WHERE h.subject=r.subject AND h.released_at IS NULL)
+        AND NOT EXISTS(SELECT 1 FROM moderation_cases c WHERE (c.reporter=r.subject OR c.target_ref=r.subject)
+          AND (c.status NOT IN ('CLOSED','RESOLVED') OR c.updated_at>? OR EXISTS(
+            SELECT 1 FROM legal_holds h WHERE h.released_at IS NULL AND (h.subject=c.reporter OR h.subject=c.target_ref))))`)
+        .bind(now,now-this.days.CLOSURE*DAY,now-moderationDays*DAY),
       this.db.prepare("INSERT INTO privacy_audit(actor,action,at) VALUES(?,'PURGE',?)").bind(actor.subject, now),
     ]);
   }
@@ -105,12 +129,22 @@ export class JobsPrivacy {
   }
   /** Trusted offline recovery only. Supply the independently preserved deletion ledger;
    * restore gate must be closed BEFORE importing any snapshot or serving requests. */
-  async replayDeletionLedger(actor: Identity, ledger: { record: string; subject: string; at: number }[]): Promise<void> {
+  async replayDeletionLedger(actor: Identity, ledger: { record: string; subject: string; at: number }[], subjects: {requestId:string;subject:string;at:number}[]=[]): Promise<void> {
     await requirePrivacyOperator(this.db, actor);
     const gate = await this.db.prepare("SELECT ready FROM restore_gate WHERE id=1").first<{ ready: number }>();
     if (gate?.ready !== 0) throw new JobsError(409, "restore_gate_required");
     for (const entry of ledger) await this.db.prepare("INSERT OR IGNORE INTO deletion_ledger(record_id,subject,deleted_at) VALUES(?,?,?)").bind(entry.record, entry.subject, entry.at).run();
-    await this.db.prepare("UPDATE retained_records SET restricted=1 WHERE id IN (SELECT record_id FROM deletion_ledger)").run();
+    // A restored ledger can already contain a tombstone while the corresponding row has returned.
+    await this.db.batch([
+      this.db.prepare("DELETE FROM jobs_profiles WHERE EXISTS(SELECT 1 FROM deletion_ledger l WHERE l.record_id=jobs_profiles.id AND l.subject=jobs_profiles.subject)"),
+      this.db.prepare("DELETE FROM applications WHERE EXISTS(SELECT 1 FROM deletion_ledger l WHERE l.record_id=applications.id AND l.subject=applications.candidate)"),
+      this.db.prepare("UPDATE retained_records SET restricted=1 WHERE id IN (SELECT record_id FROM deletion_ledger)")
+    ]);
+    const existing=(await this.db.prepare('SELECT request_id requestId,subject,completed_at at FROM jobs_subject_deletions').all<{requestId:string;subject:string;at:number}>()).results;
+    for(const row of [...existing,...subjects]){
+      if(!row.requestId||!row.subject||!Number.isSafeInteger(row.at))throw new JobsError(400,'invalid_deletion_entry');
+      await this.db.prepare('INSERT OR REPLACE INTO jobs_subject_deletions VALUES(?,?,?)').bind(row.requestId,row.subject,row.at).run();
+    }
     await this.purge(actor);
     await this.db.prepare("UPDATE restore_gate SET ready=1 WHERE id=1").run();
   }

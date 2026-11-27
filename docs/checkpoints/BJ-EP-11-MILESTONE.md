@@ -55,3 +55,42 @@ Resume commit 35ca767a2c978a704e9ee9c1ae04ed6fdb174468. The preceding register r
 | ADM-20 | Jobs router tests, eight-migration restart coverage and real Chrome role grant/revoke, initial Tab focus and horizontal fit at 375/1280px. | Independent requirement-level review, remaining browser/accessibility workflows and integrated confidentiality, privacy and recovery matrix. |
 
 Production gates include trusted MFA/reauthentication and accountable production bootstrap, independent staffing, jurisdictional review, remote D1 and Durable Objects, dispatch and monitoring, security/capacity/recovery/device qualification, pilot authorization and any future live AI approval.
+
+## 2026-11-28 implementation and local acceptance
+
+This register supersedes the earlier local status columns. The earlier entries retain the baseline and previously implemented functionality. Each row names the current application workflow and the local evidence that exercises it. Browser navigation alone establishes reachability. Service tests exercise the database and permission checks. The Chrome fixture drives the Jobs router with synthetic identities.
+
+| Component and approved scope | Implementation and interface | Acceptance evidence | Status |
+|---|---|---|---|
+| ADM-01 Dashboard and queues | Role-scoped totals, case navigation and overdue queues | Auditor router and dashboard-to-case Chrome navigation | Local workflow verified |
+| ADM-02 Account administration | Directory, case-linked decisions, revocation and Jobs-only closure | Fresh-session and owner guards, Chrome warning through closure | Local workflow verified |
+| ADM-03 Employer administration | Scoped member removal and employer evidence, review and expiration | Conflicting revisions, cross-company denial, Chrome approval through expiry | Local workflow verified |
+| ADM-04 Posting moderation | Investigation, classification, assignments, evidence, removal and restoration | Scoped discovery test and Chrome investigation through resolution | Local workflow verified |
+| ADM-05 Fraud review | Seven deterministic indicators, explanation, dismissal and referral | Threshold and deduplication tests with synthetic signals | Local workflow verified |
+| ADM-06 Complaint handling | Candidate, recruiter, company and legacy report intake, reporter status and reviewer notes | Legacy company/listing intake and restricted case detail tests | Local workflow verified |
+| ADM-07 Enforcement | Time-bounded and overlapping sanctions, reinstatement, listing/application and recruiter guards | Overlapping sanctions, scoped listing removal, owner protection and Chrome warning revocation | Partial acceptance (see below) |
+| ADM-08 Appeals | Independent review, clarification, decision history and relief | Separate appellant and reviewer complete an information request and decision in Chrome | Local workflow verified |
+| ADM-09 Ownership | Bound transfers, cancellation, refusal, retirement and restricted exceptional review | Concurrent acceptance, expiry, requester and independent recovery reviewer tests | Local workflow verified |
+| ADM-10 Administrative roles | Seven role scopes, privileged sessions, revocation and one-time local owner bootstrap | Seven-role boundary tests, simultaneous owner changes and Chrome role changes | Local workflow verified |
+| ADM-11 Consent and notices | Versioned notices, consent grant and withdrawal, request status | Chrome notice publication, candidate history and withdrawal | Local workflow verified |
+| ADM-12 Export and deletion | Reviewed one-time export and retained deletion requests | Concurrent export and wrong requester tests, Chrome delivery confirmation, held deletion test | Partial acceptance (see below) |
+| ADM-13 Retention and holds | Scoped holds, review date, release, configurable retention and restore gate | Retention delay and hold, replay of restored consent and Jobs profile persistence tests | Partial acceptance (see below) |
+| ADM-14 Audit history | Filtered and paginated Jobs audit with restricted access | Scope and delivery audit tests, role transaction and forbidden-read tests | Partial acceptance (see below) |
+| ADM-15 Incidents | Severity, assignment, escalation and reporting clocks, timeline and corrective actions | Incident service tests and Chrome containment through resolution | Local workflow verified |
+| ADM-16 Analytics | Period counts and permission-scoped category drilldowns with small-count suppression | Auditor-scoped period response and Chrome analytics navigation | Local workflow verified |
+| ADM-17 AI assistance | Authorized local assistance, bounded inputs and outputs, provenance, human review and fallback | Maliciously structured inputs, invalid provider response and case audit reference tests | Local workflow verified |
+| ADM-18 Policies and quotas | Effective-dated policy history with validated defaults and atomic listing quotas | Concurrent posting, replay, IST midnight, active ceiling and validity tests, Chrome policy edit | Local workflow verified |
+| ADM-19 Operations | Activation and cancellation backlog, fenced retries and reminder dispatch | Restart with pending lease, concurrent reconciliation and dispatch, stale reminder tests | Partial acceptance (see below) |
+| ADM-20 Integrated qualification | TypeScript, local D1, dry bundle, regression and responsive keyboard checks | 24 regression files, 14 migrations and 14 Chrome routes at two widths | Partial acceptance (see below) |
+
+### Outstanding local qualification
+
+- ADM-07 requires one integrated enforcement and expiry matrix across discovery, applications, recruiter access and interview admission. The current checks exercise those boundaries in separate fixtures.
+- ADM-12 and ADM-13 require a restored snapshot containing every applicable record category together. The current tests demonstrate consent replay, held deletion, reviewed delivery and application-related cleanup individually.
+- ADM-14 requires failure-injection verification for sensitive mutations that record their audit event in a second database operation. Move each such mutation and its success audit into one transaction and test rollback.
+- ADM-19 requires a crash test after the meeting adapter succeeds but before Jobs stores the meeting reference, including cancellation or revision change during the interruption. The lease-expiry restart test interrupts before adapter completion.
+- ADM-20 remains open until these cases pass. Browser evidence includes initial keyboard focus and horizontal fit at 375 and 1280 pixels. Export completion is verified at the API boundary; Chrome disk download is disabled in the synthetic fixture.
+
+### Release qualification
+
+Production identity and MFA, accountable owner bootstrap, independent support staffing, jurisdiction-specific review, remote persistence, scheduler and monitoring, security and capacity review, device and recovery qualification, pilot authorization and live AI activation require separate decisions. Additional expenditure was INR 0.

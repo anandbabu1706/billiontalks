@@ -43,9 +43,11 @@ export class Companies {
       invitations=(await this.db.prepare('SELECT id,role,expires_at,used_at,revoked_at FROM company_invitations WHERE company=? ORDER BY expires_at DESC LIMIT 100').bind(id).all()).results;
       events=(await this.db.prepare('SELECT actor,action,payload,at FROM company_events WHERE company=? ORDER BY at DESC,id DESC LIMIT 50').bind(id).all()).results;
     }
+    const verification = await this.db.prepare(`SELECT state FROM employer_verifications
+      WHERE company=? AND state='VERIFIED' AND (expires_at IS NULL OR expires_at>?)`).bind(id,this.clock()).first();
     const current = await this.member(actor,id);
     if (current.revision !== row.revision || current.role !== row.role) throw new JobsError(409,'company_conflict');
-    return {id:row.id,data:JSON.parse(row.data) as CompanyData,revision:row.revision,restricted:!!row.restricted,role:row.role,members,invitations,events,verification:'Account email verified; company not independently verified'};
+    return {id:row.id,data:JSON.parse(row.data) as CompanyData,revision:row.revision,restricted:!!row.restricted,role:row.role,members,invitations,events,verification:verification?'Account email verified; employer verification approved':'Account email verified; company not independently verified'};
   }
   async create(actor:Identity,value:unknown){await this.verified(actor);const body=companyObject(value,['data']);const data=companyData(body.data);const id=crypto.randomUUID();await this.db.prepare('INSERT INTO companies(id,owner,data,created_at) VALUES(?,?,?,?)').bind(id,actor.subject,JSON.stringify(data),this.clock()).run();return this.get(actor,id);}
   async update(actor:Identity,id:string,value:unknown){const b=companyObject(value,['revision','data']);await this.member(actor,id);await this.command(actor,id,'PROFILE',revision(b.revision),{data:companyData(b.data)});return this.get(actor,id);}
@@ -81,6 +83,9 @@ export class Companies {
     const row=await this.member(actor,id);if(row.restricted)throw new JobsError(403,'company_restricted');const now=this.clock();
     const daily=await this.db.prepare("SELECT count(*) AS n FROM posting_actions WHERE company=? AND quota_day=? AND operation IN ('CREATE','RENEW','REOPEN')").bind(id,istDate(now)).first<{n:number}>();
     const active=await this.db.prepare("SELECT count(*) AS n FROM listings WHERE company=? AND state='ACTIVE' AND expires_at>?").bind(id,now).first<{n:number}>();
-    return {plan:'FREE',dailyLimit:10,activeLimit:30,validityDays:30,quotaTimezone:'Asia/Kolkata',dailyUsed:daily?.n||0,activeUsed:active?.n||0,enforcement:'PostingQuota (EP-04)',postingInterfaceEnabled:false};
+    const policy=(await this.db.prepare(`SELECT p.key,p.value FROM jobs_policy_history p WHERE p.key IN ('listing_daily_limit','listing_active_limit','listing_validity_days')
+      AND p.revision=(SELECT MAX(h.revision) FROM jobs_policy_history h WHERE h.key=p.key AND h.effective_at<=?)`).bind(now).all<{key:string;value:string}>()).results;
+    const values=Object.fromEntries(policy.map(row=>[row.key,Number(row.value)]));
+    return {plan:'FREE',dailyLimit:values.listing_daily_limit??10,activeLimit:values.listing_active_limit??30,validityDays:values.listing_validity_days??30,quotaTimezone:'Asia/Kolkata',dailyUsed:daily?.n||0,activeUsed:active?.n||0,enforcement:'PostingQuota (EP-04)',postingInterfaceEnabled:false};
   }
 }

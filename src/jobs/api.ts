@@ -9,10 +9,11 @@ import { Profiles } from "./profiles";
 import { profilePage, sharedProfilePage, signInPage } from "./profile-ui";
 import { Recruitment } from './recruitment';
 import { applicantReviewPage, applicantsPage, candidateStatusPage, discoveryPage, notificationsPage, recruiterDashboardPage } from './recruiter-ui';
+import { JobsOperations } from './operations';
 import { Interviews } from './interviews';
 import { interviewPage, interviewsPage } from './interview-ui';
 import { JobsGovernance, type AdminRole } from './governance';
-import { administrationPage, directoryPage, employerVerificationPage, roleManagementPage } from './governance-ui';
+import { administrationPage, analyticsPage, operationsPage, incidentWorkspacePage, policyWorkspacePage, auditWorkspacePage, privacyWorkspacePage, ownershipRecoveryPage, ownershipPage, signalsPage, reportsPage, appealsPage, moderationCasePage, accountReviewPage, companyMembersPage, directoryPage, employerVerificationPage, roleManagementPage } from './governance-ui';
 
 export function isJobsPath(path: string): boolean { return path === "/jobs" || path.startsWith("/jobs/") || path === "/api/jobs/v1" || path.startsWith("/api/jobs/v1/"); }
 function reply(status: number, body: unknown): Response {
@@ -70,12 +71,176 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     if(ownCase&&request.method==='GET')return reply(200,await governance.ownCase(actor,ownCase[1]));
     const companyCase=path.match(/^\/api\/jobs\/v1\/companies\/([\w-]+)\/cases\/([\w-]+)$/);
     if(companyCase&&request.method==='GET')return reply(200,await governance.companyCaseStatus(actor,companyCase[1],companyCase[2]));
+    if(path==='/jobs/reports' && request.method==='GET')return reportsPage();
+    if(path==='/api/jobs/v1/reports' && request.method==='GET')return reply(200,await governance.reportedCases(actor,new URL(request.url)));
+    const appealsView=path.match(/^\/jobs\/(admin\/)?appeals$/);
+    if(appealsView&&request.method==='GET'){
+      if(appealsView[1])await governance.authorize(actor,'APPEAL_REVIEW');
+      return appealsPage(!!appealsView[1]);
+    }
+    const appealsApi=path.match(/^\/api\/jobs\/v1\/(admin\/)?appeals(?:\/([\w-]+))?$/);
+    if(appealsApi){
+      const admin=!!appealsApi[1],id=appealsApi[2];
+      if(request.method==='GET')return reply(200,id?await governance.appealReview(actor,id,admin):await governance.appeals(actor,admin,new URL(request.url)));
+      if(request.method==='POST'&&id)return reply(200,await governance.progressAppeal(actor,id,admin,await readBody(request,8192)));
+    }
+    if(path==='/jobs/privacy'&&request.method==='GET')return privacyWorkspacePage(false);
+    if(path==='/api/jobs/v1/privacy'&&request.method==='GET')return reply(200,await governance.privacyWorkspace(actor,false,new URL(request.url)));
     await requireEligible(db, actor);
+    const privacyView=path.match(/^\/jobs\/(admin\/)?privacy$/);
+    if(privacyView&&request.method==='GET'){
+      if(privacyView[1])await governance.authorize(actor,'PRIVACY_REVIEW');
+      return privacyWorkspacePage(!!privacyView[1]);
+    }
+    const privacyApi=path.match(/^\/api\/jobs\/v1\/(admin\/)?privacy(?:\/(requests|consent|notice|holds|purge)(?:\/([\w-]+))?)?$/);
+    if(privacyApi){
+      const [,privileged,section,id]=privacyApi,admin=!!privileged;
+      if(request.method==='GET'&&!section)return reply(200,await governance.privacyWorkspace(actor,admin,new URL(request.url)));
+      if(request.method==='POST'){
+        const b=await readBody(request,8192) as {kind:'EXPORT'|'DELETE';purpose:'OPTIONAL_ANALYTICS'|'PUBLIC_INDEXING';granted:boolean;version:string;summary:string;approved:boolean;reason:string;subject:string;scope:string;reviewAt:number;previousReviewAt:number};
+        if(!b||typeof b!=='object')throw new JobsError(400,'invalid_input');
+        if(!admin&&section==='requests'&&!id)return reply(201,await governance.requestPrivacy(actor,b.kind));
+        if(!admin&&section==='consent'&&!id){
+          if(typeof b.version!=='string')throw new JobsError(400,'notice_version_required');
+          return reply(201,await governance.recordConsent(actor,b.purpose,b.granted,b.version));
+        }
+        if(!admin&&section==='requests'&&id){
+          const response=reply(200,await new JobsPrivacy(db).exportOwn(actor,id));
+          response.headers.set('Content-Disposition','attachment; filename="jobs-export.json"');return response;
+        }
+        if(admin&&section==='requests'&&id)return reply(200,await governance.completePrivacy(actor,id,b.approved,b.reason));
+        if(admin&&section==='notice'&&!id)return reply(201,await governance.publishPrivacyNotice(actor,b.version,b.summary));
+        if(admin&&section==='purge'&&!id){await new JobsPrivacy(db).purgeDueRecordsForReview(actor);return reply(200,{processed:true});}
+        if(admin&&section==='holds'&&id&&b.reviewAt!==undefined)return reply(200,await governance.reviewHold(actor,id,b.previousReviewAt,b.reviewAt));
+        if(admin&&section==='holds')return id?reply(200,await governance.releaseHold(actor,id)):reply(201,await governance.legalHold(actor,b.subject,b.scope,b.reason,b.reviewAt));
+      }
+    }
+    const recoveryPage=path.match(/^\/jobs\/(admin\/)?ownership-recovery$/);
+    if(recoveryPage&&request.method==='GET'){
+      if(recoveryPage[1])await governance.authorize(actor,'ROLE_GRANT',true);
+      return ownershipRecoveryPage(!!recoveryPage[1]);
+    }
+    const ownershipRecovery=path.match(/^\/api\/jobs\/v1\/(admin\/)?ownership-recovery(?:\/([\w-]+))?$/);
+    if(ownershipRecovery){
+      const admin=!!ownershipRecovery[1],id=ownershipRecovery[2];
+      if(!id&&request.method==='GET')return reply(200,await governance.ownershipRecovery(actor,admin,new URL(request.url)));
+      if(request.method==='POST'){
+        const body=await readBody(request,2048) as {company:string;kind:string;reference:string};
+        if(!body)throw new JobsError(400,'invalid_input');
+        if(id)return reply(200,await governance.updateRecovery(actor,id,body,admin));
+        if(!admin)return reply(201,await governance.requestRecovery(actor,body.company,body.kind,body.reference));
+      }
+    }
+    if(path==='/jobs/ownership'&&request.method==='GET')return ownershipPage();
+    if(path==='/api/jobs/v1/ownership'&&request.method==='GET')return reply(200,await governance.ownershipWorkspace(actor,new URL(request.url)));
+    const transferCommand=path.match(/^\/api\/jobs\/v1\/ownership\/([\w-]+)\/(request|retire|accept|decline|cancel)$/);
+    if(transferCommand && request.method==='POST'){
+      const [,id,op]=transferCommand;
+      const body=await readBody(request,2048) as {subject:string;email:string;token:string;revision:number;reason:string};
+      if(!body||typeof body!=='object')throw new JobsError(400,'invalid_input');
+      if(op==='request')return reply(201,await governance.requestOwnershipTransfer(actor,id,body.subject,body.email,body.revision));
+      if(op==='retire')return reply(200,await governance.retireCompany(actor,id,body.reason,body.revision));
+      if(op==='accept')return reply(200,await governance.acceptOwnershipTransfer(actor,id,body.token));
+      return reply(200,await governance.endTransfer(actor,id,op==='decline'));
+    }
     if(path==='/api/jobs/v1/reports'&&request.method==='POST')return reply(201,await governance.report(actor,await readBody(request,4096)));
-    if(path==='/jobs/admin'&&request.method==='GET'){const allowed=await governance.authorize(actor,'DASHBOARD');return administrationPage(allowed.has('CASE_READ'),allowed.has('ROLE_GRANT'));}
+    if(path==='/jobs/admin'&&request.method==='GET'){const allowed=await governance.authorize(actor,'DASHBOARD');return administrationPage(allowed.has('CASE_READ'),allowed.has('ROLE_GRANT'),allowed.has('APPEAL_REVIEW'),allowed.has('CASE_DECIDE'),allowed.has('PRIVACY_REVIEW'),allowed.has('AUDIT_READ'),allowed.has('POLICY'),allowed.has('INCIDENT'));}
     if((path==='/jobs/admin/users'||path==='/jobs/admin/companies') && request.method==='GET'){
       const allowed=await governance.authorize(actor,'DASHBOARD');
-      return directoryPage(path.endsWith('/users')?'users':'companies',allowed.has('CASE_DECIDE'));
+      return directoryPage(path.endsWith('/users')?'users':'companies',allowed.has('CASE_DECIDE'),allowed.has('ENFORCE'));
+    }
+    if(path==='/jobs/admin/analytics'&&request.method==='GET'){await governance.authorize(actor,'DASHBOARD');return analyticsPage();}
+    if(path==='/jobs/admin/operations'&&request.method==='GET'){await governance.authorize(actor,'INCIDENT');return operationsPage();}
+    const recovery=path.match(/^\/api\/jobs\/v1\/admin\/operations\/(reconcile|queue-reminders|dispatch-reminders|retry)(?:\/([\w-]+))?$/);
+    if(recovery&&request.method==='POST'){
+      await governance.authorize(actor,'INCIDENT',true);
+      const [,op,id]=recovery,operations=new JobsOperations(db);
+      if(op==='retry'&&id){const body=await readBody(request,256) as {reminder:boolean};if(typeof body?.reminder!=='boolean')throw new JobsError(400,'invalid_input');return reply(200,await governance.retryOutbox(actor,id,body.reminder));}
+      if(!id&&op==='reconcile')return reply(200,await interviews.reconcile(10));
+      if(!id&&op==='queue-reminders')return reply(200,await operations.queueReminders(actor));
+      if(!id&&op==='dispatch-reminders')return reply(200,await operations.dispatchReminders(actor));
+    }
+    if(path==='/jobs/admin/incidents'&&request.method==='GET'){await governance.authorize(actor,'INCIDENT');return incidentWorkspacePage();}
+    const incidentApi=path.match(/^\/api\/jobs\/v1\/admin\/incidents(?:\/([\w-]+)(?:\/(assign|transition|corrective)(?:\/([\w-]+))?)?)?$/);
+    if(incidentApi){
+      const [,id,op,action]=incidentApi;
+      if(request.method==='GET'&&!op)return reply(200,id?await governance.incidentDetail(actor,id):await governance.incidents(actor,new URL(request.url)));
+      if(request.method==='POST'){
+        const b=await readBody(request,8192) as {severity:'LOW'|'MEDIUM'|'HIGH'|'CRITICAL';summary:string;owner:string;revision:number;status:'CONTAINED'|'RECOVERING'|'RESOLVED';note:string;description:string;dueAt:number};
+        if(!b||typeof b!=='object')throw new JobsError(400,'invalid_input');
+        if(!id)return reply(201,await governance.createIncident(actor,b.severity,b.summary));
+        if(op==='assign')return reply(200,await governance.assignIncident(actor,id,b.owner,b.severity,b.revision));
+        if(op==='transition')return reply(200,await governance.incidentTransition(actor,id,b.revision,b.status,b.note));
+        if(op==='corrective')return action?reply(200,await governance.finishCorrectiveAction(actor,id,action)):reply(201,await governance.addCorrectiveAction(actor,id,b.owner,b.description,b.dueAt));
+      }
+    }
+    if(path==='/jobs/admin/policies'&&request.method==='GET'){await governance.authorize(actor,'POLICY');return policyWorkspacePage();}
+    if(path==='/api/jobs/v1/admin/policies'){
+      if(request.method==='GET')return reply(200,await governance.policies(actor,new URL(request.url)));
+      if(request.method==='POST'){
+        const b=await readBody(request,1024) as {key:string;value:number;revision:number;effectiveAt?:number};
+        if(!b||typeof b.key!=='string')throw new JobsError(400,'invalid_policy');
+        return reply(200,await governance.updatePolicy(actor,b.key,b.value,b.revision,b.effectiveAt));
+      }
+    }
+    if(path==='/jobs/admin/audit'&&request.method==='GET'){await governance.authorize(actor,'AUDIT_READ');return auditWorkspacePage();}
+    if(path==='/jobs/admin/signals'&&request.method==='GET'){await governance.authorize(actor,'CASE_DECIDE');return signalsPage();}
+    if(path==='/api/jobs/v1/admin/signals'&&request.method==='GET')return reply(200,await governance.signals(actor,new URL(request.url)));
+    const signalReview=path.match(/^\/api\/jobs\/v1\/admin\/signals\/([\w-]+)$/);
+    if(signalReview&&request.method==='POST'){
+      const body=await readBody(request,256) as {refer:boolean};
+      if(!body)throw new JobsError(400,'invalid_input');return reply(200,await governance.reviewSignal(actor,signalReview[1],body.refer));
+    }
+    const scanCompany=path.match(/^\/api\/jobs\/v1\/admin\/companies\/([\w-]+)\/scan$/);
+    if(scanCompany && request.method==='POST'){await governance.authorize(actor,'CASE_DECIDE');return reply(200,await governance.scanCompany(actor,scanCompany[1]));}
+    const casePage=path.match(/^\/jobs\/admin\/cases\/([\w-]+)$/);
+    if(casePage && request.method==='GET'){
+      await governance.authorize(actor,'CASE_READ');
+      return moderationCasePage(casePage[1]);
+    }
+    const caseApi=path.match(/^\/api\/jobs\/v1\/admin\/cases\/([\w-]+)(?:\/(decision|evidence|listing|assistance))?$/);
+    if(caseApi){
+      const [,id,operation]=caseApi;
+      if(request.method==='GET'&&!operation)return reply(200,await governance.caseDetail(actor,id));
+      if(request.method==='POST'&&operation==='decision')return reply(200,await governance.decideCase(actor,id,await readBody(request,8192) as Parameters<JobsGovernance['decideCase']>[2]));
+      if(request.method==='POST'&&operation==='assistance')return reply(200,await governance.assistCase(actor,id));
+      if(request.method==='POST'&&operation==='listing')return reply(201,await governance.moderateListing(actor,id,await readBody(request,1024)));
+      if(request.method==='POST'&&operation==='evidence'){
+        const body=await readBody(request,8192) as {reference:string;note:string};
+        if(!body)throw new JobsError(400,'invalid_input');
+        return reply(201,await governance.addCaseEvidence(actor,id,body.reference,body.note));
+      }
+    }
+    const accountPage=path.match(/^\/jobs\/admin\/users\/([\w-]+)$/);
+    if(accountPage && request.method==='GET'){
+      await governance.authorize(actor,'ENFORCE');
+      return accountReviewPage(accountPage[1]);
+    }
+    const accountApi=path.match(/^\/api\/jobs\/v1\/admin\/users\/([\w-]+)(?:\/(actions|closure))?$/);
+    if(accountApi){
+      if(request.method==='GET'&&!accountApi[2])return reply(200,await governance.userReview(actor,accountApi[1]));
+      if(request.method==='POST'&&accountApi[2]==='closure'){
+        const body=await readBody(request,512) as {caseId:string};
+        if(!body)throw new JobsError(400,'invalid_input');
+        return reply(200,await governance.closeReviewedAccount(actor,accountApi[1],body.caseId));
+      }
+      if(request.method==='POST'&&accountApi[2]==='actions')return reply(201,await governance.accountAction(actor,accountApi[1],await readBody(request,2048)));
+    }
+    const revokeAction=path.match(/^\/api\/jobs\/v1\/admin\/actions\/([\w-]+)\/revoke$/);
+    if(revokeAction && request.method==='POST'){
+      const body=await readBody(request,1024) as {revision:number;reason:string};
+      if(!body)throw new JobsError(400,'invalid_input');
+      return reply(200,await governance.revokeEnforcement(actor,revokeAction[1],body.revision,body.reason));
+    }
+    const membersPage=path.match(/^\/jobs\/admin\/companies\/([\w-]+)\/members$/);
+    if(membersPage && request.method==='GET'){
+      await governance.authorize(actor,'ENFORCE');
+      return companyMembersPage(membersPage[1]);
+    }
+    const membersApi=path.match(/^\/api\/jobs\/v1\/admin\/companies\/([\w-]+)\/members(?:\/([\w-]+))?$/);
+    if(membersApi){
+      if(request.method==='GET'&&!membersApi[2])return reply(200,await governance.companyMembers(actor,membersApi[1],new URL(request.url)));
+      if(request.method==='DELETE'&&membersApi[2])return reply(200,await governance.revokeCompanyMember(actor,membersApi[1],membersApi[2],await readBody(request,256)));
     }
     const employerEvidence=path.match(/^\/api\/jobs\/v1\/companies\/([\w-]+)\/verification$/);
     const verificationPage=path.match(/^\/jobs\/(admin\/)?companies\/([\w-]+)\/verification$/);
@@ -88,9 +253,9 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     const employerReview=path.match(/^\/api\/jobs\/v1\/admin\/companies\/([\w-]+)\/verification$/);
     if(employerReview && request.method==='GET')return reply(200,await governance.employerEvidence(actor,employerReview[1],true));
     if(employerReview && request.method==='POST'){
-      const body=await readBody(request,1024) as {state:'IN_REVIEW'|'VERIFIED'|'REJECTED'|'EXPIRED';reference:string;revision:number};
+      const body=await readBody(request,1024) as {state:'IN_REVIEW'|'VERIFIED'|'REJECTED'|'EXPIRED'|'UNVERIFIED';reference:string;revision:number;expiresAt?:number};
       if(!body || typeof body!=='object')throw new JobsError(400,'invalid_verification');
-      return reply(200,await governance.reviewEmployerVerification(actor,employerReview[1],body.state,body.reference,body.revision));
+      return reply(200,await governance.reviewEmployerVerification(actor,employerReview[1],body.state,body.reference,body.revision,body.expiresAt));
     }
     if(path==='/jobs/admin/roles' && request.method==='GET'){
       await governance.authorize(actor,'ROLE_GRANT');
@@ -114,7 +279,7 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     if(path==='/api/jobs/v1/admin/users'&&request.method==='GET')return reply(200,await governance.users(actor,new URL(request.url)));
     if(path==='/api/jobs/v1/admin/companies'&&request.method==='GET')return reply(200,await governance.companies(actor,new URL(request.url)));
     if(path==='/api/jobs/v1/admin/operations'&&request.method==='GET')return reply(200,await governance.operationalQueue(actor,new URL(request.url)));
-    if(path==='/api/jobs/v1/admin/analytics'&&request.method==='GET')return reply(200,await governance.operationalAnalytics(actor,Number(new URL(request.url).searchParams.get('days')||30)));
+    if(path==='/api/jobs/v1/admin/analytics'&&request.method==='GET')return reply(200,await governance.operationalAnalytics(actor,Number(new URL(request.url).searchParams.get('days')||30),new URL(request.url).searchParams.get('group')));
     if (path === "/api/jobs/v1/closure" && request.method === "POST") { await new JobsPrivacy(db).close(actor); return reply(200, { closed: true }); }
     if(path==='/jobs/recruitment/discovery'&&request.method==='GET'){await recruitment.discover(actor,new URL(request.url));return discoveryPage();}
     if(path==='/jobs/notifications'&&request.method==='GET')return notificationsPage();
@@ -135,7 +300,7 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     if(path==='/api/jobs/v1/interviews/preparation'&&request.method==='GET')return reply(200,interviews.preparation());
     if(path==='/api/jobs/v1/interviews'&&request.method==='GET')return reply(200,await interviews.list(actor,new URL(request.url)));
     const calendarRoute=path.match(/^\/api\/jobs\/v1\/interviews\/([\w-]+)\/calendar\.ics$/);if(calendarRoute&&request.method==='GET')return new Response(await interviews.calendar(actor,calendarRoute[1]),{headers:{'Content-Type':'text/calendar; charset=utf-8','Content-Disposition':`attachment; filename="billionjobs-interview-${calendarRoute[1]}.ics"`,'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','X-Content-Type-Options':'nosniff'}});
-    const interviewApi=path.match(/^\/api\/jobs\/v1\/interviews\/([\w-]+)(?:\/(commands|slots|join|feedback|reconcile))?$/);if(interviewApi){const [,id,action]=interviewApi;if(!action&&request.method==='GET')return reply(200,await interviews.get(actor,id));if(action==='commands'&&request.method==='POST')return reply(200,await interviews.command(actor,id,await readBody(request,4096)));if(action==='slots'&&request.method==='POST')return reply(200,await interviews.addRescheduleSlots(actor,id,await readBody(request,8192)));if(action==='join'&&request.method==='POST'){const input=await readBody(request,512) as {displayName?:unknown};return reply(200,await interviews.join(actor,id,input?.displayName as string));}if(action==='feedback'&&request.method==='GET')return reply(200,await interviews.feedback(actor,id));if(action==='feedback'&&request.method==='POST')return reply(200,await interviews.submitFeedback(actor,id,await readBody(request,16384)));if(action==='reconcile'&&request.method==='POST'){await interviews.get(actor,id);return reply(200,await interviews.reconcile(3));}}
+    const interviewApi=path.match(/^\/api\/jobs\/v1\/interviews\/([\w-]+)(?:\/(commands|slots|join|feedback|reconcile))?$/);if(interviewApi){const [,id,action]=interviewApi;if(!action&&request.method==='GET')return reply(200,await interviews.get(actor,id));if(action==='commands'&&request.method==='POST')return reply(200,await interviews.command(actor,id,await readBody(request,4096)));if(action==='slots'&&request.method==='POST')return reply(200,await interviews.addRescheduleSlots(actor,id,await readBody(request,8192)));if(action==='join'&&request.method==='POST'){const input=await readBody(request,512) as {displayName?:unknown};return reply(200,await interviews.join(actor,id,input?.displayName as string));}if(action==='feedback'&&request.method==='GET')return reply(200,await interviews.feedback(actor,id));if(action==='feedback'&&request.method==='POST')return reply(200,await interviews.submitFeedback(actor,id,await readBody(request,16384)));if(action==='reconcile'&&request.method==='POST'){await interviews.get(actor,id);return reply(200,await interviews.reconcile(3,id));}}
     if (path === '/jobs/saved' && request.method === 'GET') return candidateJobsPage('saved');
     if (path === '/jobs/applications' && request.method === 'GET') return candidateJobsPage('applications');
     const jobsManagementPage=path.match(/^\/jobs\/companies\/([\w-]+)\/jobs$/);
