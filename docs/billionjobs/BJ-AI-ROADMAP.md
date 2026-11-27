@@ -17,14 +17,16 @@ This register records owner-approved product direction from EP-08, not permissio
 | BJ-AI-011 | Recruitment analytics assistance | NON-AI FOUNDATION IMPLEMENTED: event-derived metrics and explicit denominators; narrative/predictive AI remains proposed. |
 | BJ-AI-012 | Skill-gap explanations | CONTRACT FOUNDATION IMPLEMENTED: provider-neutral purpose only; future output must explain disclosed gaps as unknown/partial evidence, never a hidden rejection rule. |
 | BJ-AI-013 | Career-development guidance | PROPOSED candidate-controlled feature; separate from employer selection decisions. |
-| BJ-AI-014 | Fraud and abuse prevention | PROPOSED decision support only; human review, appeal and evidence limits required. |
-| BJ-AI-015 | Multilingual assistance | PROPOSED: preserve meaning, source text and correction path; do not infer protected traits. |
+| BJ-AI-014 | Fraud and abuse prevention | LOCAL DETERMINISTIC FOUNDATION: bounded fee, frequency, duplicate and complaint indicators with review/false-positive disposition. Provider-neutral scam/activity/case assistance contract only; no live AI or autonomous enforcement. |
+| BJ-AI-015 | Multilingual assistance | CONTRACT FOUNDATION: purpose-limited moderation assistance with bounded input/output and human review; no live translation or provider. |
 | BJ-AI-016 | Recruitment agents | DEFERRED: no autonomous sourcing, outreach, screening, scheduling or status changes without new explicit approval. |
 | BJ-AI-017 | Candidate job recommendations | PROPOSED opt-in feature using disclosed preferences; explanation and user controls required. |
 | BJ-AI-018 | Recruiter candidate recommendations | PROPOSED: assignment/visibility scoped, explainable and human-reviewed; no automatic ranking decision. |
-| BJ-AI-019 | Model governance and evaluation | PROPOSED prerequisite: versioned evaluations, drift/bias monitoring, incident rollback, usage/cost limits and audit retention. |
+| BJ-AI-019 | Model governance and evaluation | CONTRACT FOUNDATION ONLY: provider provenance, bounded output, timeout, fallback and human approval. Versioned evaluations, drift/bias checks, rollback and live governance remain prerequisites. |
 | BJ-AI-020 | Shared BillionAI integration | DEFERRED: independent product boundary, consent, service authorization, data minimization and fallback required before connection. |
 
 The shared extension contract may be reused only when the specific capability is authorized. It is not a generic channel for sending profiles, applications, notes, interviews or Meetings data to a model.
 
 EP-10 also registers purpose-limited contracts for interviewer assistance, multilingual interview assistance, consent-dependent summaries and feedback assistance. These interfaces do not configure a provider or authorize recording, transcription, data transfer, automated assessment, facial/emotion/personality inference or employment decisions. BJ-AI-008 remains proposed because no interview content is captured.
+
+EP-11 extends that contract with scam, suspicious-activity, complaint categorization, multilingual moderation, security-alert, investigation-summary and moderation-assistance purposes. Only allowlisted case metadata and redacted excerpts may cross a future provider boundary. The local runtime has no provider and blocks outbound calls; deterministic signals are not AI. Future BillionAI integration still requires separate approval and BJ-AI-020 remains deferred.

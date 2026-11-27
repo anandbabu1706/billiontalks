@@ -2,7 +2,7 @@
 
 **Document ID:** BJ-TRACK-001  
 **Review date:** 2026-11-27
-**Status:** Revision 1.11, EP-10 local interview integration completed
+**Status:** Revision 1.12, EP-11 local governance checkpoint; milestone incomplete
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
@@ -45,6 +45,7 @@
 | EP-07 | Job posting, discovery and applications | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-07-MILESTONE.md); `ddce9f16e483e07848cd7bd30b9c00c0570972d8` on `bj-ep-07-jobs-applications`; 13/13 EP-07 and 67/67 Jobs tests passed; no deployment. |
 | EP-08 | Advanced recruiter workspace and intelligent foundation | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-08-MILESTONE.md); `bccfe899e272aada5a74af09d8800690ca368906` on `bj-ep-08-recruiter-workspace`; 15/15 EP-08 and 82/82 Jobs tests passed; no AI provider or deployment. |
 | EP-10 | Advanced interview and Meetings integration | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-10-MILESTONE.md); `c08591f970a4c977c98286f045145bda58a27474` on `bj-ep-10-interview-integration`; 13/13 EP-10 and 95/95 Jobs tests passed; no deployment. |
+| EP-11 | Advanced administration and governance | IN PROGRESS / LOCAL FOUNDATION COMMITTED | [EP-11 checkpoint](BJ-EP-11-MILESTONE.md); application `29dac456ca62c9366aa2de544fbf1d88a6357ec8`; ADM-01–ADM-20 approved. MFA, full workflows and real-data qualification remain open. |
 | BJ-LIVE-SEC | MFA, staging exposure, TLS and operational protection review | PENDING SEPARATE ACTION | Owner MFA/account enforcement absent; Access not enabled. Resolve protection strategy before sensitive shared staging; no settings changed. |
 | BJ-LIVE-QUAL | Shared staging recovery, capacity, email and Meetings regressions | PENDING | Qualify two recorded Meetings failures, remote D1 atomicity, retention/recovery, CPU/bursts and provider allowances; no real-data onboarding here. |
 
@@ -84,10 +85,37 @@
 | BJ-V1-004 | Recruiter application workspace | COMPLETED (EP-08 local synthetic) | [EP-08 evidence](BJ-EP-08-MILESTONE.md); 507/509 full suite with exactly two unchanged Meetings failures; remote/real-data qualification pending. |
 | BJ-V1-005 | Interview scheduling and Meetings integration | COMPLETED (EP-10 local synthetic) | [EP-10 evidence](BJ-EP-10-MILESTONE.md); 520/522 full suite with exactly two unchanged Meetings fixture failures; durable operations and live qualification pending. |
 | BJ-V1-006 | Networking and posts | DEFERRED | Separate milestone approval |
-| BJ-V1-007 | Full platform administration/moderation | NOT STARTED | Abuse controls and audit evidence; minimum safeguards delivered with V1-001–004 before real users |
+| BJ-V1-007 | Full platform administration/moderation | IN PROGRESS (LOCAL SYNTHETIC ONLY) | ADM-01–ADM-20 approved; status and evidence by component in [EP-11 checkpoint](BJ-EP-11-MILESTONE.md). No pilot or release acceptance. |
 | BJ-V1-008 | Monetization and premium features | DEFERRED | Approved entitlements, merchant and paid activation |
 | BJ-V1-009 | Final functional, accessibility, security and regression qualification | NOT STARTED | Evidence-backed sign-off |
 | BJ-REL-001 | First public release | BLOCKED | Separate owner permission, actual environment readiness, rollback and sign-off |
+
+## EP-11 approved component status
+
+All ADM items below are owner-approved for local synthetic implementation. “Local foundation” does not mean production readiness. Detailed evidence and gaps are in [BJ-EP-11-MILESTONE](BJ-EP-11-MILESTONE.md) and the application branch checkpoint.
+
+| ID | Status | Local evidence / open boundary |
+|---|---|---|
+| ADM-01 | PARTIAL | Recorded-event dashboard; privileged access gate and complete workspace remain. |
+| ADM-02 | PARTIAL | Jobs-only user directory/restrictions; account workflows remain. |
+| ADM-03 | PARTIAL | Company directory, membership revocation, optional verification states; review workflow remains. |
+| ADM-04 | PARTIAL | Report/case and discovery removal; full moderation policy coverage remains. |
+| ADM-05 | PARTIAL | Fee, frequency, duplicate and complaint signals; further rules/evaluation remain. |
+| ADM-06 | PARTIAL | Confidential reporter cases/status; employer visibility and targets remain. |
+| ADM-07 | PARTIAL | Typed reason-coded actions and active restriction checks; full transitions remain. |
+| ADM-08 | PARTIAL | User appeal and human resolution; company appeals/independent coverage remain. |
+| ADM-09 | LOCAL FOUNDATION | Transfer, expiry/replay/concurrency, retirement and owner closure tested; exceptional recovery remains. |
+| ADM-10 | PARTIAL | Seven scoped roles, denial, revocation and final owner; production MFA/bootstrap remain. |
+| ADM-11 | PARTIAL | Versioned Jobs notice/optional consent events; complete policy/rights UI remains. |
+| ADM-12 | PARTIAL | Reviewed local requester export and Jobs closure; full delivery/deletion propagation remains. |
+| ADM-13 | PARTIAL | Hold guard and configurable defaults; legal/replay matrix remains. |
+| ADM-14 | LOCAL FOUNDATION | Append-oriented metadata audit with access control; external integrity qualification remains. |
+| ADM-15 | PARTIAL | Incident state/timeline/corrective actions; legal clocks and operations remain. |
+| ADM-16 | PARTIAL | Period-defined counts and small-count suppression; full workload analysis remains. |
+| ADM-17 | LOCAL FOUNDATION | Deterministic signals and bounded provider-neutral contract; no live AI. |
+| ADM-18 | PARTIAL | Bounded versioned moderation/retention settings; quota remains fixed and atomic. |
+| ADM-19 | PARTIAL | Existing activation and new reminder outboxes; production dispatcher/monitoring remain. |
+| ADM-20 | PARTIAL | Synthetic tests and fixture corrections; remote/security/manual accessibility gates remain. |
 
 ## D. Mandatory verification on every milestone
 
@@ -114,5 +142,6 @@
 | 2026-11-27 | 1.9 | Recorded authorized EP-07 local completion, exact pushed source/inventory, application and retention evidence, and unchanged release gates. EP-08 remains unstarted and requires separate authorization. |
 | 2026-11-27 | 1.10 | Recorded EP-08 recruiter workspace, lifecycle, notes, analytics, rules-based matching, notification and AI-contract evidence. EP-10, live AI and release remain separately gated. |
 | 2026-11-27 | 1.11 | Recorded EP-10 request-and-confirm scheduling, versioned Meetings adapter, time-zone/calendar, feedback, analytics, test/defect evidence and revised EP-11-to-release sequence. Live qualification and later milestones remain separately gated. |
+| 2026-11-27 | 1.12 | Recorded approved ADM-01–ADM-20 and the local EP-11 checkpoint with component-level status. Trusted MFA, complete workflows and release gates remain open. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
