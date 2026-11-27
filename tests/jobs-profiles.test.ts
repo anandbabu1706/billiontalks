@@ -166,7 +166,8 @@ describe('EP-05 local synthetic profile workflows',()=>{
     expect(await (await request('/account?next=/jobs/profile')).text()).toContain("location.href = '/jobs/profile'");
   });
   it('persists synthetic profiles across complete runtime restarts without repeating migrations',async()=>{
-    const localState='test-'+crypto.randomUUID();
+    // Keep the nested workerd SQLite path short on Windows.
+    const localState='test-'+crypto.randomUUID().replaceAll('-','').slice(0,12);
     let instance=await createJobsRuntime({enabled:true,localState});
     try {
       await seedIdentity(instance.accounts,'restart');
@@ -174,7 +175,7 @@ describe('EP-05 local synthetic profile workflows',()=>{
       const saved=await new Profiles(instance.jobs).save({subject:'restart'},input());
       await instance.mf.dispose();instance=await createJobsRuntime({enabled:true,localState});
       expect(await new Profiles(instance.jobs).get({subject:'restart'})).toEqual(saved);
-      expect(await instance.jobs.prepare('SELECT COUNT(*) AS n FROM local_migrations').first()).toEqual({n:2});
+      expect(await instance.jobs.prepare('SELECT COUNT(*) AS n FROM local_migrations').first()).toEqual({n:3});
     } finally {await instance.mf.dispose();}
     await expect(createJobsRuntime({localState:'../outside'})).rejects.toThrow('Invalid synthetic state');
   },60000);

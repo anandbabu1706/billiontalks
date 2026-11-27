@@ -1,3 +1,5 @@
+import { Companies } from './companies';
+import { companyPage } from './company-ui';
 import { JobsError, type IdentityResolver, type JobsDatabase } from "./contracts";
 import { requireEligible } from "./permissions";
 import { JobsPrivacy } from "./privacy";
@@ -22,7 +24,7 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
       const result = await profiles.shared(shared[1], actor);
       return path.startsWith('/api/') ? reply(200, { profile: result.fields }) : sharedProfilePage(result.fields, result.indexing);
     }
-    if (!actor) return (path === '/jobs' || path === '/jobs/profile') && request.method === 'GET' ? signInPage() : reply(401, {error:'authentication_required'});
+    if (!actor) return (path === '/jobs' || path === '/jobs/profile' || path === '/jobs/companies') && request.method === 'GET' ? signInPage() : reply(401, {error:'authentication_required'});
     if ((path === '/jobs' || path === '/jobs/profile') && request.method === 'GET') return profilePage();
     if (path === '/api/jobs/v1/status' && request.method === 'GET') {
       const enrolled = await db.prepare('SELECT subject FROM jobs_users WHERE subject=?').bind(actor.subject).first();
@@ -43,6 +45,27 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     }
     await requireEligible(db, actor);
     if (path === "/api/jobs/v1/closure" && request.method === "POST") { await new JobsPrivacy(db).close(actor); return reply(200, { closed: true }); }
+    const companies = new Companies(db);
+    if (path === '/jobs/companies' && request.method === 'GET') return companyPage();
+    if (path === '/api/jobs/v1/companies') {
+      if (request.method === 'GET') return reply(200, await companies.list(actor));
+      if (request.method === 'POST') return reply(201, await companies.create(actor, await readBody(request, 8192)));
+    }
+    const acceptance = path.match(/^\/api\/jobs\/v1\/company-invitations\/([\w-]+)\/accept$/);
+    if (acceptance && request.method === 'POST') return reply(200, await companies.accept(actor, acceptance[1], await readBody(request, 1024)));
+    const company = path.match(/^\/api\/jobs\/v1\/companies\/([\w-]+)(?:\/(invitations|members|entitlements|restriction|reports)(?:\/([\w-]+))?)?$/);
+    if (company) {
+      const [, id, section, target] = company;
+      const method = request.method;
+      if (!section && method === 'GET') return reply(200, await companies.get(actor,id));
+      if (!section && method === 'PUT') return reply(200, await companies.update(actor,id,await readBody(request,8192)));
+      if (section === 'invitations' && !target && method === 'POST') return reply(201, await companies.invite(actor,id,await readBody(request,1024)));
+      if (section === 'invitations' && target && method === 'DELETE') return reply(200, await companies.cancel(actor,id,target,await readBody(request,256)));
+      if (section === 'members' && target && (method === 'PUT' || method === 'DELETE')) return reply(200, await companies.changeMember(actor,id,target,await readBody(request,1024),method === 'DELETE'));
+      if (section === 'entitlements' && !target && method === 'GET') return reply(200, await companies.entitlements(actor,id));
+      if (section === 'restriction' && !target && method === 'PUT') return reply(200, await companies.restrict(actor,id,await readBody(request,1024)));
+      if (section === 'reports' && !target && method === 'POST') { await companies.report(actor,id,await readBody(request,4096)); return reply(202,{received:true}); }
+    }
     if (path === '/api/jobs/v1/profile') {
       if (request.method === 'GET') return reply(200, {profile:await profiles.get(actor)});
       if (request.method === 'PUT') return reply(200, {profile:await profiles.save(actor, await readBody(request, 65536))});
@@ -57,6 +80,8 @@ export async function handleJobs(request: Request, enabled: boolean, db: JobsDat
     return reply(404, { error: "not_found" });
   } catch (error) {
     // Never log raw database errors, request bodies, cookies or account details.
+    const code = String(error).match(/company_(owner_protected|forbidden|conflict|restricted|duplicate_invitation|invalid_invitation|already_member|rate_limit)\b/)?.[0];
+    if (code) return reply(code === 'company_rate_limit' ? 429 : ['company_forbidden','company_restricted'].includes(code) ? 403 : code === 'company_invalid_invitation' ? 404 : 409, {error:code});
     return error instanceof JobsError ? reply(error.status, { error: error.code }) : reply(503, { error: "jobs_unavailable" });
   }
 }

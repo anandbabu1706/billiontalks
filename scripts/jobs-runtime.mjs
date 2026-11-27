@@ -29,7 +29,7 @@ export async function createJobsRuntime({ enabled = false, port = 0, localState 
     const accounts = await mf.getD1Database('ACCOUNT_DB'); const jobs = await mf.getD1Database('JOBS_DB');
     for (const [db, files, separator] of [
       [accounts, ['migrations/0001_accounts.sql','migrations/0003_account_sessions.sql'], /;\s*(?:\r?\n|$)/],
-      [jobs, ['migrations/jobs/0001_foundation.sql','migrations/jobs/0002_profiles.sql'], /-- break\s*\r?\n/],
+      [jobs, ['migrations/jobs/0001_foundation.sql','migrations/jobs/0002_profiles.sql','migrations/jobs/0003_companies.sql'], /-- break\s*\r?\n/],
     ]) {
       await db.prepare('CREATE TABLE IF NOT EXISTS local_migrations(name TEXT PRIMARY KEY)').run();
       for (const file of files) {

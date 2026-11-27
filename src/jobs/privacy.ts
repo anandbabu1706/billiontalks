@@ -16,7 +16,7 @@ export async function projectProfile(db: JobsDatabase, owner: string, viewer: Id
   if (profile.visibility === "PRIVATE") return {};
   if (profile.visibility === "RECRUITERS_ONLY") {
     if (!viewer) return {};
-    const recruiter = await db.prepare(`SELECT m.subject FROM memberships m JOIN jobs_users u ON u.subject=m.subject WHERE m.subject=? AND m.revoked_at IS NULL AND u.eligible=1 AND u.closed_at IS NULL AND u.restricted=0`).bind(viewer.subject).first();
+    const recruiter = await db.prepare(`SELECT m.subject FROM memberships m JOIN jobs_users u ON u.subject=m.subject WHERE m.subject=? AND m.revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM companies c WHERE c.id=m.company AND c.restricted=1) AND u.eligible=1 AND u.closed_at IS NULL AND u.restricted=0`).bind(viewer.subject).first();
     if (!recruiter) return {};
   }
   return Object.fromEntries(PUBLIC_FIELDS.filter(key => visibleFields.includes(key) && key in fields).map(key => [key, fields[key]]));

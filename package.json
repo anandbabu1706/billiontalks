@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "jobs:dev": "node scripts/jobs-dev.mjs",
-    "test:jobs": "vitest run tests/jobs-foundation.test.ts tests/jobs-profiles.test.ts",
+    "test:jobs": "vitest run tests/jobs-foundation.test.ts tests/jobs-profiles.test.ts tests/jobs-companies.test.ts",
     "dev": "wrangler dev --local --port 8787",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run",

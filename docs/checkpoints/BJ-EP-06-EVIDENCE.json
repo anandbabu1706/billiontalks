@@ -1,0 +1,318 @@
+{
+  "execution": "EP-06 / BJ-V1-002",
+  "branch": "bj-ep-06-companies-recruiters",
+  "baseline": "f5e671faf48678c231b5a7e98f00d11be9ac3823",
+  "documentationBaseline": "ae2d2371417f5b5e252fcc15ac9ecc9ce59d5542",
+  "commands": [
+    "npm run typecheck",
+    "npm test -- --reporter=json --outputFile=final-tests.json",
+    "git diff --check"
+  ],
+  "typecheck": "PASS",
+  "finalTests": {
+    "total": 481,
+    "passed": 479,
+    "failed": 2,
+    "failures": [
+      {
+        "file": "browser-ui.test.ts",
+        "name": "BillionTalks browser UI regression tests allows camera cycles ON \u2192 OFF \u2192 ON repeatedly with live tracks and preview state"
+      },
+      {
+        "file": "calendar-v1-004.test.ts",
+        "name": "BT-V1-004 calendar and time zones renders authorized schedule records across month, week, and day navigation"
+      }
+    ],
+    "jobs": [
+      {
+        "file": "jobs-companies.test.ts",
+        "name": "registers verified companies with an owner and rejects unverified accounts and foreign reads",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-companies.test.ts",
+        "name": "enforces bound, expiring, single-use invitations under concurrent acceptance",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-companies.test.ts",
+        "name": "scopes roles to each tenant and protects ownership during updates and closure",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-companies.test.ts",
+        "name": "reuses quota enforcement and blocks it when a moderator restricts a company",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-companies.test.ts",
+        "name": "renders labeled company controls and submits registration through the dashboard",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) executes D1 atomic batch rollback and rejects conventional BEGIN",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) admits exactly ten of 25 concurrent company requests across recruiters",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) returns one stable result for concurrent retries without double spending",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) resets at fixed IST midnight using the server clock",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) allows slot 30 but rejects slot 31 concurrently and frees closed slots",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) counts active by expiry without requiring cleanup",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) normalizes exact duplicate vacancies, rolls back failures and preserves quota on archive",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) enforces final seven days and adds active renewals to prior expiry",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) renews expired and reopens closed listings from action time",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) permits only one concurrent lifecycle transition at the expected revision",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) edits without spending posting allowances and rejects stale revisions",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) denies foreign companies, revoked membership and Jobs closure, including retries",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) requires explicit assignment; company and platform admins have no applicant bypass",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) defaults private and separates public projection, sensitive fields and indexing",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) discloses submitted fields only to candidate or assigned team, excluding unrelated private data",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) atomically checks current membership even when a caller bypasses the service precheck",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) blocks Worker egress at the runtime and has no production or staging bindings",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) revalidates recruiter discovery permission and hides restricted profiles even from owner",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) purges APPLICATION only at its configured day boundary",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) purges CLOSURE only at its configured day boundary",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) purges MODERATION only at its configured day boundary",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) keeps held/restricted records inaccessible and rejects unauthorized deletion",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) replays independently preserved deletions before reopening a restored database",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) closes only Jobs and preserves shared identity sessions",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) keeps Jobs disabled by default without touching authentication or data",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) uses actual account sessions and rejects revoked, expired and suspended accounts",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) enforces 18+ without collecting DOB or identity numbers and blocks self-reactivation",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) rejects cross-origin and missing CSRF headers, malformed/oversized bodies; never leaks errors",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) uses strict validation and parameterized values against injection",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-foundation.test.ts",
+        "name": "EP-04 real local D1 foundation (synthetic only) has no Jobs imports of Meetings, shared data or privileged bindings; local runtime denies egress",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows creates, persists across requests, edits and deletes only the owned profile",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows requires authentication and does not enroll ordinary signed-in accounts",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows keeps denied age attestations sticky and never requests date of birth or identity numbers",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows starts private and distinguishes public projection from owner data",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows honors field removal, private transitions and independent indexing consent",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows requires active server-side recruiter membership and revokes discovery immediately",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows does not modify application records when visibility changes or profile is deleted",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows rejects foreign ownership, private-field disclosure, unknown fields and invalid dates",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows checks CSRF, JSON type, malformed and bounded streaming bodies",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows escapes stored HTML and treats SQL metacharacters only as data",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows allows one concurrent edit and rejects stale updates and deletes without overwriting",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows closes Jobs only, hides immediately and purges the profile archive after 30 days",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows honors closure holds and replays deletion against restored live profiles",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows blocks restored/restricted profiles and fails safely for unsupported operations",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows keeps Jobs disabled by default and leaves account dashboard redirects unchanged",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows persists synthetic profiles across complete runtime restarts without repeating migrations",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows edits repeated entries, saves, reloads and reports validation through the working UI",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows makes indexing opt-in only for public visibility and labels all editor inputs",
+        "status": "passed"
+      },
+      {
+        "file": "jobs-profiles.test.ts",
+        "name": "EP-05 local synthetic profile workflows keeps unsaved edits after a stale-tab conflict and exposes closure through the UI",
+        "status": "passed"
+      }
+    ]
+  },
+  "changedFiles": [
+    "docs/checkpoints/BJ-EP-06-EVIDENCE.json",
+    "docs/checkpoints/BJ-EP-06-LOCAL.md",
+    "migrations/jobs/0003_companies.sql",
+    "package.json",
+    "scripts/jobs-runtime.mjs",
+    "src/account/jobs-identity.ts",
+    "src/jobs/api.ts",
+    "src/jobs/companies.ts",
+    "src/jobs/company-ui.ts",
+    "src/jobs/contracts.ts",
+    "src/jobs/permissions.ts",
+    "src/jobs/privacy.ts",
+    "src/jobs/profile-ui.ts",
+    "tests/jobs-companies.test.ts",
+    "tests/jobs-profiles.test.ts"
+  ],
+  "additionalCashINR": 0,
+  "qualification": "Local synthetic Worker/D1 and JSDOM. Visual device and real-data qualification pending."
+}

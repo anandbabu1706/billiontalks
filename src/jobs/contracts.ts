@@ -1,5 +1,5 @@
 /** Jobs never receives the host environment or Meetings capabilities. */
-export type Identity = { subject: string };
+export type Identity = { subject: string; recipientHash?: string };
 export type IdentityResolver = (request: Request) => Promise<Identity | null>;
 export type Statement = {
   bind(...values: unknown[]): Statement;
