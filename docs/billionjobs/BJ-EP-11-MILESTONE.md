@@ -1,6 +1,8 @@
-# EP-11 / BJ-V1-007 documentation checkpoint
+# EP-11 / BJ-V1-007 local synthetic development completion
 
 ## EP-11-A through EP-11-E local acceptance
+
+EP-11 is complete for local synthetic development. ADM-01 through ADM-20 are locally accepted against application commit `0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a`. The [committed test evidence](https://github.com/anandbabu1706/billiontalks/blob/0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a/docs/checkpoints/BJ-EP-11-EVIDENCE.json) records 557/557 regression tests, 54/54 focused tests (35 governance and 19 profile/persistence), and 14-migration validation. Production qualification requirements remain outstanding.
 
 The final review on 2026-11-28 covers local synthetic Jobs workflows. Earlier registers below preserve the starting implementation and the intermediate findings. The API and browser workspaces use the same Jobs permission and persistence boundaries. The local regression suite and the separately executed Chrome harness provide different evidence, identified below.
 
@@ -31,7 +33,9 @@ The browser harness exercises real form submissions through the Jobs router with
 
 The [application acceptance commit](https://github.com/anandbabu1706/billiontalks/commit/0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a) records 557/557 passing regressions, 54/54 focused tests, the migration restart, dry-run build and Chrome results.
 
-## Historical checkpoints
+## Historical checkpoints (superseded local acceptance status)
+
+All partial, foundation, incomplete and open-local-work entries below are preserved historical records. Their local acceptance status is superseded by the final EP-11-A through EP-11-E register above and its committed evidence. Production qualification requirements continue to apply.
 
 Date: 2026-11-27. Owner approved all ADM-01–ADM-20 items for isolated local synthetic development. This is a **checkpoint, not milestone completion or release acceptance**. Application baseline: EP-10 `c08591f970a4c977c98286f045145bda58a27474`; documentation baseline: `bab49f794fea22a64f62fba6f0f9a2741bf86fec`. The application branch is `bj-ep-11-administration-moderation` at `35ca767a2c978a704e9ee9c1ae04ed6fdb174468` (initial checkpoint `29dac456ca62c9366aa2de544fbf1d88a6357ec8`). See its `docs/checkpoints/BJ-EP-11-{LOCAL,BENCHMARK,MILESTONE}.md` and `BJ-EP-11-EVIDENCE.json` for implementation and test details.
 
@@ -50,7 +54,7 @@ Local TypeScript and non-deploying Wrangler bundle checks passed. The final appl
 
 Next sequence stays **EP-08 → EP-10 → EP-11 → BT-WEB → EP-09 controlled qualification/pilot → EP-12 integrated qualification → EP-13 production release**. BT-WEB needs Jobs navigation and scoped administration entry points; it must preserve the Jobs data boundary. EP-11 is not yet closed, so BT-WEB is not started by this checkpoint. Additional development cash expenditure: ₹0.
 
-## EP-11-COMPLETE continuation acceptance register
+## EP-11-COMPLETE continuation acceptance register (historical, superseded)
 
 Resume commit 35ca767a2c978a704e9ee9c1ae04ed6fdb174468. The preceding register records the previously implemented services. Every component remains open for full local acceptance. The test and release evidence is recorded separately in the local report.
 
@@ -81,7 +85,7 @@ Production gates include trusted MFA/reauthentication and accountable production
 
 Local application commit f3902d7f61d141fb17bffb34b22e5b74c5133538 continues directly from the authorized application baseline. TypeScript, dry-run bundling and diff checks passed. Full regression passed 539/539 across 24 files, including 17 governance tests. The focused governance/profile run passed 36/36. Chrome checked role grant and revocation, initial keyboard focus and page width at 375px and 1280px. Application evidence and file inventory are available in the local commit. Additional expenditure was INR 0.
 
-## 2026-11-28 implementation and local acceptance
+## 2026-11-28 implementation and local acceptance (historical, superseded)
 
 This register supersedes the earlier local status columns. The earlier entries retain the baseline and previously implemented functionality. Each row names the current application workflow and the local evidence that exercises it. Browser navigation alone establishes reachability. Service tests exercise the database and permission checks. The Chrome fixture drives the Jobs router with synthetic identities.
 
@@ -108,7 +112,9 @@ This register supersedes the earlier local status columns. The earlier entries r
 | ADM-19 Operations | Activation and cancellation backlog, fenced retries and reminder dispatch | Restart with pending lease, concurrent reconciliation and dispatch, stale reminder tests | Partial acceptance (see below) |
 | ADM-20 Integrated qualification | TypeScript, local D1, dry bundle, regression and responsive keyboard checks | 24 regression files, 14 migrations and 14 Chrome routes at two widths | Partial acceptance (see below) |
 
-### Outstanding local qualification
+### Outstanding local qualification at the intermediate checkpoint (superseded)
+
+The following local findings were resolved by the final application acceptance commit. Retain this list as the intermediate review record.
 
 - ADM-07 requires one integrated enforcement and expiry matrix across discovery, applications, recruiter access and interview admission. The current checks exercise those boundaries in separate fixtures.
 - ADM-12 and ADM-13 require a restored snapshot containing every applicable record category together. The current tests demonstrate consent replay, held deletion, reviewed delivery and application-related cleanup individually.

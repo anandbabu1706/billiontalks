@@ -2,9 +2,9 @@
 
 ## EP-11 local acceptance on 2026-11-28
 
-EP-11-A through EP-11-E are locally accepted. All later milestones retain their existing authorization requirements.
+EP-11 is complete for local synthetic development. ADM-01 through ADM-20 are locally accepted against application commit `0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a`. The [committed test evidence](https://github.com/anandbabu1706/billiontalks/blob/0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a/docs/checkpoints/BJ-EP-11-EVIDENCE.json) records 557/557 regression tests, 54/54 focused tests (35 governance and 19 profile/persistence), and 14-migration validation. Production qualification requirements remain outstanding. All later milestones retain their existing authorization requirements.
 
-**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 through EP-08 and EP-10 authorized local synthetic milestones are completed; see the current tracker and milestone evidence. Owners must discuss results before opening a follow-on prompt or workstream.
+**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 through EP-08, EP-10 and EP-11 authorized local synthetic milestones are completed; see the current tracker and milestone evidence. Owners must discuss results before opening a follow-on prompt or workstream.
 
 | Milestone | Status | Scope or exit evidence |
 |---|---|---|
@@ -22,7 +22,7 @@ EP-11-A through EP-11-E are locally accepted. All later milestones retain their 
 | BJ-V1-004 | COMPLETED (EP-08 local synthetic) | [EP-08 milestone](BJ-EP-08-MILESTONE.md): assignment-scoped review, lifecycle, notes, matching, analytics and notifications; no live AI or release approval. |
 | BJ-V1-005 | COMPLETED (EP-10 local synthetic) | [EP-10 milestone](BJ-EP-10-MILESTONE.md): request-and-confirm scheduling, time zones, feedback, analytics and versioned Meetings admission/revocation adapter; release qualification remains open. |
 | BJ-V1-006 | DEFERRED | Networking: connections, posts, discussions and reporting. |
-| BJ-V1-007 | IN PROGRESS (local synthetic checkpoint) | EP-11 governance foundations are locally tested. ADM-01–ADM-20 remain approved; full workflow, trusted MFA and qualification gates are open. |
+| BJ-V1-007 | COMPLETED (EP-11 local synthetic development) | ADM-01 through ADM-20 locally accepted; [final register and evidence](BJ-EP-11-MILESTONE.md). Production MFA and release qualification gates remain open. |
 | BJ-V1-008 | DEFERRED | Monetization readiness: configure entitlement design first; vendor, checkout and live payments need separate approval. |
 | BJ-V1-009 | BLOCKED | Final qualification: security, integration, accessibility, regression, capacity and owner acceptance. |
 | Offer-letter management extension | DEFERRED | No initial issuance or document system. Optional future work requires explicit reapproval; simple employer/candidate-reported recruitment statuses remain within recruiting scope. |
@@ -63,12 +63,16 @@ EP-08 is committed and pushed on its authorized isolated branch. The next functi
 
 EP-10 is committed and pushed on its authorized isolated branch with 95/95 Jobs tests passing and no new full-suite failure. The approved sequence, without renumbering historical milestones, is **EP-08 → EP-10 → EP-11 → BT-WEB website restructuring → EP-09 recruitment qualification and controlled pilot → EP-12 final integrated qualification → EP-13 production release**.
 
-EP-11 is authorized for isolated local synthetic implementation and has a governance checkpoint; see [EP-11 milestone](BJ-EP-11-MILESTONE.md). Full administration/moderation, trusted MFA and release controls are not complete. BT-WEB restructuring follows EP-11 and remains independent of Jobs domain data. Before genuine applicant data or any controlled pilot, complete the mandatory security, legal, privacy, accessibility, recovery, capacity and operating-owner gates. EP-11 does not authorize staging, pilot, deployment, merge or AI/provider activation.
+EP-11 administration and moderation are complete for local synthetic development; see [the final acceptance register](BJ-EP-11-MILESTONE.md). Trusted production MFA and release qualification remain outstanding. BT-WEB restructuring follows EP-11 and remains independent of Jobs domain data. Before genuine applicant data or any controlled pilot, complete the mandatory security, legal, privacy, accessibility, recovery, capacity and operating-owner gates. EP-11 does not authorize staging, pilot, deployment, merge or AI/provider activation.
 
-## EP-11-A continuation checkpoint
+## EP-11-A continuation checkpoint (historical, superseded)
+
+The partial local status below is superseded by the final EP-11 acceptance register.
 
 EP-11 remains in progress. Role management, available-owner protection and employer-verification operations advanced in section A. Later milestones retain their existing order.
 
-## 2026-11-28 EP-11 qualification
+## 2026-11-28 EP-11 qualification (intermediate, superseded)
+
+The open local qualifications below were resolved by the final application commit. Production gates and later milestone authorization requirements continue to apply.
 
 EP-11 local workflows now span all 20 administration components. The acceptance register identifies open local qualifications before milestone closure. BT-WEB and subsequent phases remain pending. See [the component acceptance register](BJ-EP-11-MILESTONE.md).

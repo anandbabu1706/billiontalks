@@ -2,11 +2,13 @@
 
 ## EP-11 local acceptance on 2026-11-28
 
+EP-11 is complete for local synthetic development. ADM-01 through ADM-20 are locally accepted against application commit `0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a`. The [committed test evidence](https://github.com/anandbabu1706/billiontalks/blob/0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a/docs/checkpoints/BJ-EP-11-EVIDENCE.json) records 557/557 regression tests, 54/54 focused tests (35 governance and 19 profile/persistence), and 14-migration validation. Production qualification requirements remain outstanding.
+
 All twenty ADM requirements are locally accepted. The [component register](BJ-EP-11-MILESTONE.md) maps each to its implementation, API or interface, test evidence and release dependency. The [application acceptance commit](https://github.com/anandbabu1706/billiontalks/commit/0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a) passed 557 regression tests.
 
 **Document ID:** BJ-TRACK-001  
-**Review date:** 2026-11-27
-**Status:** Revision 1.12, EP-11 local governance checkpoint; milestone incomplete
+**Review date** 2026-11-28
+**Status** Revision 1.13, EP-11 complete for local synthetic development; production qualification outstanding.
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
@@ -49,7 +51,7 @@ All twenty ADM requirements are locally accepted. The [component register](BJ-EP
 | EP-07 | Job posting, discovery and applications | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-07-MILESTONE.md); `ddce9f16e483e07848cd7bd30b9c00c0570972d8` on `bj-ep-07-jobs-applications`; 13/13 EP-07 and 67/67 Jobs tests passed; no deployment. |
 | EP-08 | Advanced recruiter workspace and intelligent foundation | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-08-MILESTONE.md); `bccfe899e272aada5a74af09d8800690ca368906` on `bj-ep-08-recruiter-workspace`; 15/15 EP-08 and 82/82 Jobs tests passed; no AI provider or deployment. |
 | EP-10 | Advanced interview and Meetings integration | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-10-MILESTONE.md); `c08591f970a4c977c98286f045145bda58a27474` on `bj-ep-10-interview-integration`; 13/13 EP-10 and 95/95 Jobs tests passed; no deployment. |
-| EP-11 | Advanced administration and governance | IN PROGRESS / LOCAL FOUNDATION COMMITTED | [EP-11 checkpoint](BJ-EP-11-MILESTONE.md); application `35ca767a2c978a704e9ee9c1ae04ed6fdb174468`; ADM-01–ADM-20 approved. MFA, full workflows and real-data qualification remain open. |
+| EP-11 | Advanced administration and governance | COMPLETED (local synthetic development) | [Final acceptance register](BJ-EP-11-MILESTONE.md); application `0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a`; ADM-01 through ADM-20 locally accepted. Production MFA and real-data qualification remain open. |
 | BJ-LIVE-SEC | MFA, staging exposure, TLS and operational protection review | PENDING SEPARATE ACTION | Owner MFA/account enforcement absent; Access not enabled. Resolve protection strategy before sensitive shared staging; no settings changed. |
 | BJ-LIVE-QUAL | Shared staging recovery, capacity, email and Meetings regressions | PENDING | Qualify two recorded Meetings failures, remote D1 atomicity, retention/recovery, CPU/bursts and provider allowances; no real-data onboarding here. |
 
@@ -96,7 +98,7 @@ All twenty ADM requirements are locally accepted. The [component register](BJ-EP
 
 ## EP-11 approved component status
 
-All ADM items below are owner-approved for local synthetic implementation. “Local foundation” does not mean production readiness. Detailed evidence and gaps are in [BJ-EP-11-MILESTONE](BJ-EP-11-MILESTONE.md) and the application branch checkpoint.
+All ADM items below are locally accepted. Requirement-level evidence and outstanding production qualification gates are in [the final EP-11 register](BJ-EP-11-MILESTONE.md).
 
 | ID | Status | Local evidence / open boundary |
 |---|---|---|
@@ -147,13 +149,18 @@ All ADM items below are owner-approved for local synthetic implementation. “Lo
 | 2026-11-27 | 1.10 | Recorded EP-08 recruiter workspace, lifecycle, notes, analytics, rules-based matching, notification and AI-contract evidence. EP-10, live AI and release remain separately gated. |
 | 2026-11-27 | 1.11 | Recorded EP-10 request-and-confirm scheduling, versioned Meetings adapter, time-zone/calendar, feedback, analytics, test/defect evidence and revised EP-11-to-release sequence. Live qualification and later milestones remain separately gated. |
 | 2026-11-27 | 1.12 | Recorded approved ADM-01–ADM-20 and the local EP-11 checkpoint with component-level status. Trusted MFA, complete workflows and release gates remain open. |
+| 2026-11-28 | 1.13 | EP-11-DOC-CLOSEOUT reconciled local completion against committed final evidence. Superseded earlier partial acceptance records while preserving production qualification gates. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
 
-## EP-11-A continuation checkpoint
+## EP-11-A continuation checkpoint (historical, superseded)
+
+The incomplete local status below is superseded by the final acceptance register. Production gates continue to apply.
 
 EP-11 remains IN PROGRESS. ADM-01, 02, 03 and 10 have additional API or interface evidence. ADM-07, 14, 16, 19 and 20 have narrower security or test coverage. All twenty components still require local acceptance. See the continuation register in the EP-11 milestone for the outstanding work per component.
 
-## 2026-11-28 acceptance review
+## 2026-11-28 acceptance review (intermediate, superseded)
+
+The open local findings below were resolved by the final application commit and superseded by the current component table.
 
 The component table above reflects the latest synthetic local checks. EP-11 remains open on the enforcement matrix, complete deletion replay, audit failure handling and meeting reconciliation interruption. See [the current evidence register](BJ-EP-11-MILESTONE.md).
