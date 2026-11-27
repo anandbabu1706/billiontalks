@@ -1,5 +1,9 @@
 # BillionJobs Master Action & Completion Tracker
 
+## EP-11 local acceptance on 2026-11-28
+
+All twenty ADM requirements are locally accepted. The [component register](BJ-EP-11-MILESTONE.md) maps each to its implementation, API or interface, test evidence and release dependency. The [application acceptance commit](https://github.com/anandbabu1706/billiontalks/commit/0d1c7c7ea6d2f194e328a2c64fd67d72ae115e2a) passed 557 regression tests.
+
 **Document ID:** BJ-TRACK-001  
 **Review date:** 2026-11-27
 **Status:** Revision 1.12, EP-11 local governance checkpoint; milestone incomplete
@@ -85,7 +89,7 @@
 | BJ-V1-004 | Recruiter application workspace | COMPLETED (EP-08 local synthetic) | [EP-08 evidence](BJ-EP-08-MILESTONE.md); 507/509 full suite with exactly two unchanged Meetings failures; remote/real-data qualification pending. |
 | BJ-V1-005 | Interview scheduling and Meetings integration | COMPLETED (EP-10 local synthetic) | [EP-10 evidence](BJ-EP-10-MILESTONE.md); 520/522 full suite with exactly two unchanged Meetings fixture failures; durable operations and live qualification pending. |
 | BJ-V1-006 | Networking and posts | DEFERRED | Separate milestone approval |
-| BJ-V1-007 | Full platform administration/moderation | IN PROGRESS (LOCAL SYNTHETIC ONLY) | ADM-01–ADM-20 approved; status and evidence by component in [EP-11 checkpoint](BJ-EP-11-MILESTONE.md). No pilot or release acceptance. |
+| BJ-V1-007 | Full platform administration/moderation | LOCALLY ACCEPTED | ADM-01–ADM-20 approved; status and evidence by component in [EP-11 checkpoint](BJ-EP-11-MILESTONE.md). No pilot or release acceptance. |
 | BJ-V1-008 | Monetization and premium features | DEFERRED | Approved entitlements, merchant and paid activation |
 | BJ-V1-009 | Final functional, accessibility, security and regression qualification | NOT STARTED | Evidence-backed sign-off |
 | BJ-REL-001 | First public release | BLOCKED | Separate owner permission, actual environment readiness, rollback and sign-off |
@@ -96,26 +100,26 @@ All ADM items below are owner-approved for local synthetic implementation. “Lo
 
 | ID | Status | Local evidence / open boundary |
 |---|---|---|
-| ADM-01 | Local workflow verified | Auditor router and dashboard-to-case Chrome navigation |
-| ADM-02 | Local workflow verified | Fresh-session and owner guards, Chrome warning through closure |
-| ADM-03 | Local workflow verified | Conflicting revisions, cross-company denial, Chrome approval through expiry |
-| ADM-04 | Local workflow verified | Scoped discovery test and Chrome investigation through resolution |
-| ADM-05 | Local workflow verified | Threshold and deduplication tests with synthetic signals |
-| ADM-06 | Local workflow verified | Legacy company/listing intake and restricted case detail tests |
-| ADM-07 | Partial acceptance (see below) | Overlapping sanctions, scoped listing removal, owner protection and Chrome warning revocation |
-| ADM-08 | Local workflow verified | Separate appellant and reviewer complete an information request and decision in Chrome |
-| ADM-09 | Local workflow verified | Concurrent acceptance, expiry, requester and independent recovery reviewer tests |
-| ADM-10 | Local workflow verified | Seven-role boundary tests, simultaneous owner changes and Chrome role changes |
-| ADM-11 | Local workflow verified | Chrome notice publication, candidate history and withdrawal |
-| ADM-12 | Partial acceptance (see below) | Concurrent export and wrong requester tests, Chrome delivery confirmation, held deletion test |
-| ADM-13 | Partial acceptance (see below) | Retention delay and hold, replay of restored consent and Jobs profile persistence tests |
-| ADM-14 | Partial acceptance (see below) | Scope and delivery audit tests, role transaction and forbidden-read tests |
-| ADM-15 | Local workflow verified | Incident service tests and Chrome containment through resolution |
-| ADM-16 | Local workflow verified | Auditor-scoped period response and Chrome analytics navigation |
-| ADM-17 | Local workflow verified | Maliciously structured inputs, invalid provider response and case audit reference tests |
-| ADM-18 | Local workflow verified | Concurrent posting, replay, IST midnight, active ceiling and validity tests, Chrome policy edit |
-| ADM-19 | Partial acceptance (see below) | Restart with pending lease, concurrent reconciliation and dispatch, stale reminder tests |
-| ADM-20 | Partial acceptance (see below) | 24 regression files, 14 migrations and 14 Chrome routes at two widths |
+| ADM-01 | LOCALLY ACCEPTED | Auditor router and dashboard-to-case Chrome navigation |
+| ADM-02 | LOCALLY ACCEPTED | Fresh-session and owner guards, Chrome warning through closure |
+| ADM-03 | LOCALLY ACCEPTED | Conflicting revisions, cross-company denial, Chrome approval through expiry |
+| ADM-04 | LOCALLY ACCEPTED | Scoped discovery test and Chrome investigation through resolution |
+| ADM-05 | LOCALLY ACCEPTED | Threshold and deduplication tests with synthetic signals |
+| ADM-06 | LOCALLY ACCEPTED | Chrome complaint submission, report-cap concurrency, legacy intake and restricted case details |
+| ADM-07 | LOCALLY ACCEPTED | Integrated temporary suspension and expiry across discovery, submission, recruiter search and interview admission. Separate overlapping and listing action checks |
+| ADM-08 | LOCALLY ACCEPTED | Separate appellant and reviewer complete an information request and decision in Chrome |
+| ADM-09 | LOCALLY ACCEPTED | Chrome recipient-bound transfer and retirement, concurrent acceptance, expiry, cancellation, refusal and independent recovery cases |
+| ADM-10 | LOCALLY ACCEPTED | Seven-role boundary tests, simultaneous owner changes and Chrome role changes |
+| ADM-11 | LOCALLY ACCEPTED | Chrome notice publication, candidate history and withdrawal |
+| ADM-12 | LOCALLY ACCEPTED | Concurrent and wrong-requester export tests, Chrome delivery confirmation, multi-category restored snapshot |
+| ADM-13 | LOCALLY ACCEPTED | Retention delay, hold review conflict, release, restored consent, profile, application, interview, notifications, case evidence and grants |
+| ADM-14 | LOCALLY ACCEPTED | Audit filtering, denied reads and forced audit failure with incident, hold and notice rollback |
+| ADM-15 | LOCALLY ACCEPTED | Incident service tests and Chrome containment through resolution |
+| ADM-16 | LOCALLY ACCEPTED | Permission-scoped counts and drilldowns, suppressed categories and period validation |
+| ADM-17 | LOCALLY ACCEPTED | Maliciously structured inputs, invalid provider response and case audit reference tests |
+| ADM-18 | LOCALLY ACCEPTED | Concurrent posting, replay, IST midnight, active ceiling and validity tests, Chrome policy edit |
+| ADM-19 | LOCALLY ACCEPTED | Persisted restart and concurrent dispatch, lost successful activation response followed by cancellation, restart and revocation |
+| ADM-20 | LOCALLY ACCEPTED | Full suite, 54 focused tests, fourteen migrations, dry bundle, local Chrome at two widths |
 
 ## D. Mandatory verification on every milestone
 

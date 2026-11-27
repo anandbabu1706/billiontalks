@@ -1,5 +1,9 @@
 # BillionJobs Roadmap & Release Gates
 
+## EP-11 local acceptance on 2026-11-28
+
+EP-11-A through EP-11-E are locally accepted. All later milestones retain their existing authorization requirements.
+
 **APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 through EP-08 and EP-10 authorized local synthetic milestones are completed; see the current tracker and milestone evidence. Owners must discuss results before opening a follow-on prompt or workstream.
 
 | Milestone | Status | Scope or exit evidence |

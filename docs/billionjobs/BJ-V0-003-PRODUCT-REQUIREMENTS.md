@@ -1,5 +1,9 @@
 # BJ-V0-003: Product Requirements & Acceptance
 
+## EP-11 local acceptance on 2026-11-28
+
+ADM-01 through ADM-20 have local synthetic acceptance evidence in the [component register](BJ-EP-11-MILESTONE.md). Production qualification is outstanding.
+
 **APPROVED scope:** Functional recruiting first, then interview integration, professional networking and monetization. The approved feature inventory is design scope, not a release authorization. BJ-PLAN-001 approves the design scope and acceptance criteria below with REV-001–REV-007. Technical enforcement, actual tests and real-data approval remain pending.
 
 | Status | Actor / area | Requirement |

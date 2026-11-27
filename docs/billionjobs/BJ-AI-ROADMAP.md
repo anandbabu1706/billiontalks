@@ -1,5 +1,9 @@
 # BillionJobs AI-ready capability roadmap
 
+## EP-11 local acceptance on 2026-11-28
+
+Local governance assistance passed its authorization, bounded-data, fallback and human-review checks. The release decision for live providers remains open.
+
 This register records owner-approved product direction from EP-08, not permission to activate providers, transfer applicant data or make automated decisions. `FOUNDATION IMPLEMENTED` means only the named non-AI/local contract foundation exists. `PROPOSED` requires a separately authorized milestone with purpose, consent, legal/security/cost review, evaluation, provenance, human oversight and fallback.
 
 | ID | Capability | Status and boundary |

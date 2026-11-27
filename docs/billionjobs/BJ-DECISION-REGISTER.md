@@ -1,5 +1,9 @@
 # BillionJobs Decision Register
 
+## EP-11 local acceptance on 2026-11-28
+
+Accepted the locally tested Jobs workflows for ADM-01 through ADM-20. Successful sensitive changes and their audit records commit together. Interview recovery handles an activation response lost before Jobs persisted it. Production authority and staffing remain gated.
+
 Source of truth for approval state. **APPROVED** = directly confirmed by the owner or clearly accepted in the referenced exchange, for the stated scope only. **PROPOSED** = recommendation, not consent. **DEFERRED** = outside the current scope or scheduled later. **BLOCKED** = cannot proceed under current approvals or access. **REQUIRES VERIFICATION** = evidence or an exact business choice is missing. Add or supersede decisions by ID with date, authority, evidence, scope, consequences and dependent milestones. A documentation commit does not change the decision status. Decisions are append-only for provenance: retain and mark superseded entries instead of silently rewriting approval history.
 
 **Register revision 1.10 — updated 2026-11-27.** Earlier individual approval dates have not been independently verified and are marked `historical approval date unverified`; the date of this review is not substituted for the original approval date. New entries require verified approval date, authority, source, scope, impact, dependencies and supersession reference.
