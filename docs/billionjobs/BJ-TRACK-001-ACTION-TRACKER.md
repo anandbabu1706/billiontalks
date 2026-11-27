@@ -45,7 +45,7 @@
 | EP-07 | Job posting, discovery and applications | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-07-MILESTONE.md); `ddce9f16e483e07848cd7bd30b9c00c0570972d8` on `bj-ep-07-jobs-applications`; 13/13 EP-07 and 67/67 Jobs tests passed; no deployment. |
 | EP-08 | Advanced recruiter workspace and intelligent foundation | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-08-MILESTONE.md); `bccfe899e272aada5a74af09d8800690ca368906` on `bj-ep-08-recruiter-workspace`; 15/15 EP-08 and 82/82 Jobs tests passed; no AI provider or deployment. |
 | EP-10 | Advanced interview and Meetings integration | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-10-MILESTONE.md); `c08591f970a4c977c98286f045145bda58a27474` on `bj-ep-10-interview-integration`; 13/13 EP-10 and 95/95 Jobs tests passed; no deployment. |
-| EP-11 | Advanced administration and governance | IN PROGRESS / LOCAL FOUNDATION COMMITTED | [EP-11 checkpoint](BJ-EP-11-MILESTONE.md); application `4ade6d0ea87a45e430d0ebb678613d0b329fd279`; ADM-01–ADM-20 approved. MFA, full workflows and real-data qualification remain open. |
+| EP-11 | Advanced administration and governance | IN PROGRESS / LOCAL FOUNDATION COMMITTED | [EP-11 checkpoint](BJ-EP-11-MILESTONE.md); application `8024a1bc32f4eb64ba30d37e652363703a64d036`; ADM-01–ADM-20 approved. MFA, full workflows and real-data qualification remain open. |
 | BJ-LIVE-SEC | MFA, staging exposure, TLS and operational protection review | PENDING SEPARATE ACTION | Owner MFA/account enforcement absent; Access not enabled. Resolve protection strategy before sensitive shared staging; no settings changed. |
 | BJ-LIVE-QUAL | Shared staging recovery, capacity, email and Meetings regressions | PENDING | Qualify two recorded Meetings failures, remote D1 atomicity, retention/recovery, CPU/bursts and provider allowances; no real-data onboarding here. |
 
@@ -101,9 +101,9 @@ All ADM items below are owner-approved for local synthetic implementation. “Lo
 | ADM-03 | PARTIAL | Company directory, membership revocation, optional verification states; review workflow remains. |
 | ADM-04 | PARTIAL | Report/case and discovery removal; full moderation policy coverage remains. |
 | ADM-05 | PARTIAL | Fee, frequency, duplicate and complaint signals; further rules/evaluation remain. |
-| ADM-06 | PARTIAL | Confidential reporter cases/status; employer visibility and targets remain. |
+| ADM-06 | PARTIAL | Confidential reporter cases and company-visible public status; assignment/targets remain. |
 | ADM-07 | PARTIAL | Typed reason-coded actions and active restriction checks; full transitions remain. |
-| ADM-08 | PARTIAL | User appeal and human resolution; company appeals/independent coverage remain. |
+| ADM-08 | PARTIAL | User, company and owned-listing appeals with human resolution; independent coverage remains. |
 | ADM-09 | LOCAL FOUNDATION | Transfer, expiry/replay/concurrency, retirement and owner closure tested; exceptional recovery remains. |
 | ADM-10 | PARTIAL | Seven scoped roles, denial, revocation and final owner; production MFA/bootstrap remain. |
 | ADM-11 | PARTIAL | Versioned Jobs notice/optional consent events; complete policy/rights UI remains. |
