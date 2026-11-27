@@ -1,6 +1,6 @@
 # BillionJobs Roadmap & Release Gates
 
-**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 through EP-07 authorized local synthetic milestones are completed; see the current tracker and milestone evidence. Owners must discuss results before opening a follow-on prompt or workstream.
+**APPROVED:** Recruiting first, then interview integration, professional networking and monetization. Sequence preserves the existing Meetings and Android tracks. Milestone IDs below are retained from BJ-MPB-001; later implementation requires explicit authorization. EP-04 through EP-08 authorized local synthetic milestones are completed; see the current tracker and milestone evidence. Owners must discuss results before opening a follow-on prompt or workstream.
 
 | Milestone | Status | Scope or exit evidence |
 |---|---|---|
@@ -15,7 +15,7 @@
 | BJ-V1-001 | COMPLETED (EP-05 local synthetic) | [Professional profiles evidence](BJ-EP-05-MILESTONE.md), f5e671faf48678c231b5a7e98f00d11be9ac3823; no real-data or release approval. |
 | BJ-V1-002 | COMPLETED (local synthetic) | [EP-06 milestone](BJ-EP-06-MILESTONE.md). Shared environment qualification remains open. |
 | BJ-V1-003 | COMPLETED (EP-07 local synthetic) | [EP-07 milestone](BJ-EP-07-MILESTONE.md): publish/discover/save/apply/lifecycle, assigned-access foundation and retention evidence; no deployment or real-data qualification. |
-| BJ-V1-004 | BLOCKED | Recruitment workspace: applicant review and status actions; prove tenant separation. |
+| BJ-V1-004 | COMPLETED (EP-08 local synthetic) | [EP-08 milestone](BJ-EP-08-MILESTONE.md): assignment-scoped review, lifecycle, notes, matching, analytics and notifications; no live AI or release approval. |
 | BJ-V1-005 | BLOCKED | Interview integration after recruiting acceptance; prove Meetings access, recovery and regression. |
 | BJ-V1-006 | DEFERRED | Networking: connections, posts, discussions and reporting. |
 | BJ-V1-007 | BLOCKED | Administration and moderation: abuse reports, verification, audit and enforcement. Minimum safety controls must be in earlier slices before public launch; this milestone is the fuller workstream. |
@@ -50,3 +50,7 @@ Owner-approved in the EP-06 authorization on 2026-11-27. EP-10 will implement re
 ## EP-07 closeout sequencing - 2026-11-27
 
 EP-07 is committed and pushed on its authorized isolated branch. EP-08 is the next roadmap dependency but is not authorized or started: it must build the full recruiter workspace on current assignment checks, immutable application snapshots and event history, without giving company administrators an applicant bypass. Shared staging, production, real applicant data, deployment and merge remain separately gated. Full parent redesign remains deferred until after EP-11.
+
+## EP-08 closeout sequencing - 2026-11-27
+
+EP-08 is committed and pushed on its authorized isolated branch. The next functional dependency is EP-10 interview request/confirm/cancel integration, but it is not started by this milestone. EP-10 must consume the recorded application identity, actor permissions and status history while independently proving Meetings admission, cancellation, retry, time-zone and regression behavior. The [BJ-AI roadmap](BJ-AI-ROADMAP.md) is product direction only: external providers, models, agents, applicant-data transfer and AI activation require separate authorization and qualification.

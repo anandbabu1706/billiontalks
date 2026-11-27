@@ -2,7 +2,7 @@
 
 **Document ID:** BJ-TRACK-001  
 **Review date:** 2026-11-27
-**Status:** Revision 1.9, EP-07 local marketplace and applications completed
+**Status:** Revision 1.10, EP-08 local recruiter workspace completed
 **Scope:** BillionJobs and relevant shared BillionTalks dependencies. Documentation only; not implementation authorization.
 
 ## Status definitions
@@ -43,6 +43,7 @@
 | BT-WEB-004 | Full parent shell/homepage redesign | DEFERRED UNTIL AFTER EP-11 | BJ-D33; not a Jobs development dependency. |
 | EP-05 | Professional profiles | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-05-MILESTONE.md); f5e671faf48678c231b5a7e98f00d11be9ac3823 on bj-ep-05-profiles; 19/19 new and 30/30 foundation tests; no deployment. |
 | EP-07 | Job posting, discovery and applications | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-07-MILESTONE.md); `ddce9f16e483e07848cd7bd30b9c00c0570972d8` on `bj-ep-07-jobs-applications`; 13/13 EP-07 and 67/67 Jobs tests passed; no deployment. |
+| EP-08 | Advanced recruiter workspace and intelligent foundation | COMPLETED / COMMITTED / PUSHED (local synthetic) | [Milestone evidence](BJ-EP-08-MILESTONE.md); `bccfe899e272aada5a74af09d8800690ca368906` on `bj-ep-08-recruiter-workspace`; 15/15 EP-08 and 82/82 Jobs tests passed; no AI provider or deployment. |
 | BJ-LIVE-SEC | MFA, staging exposure, TLS and operational protection review | PENDING SEPARATE ACTION | Owner MFA/account enforcement absent; Access not enabled. Resolve protection strategy before sensitive shared staging; no settings changed. |
 | BJ-LIVE-QUAL | Shared staging recovery, capacity, email and Meetings regressions | PENDING | Qualify two recorded Meetings failures, remote D1 atomicity, retention/recovery, CPU/bursts and provider allowances; no real-data onboarding here. |
 
@@ -79,7 +80,7 @@
 | BJ-V1-001 | Professional profiles | COMPLETED (EP-05 local synthetic) | [Evidence and limitations](BJ-EP-05-MILESTONE.md); 474/476 suite, two unchanged Meetings failures; device and real-data qualification pending. |
 | BJ-V1-002 | Company and recruiter management | COMPLETED (local synthetic) | [EP-06 evidence](BJ-EP-06-MILESTONE.md), 723f89bd2a0a0101a0776cf1c7d10616648c6d70 |
 | BJ-V1-003 | Job search, postings and applications | COMPLETED (EP-07 local synthetic) | [EP-07 evidence](BJ-EP-07-MILESTONE.md); 492/494 full suite with exactly two unchanged Meetings failures; shared-environment and real-data qualification pending. |
-| BJ-V1-004 | Recruiter application workspace | NOT STARTED | Application lifecycle, tenant isolation and tests |
+| BJ-V1-004 | Recruiter application workspace | COMPLETED (EP-08 local synthetic) | [EP-08 evidence](BJ-EP-08-MILESTONE.md); 507/509 full suite with exactly two unchanged Meetings failures; remote/real-data qualification pending. |
 | BJ-V1-005 | Interview scheduling and Meetings integration | NOT STARTED | Admission, retries, time zones and Meetings regression |
 | BJ-V1-006 | Networking and posts | DEFERRED | Separate milestone approval |
 | BJ-V1-007 | Full platform administration/moderation | NOT STARTED | Abuse controls and audit evidence; minimum safeguards delivered with V1-001–004 before real users |
@@ -110,5 +111,6 @@
 | 2026-11-27 | 1.7 | Authorized EP-05 completed on isolated branch; exact commit, 15-file inventory and test evidence recorded. Minimal Jobs access only; EP-06 not started; release gates retained. |
 | 2026-11-27 | 1.8 | Recorded EP-06 local completion, verified source and regression evidence. EP-07 awaits separate authorization. |
 | 2026-11-27 | 1.9 | Recorded authorized EP-07 local completion, exact pushed source/inventory, application and retention evidence, and unchanged release gates. EP-08 remains unstarted and requires separate authorization. |
+| 2026-11-27 | 1.10 | Recorded EP-08 recruiter workspace, lifecycle, notes, analytics, rules-based matching, notification and AI-contract evidence. EP-10, live AI and release remain separately gated. |
 
 **Branch safety:** Current documentation branch was based on historical `main` V0. Never assume it is an implementation base. No automatic merge or production release.
