@@ -1,6 +1,6 @@
 # EP-11 / BJ-V1-007 documentation checkpoint
 
-Date: 2026-11-27. Owner approved all ADM-01–ADM-20 items for isolated local synthetic development. This is a **checkpoint, not milestone completion or release acceptance**. Application baseline: EP-10 `c08591f970a4c977c98286f045145bda58a27474`; documentation baseline: `bab49f794fea22a64f62fba6f0f9a2741bf86fec`. The application branch is `bj-ep-11-administration-moderation` at `29dac456ca62c9366aa2de544fbf1d88a6357ec8`. See its `docs/checkpoints/BJ-EP-11-{LOCAL,BENCHMARK,MILESTONE}.md` and `BJ-EP-11-EVIDENCE.json` for implementation and test details.
+Date: 2026-11-27. Owner approved all ADM-01–ADM-20 items for isolated local synthetic development. This is a **checkpoint, not milestone completion or release acceptance**. Application baseline: EP-10 `c08591f970a4c977c98286f045145bda58a27474`; documentation baseline: `bab49f794fea22a64f62fba6f0f9a2741bf86fec`. The application branch is `bj-ep-11-administration-moderation` at `4ade6d0ea87a45e430d0ebb678613d0b329fd279` (initial checkpoint `29dac456ca62c9366aa2de544fbf1d88a6357ec8`). See its `docs/checkpoints/BJ-EP-11-{LOCAL,BENCHMARK,MILESTONE}.md` and `BJ-EP-11-EVIDENCE.json` for implementation and test details.
 
 | IDs | Local implementation state | Remaining qualification |
 |---|---|---|
@@ -13,6 +13,6 @@ Date: 2026-11-27. Owner approved all ADM-01–ADM-20 items for isolated local sy
 
 The production Jobs binding remains absent and the existing account identity provides no privileged MFA or recent reauthentication claim. No real-data admin path is enabled, no administrator credential is hardcoded, and no external provider, notification, paid service, cloud resource, deployment or merge was added. The initial single-owner operating model cannot supply independent reviewer coverage.
 
-Local TypeScript and non-deploying Wrangler bundle checks passed. The final application full regression passed **534/534 tests in 24 files**, including the two corrected Meetings fixtures. The synthetic governance file passed 12/12. These checks do not qualify real-data operation or production scheduling.
+Local TypeScript and non-deploying Wrangler bundle checks passed. The final application full regression passed **535/535 tests in 24 files**, including the two corrected Meetings fixtures. The synthetic governance file passed 13/13. These checks do not qualify real-data operation or production scheduling.
 
 Next sequence stays **EP-08 → EP-10 → EP-11 → BT-WEB → EP-09 controlled qualification/pilot → EP-12 integrated qualification → EP-13 production release**. BT-WEB needs Jobs navigation and scoped administration entry points; it must preserve the Jobs data boundary. EP-11 is not yet closed, so BT-WEB is not started by this checkpoint. Additional development cash expenditure: ₹0.
